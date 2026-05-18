@@ -1,0 +1,111 @@
+use sqlx::SqlitePool;
+
+pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    sqlx::query("PRAGMA foreign_keys = ON;")
+        .execute(pool)
+        .await?;
+    sqlx::raw_sql(SCHEMA_SQL).execute(pool).await?;
+
+    Ok(())
+}
+
+const SCHEMA_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  repo_path TEXT,
+  github_url TEXT,
+  type TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
+
+CREATE TABLE IF NOT EXISTS commits (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  commit_hash TEXT NOT NULL,
+  message TEXT NOT NULL,
+  author_name TEXT,
+  author_email TEXT,
+  branch TEXT,
+  committed_at TEXT NOT NULL,
+  files_changed INTEGER,
+  insertions INTEGER,
+  deletions INTEGER,
+  included_in_report INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_commits_project_hash ON commits(project_id, commit_hash);
+CREATE INDEX IF NOT EXISTS idx_commits_committed_at ON commits(committed_at);
+
+CREATE TABLE IF NOT EXISTS manual_logs (
+  id TEXT PRIMARY KEY,
+  project_id TEXT,
+  date TEXT NOT NULL,
+  activity_type TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  outcome TEXT,
+  duration_minutes INTEGER,
+  follow_up TEXT,
+  included_in_report INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_manual_logs_date ON manual_logs(date);
+CREATE INDEX IF NOT EXISTS idx_manual_logs_project ON manual_logs(project_id);
+
+CREATE TABLE IF NOT EXISTS reports (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  start_date TEXT NOT NULL,
+  end_date TEXT NOT NULL,
+  recipient_name TEXT,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_reports_created_at ON reports(created_at);
+
+CREATE TABLE IF NOT EXISTS report_items (
+  id TEXT PRIMARY KEY,
+  report_id TEXT NOT NULL,
+  project_id TEXT,
+  source_type TEXT NOT NULL,
+  source_id TEXT,
+  summary TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (report_id) REFERENCES reports(id),
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_report_items_report ON report_items(report_id);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS report_notes (
+  id TEXT PRIMARY KEY,
+  project_id TEXT,
+  note_type TEXT NOT NULL,
+  date TEXT NOT NULL,
+  content TEXT NOT NULL,
+  included_in_report INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_report_notes_date ON report_notes(date);
+CREATE INDEX IF NOT EXISTS idx_report_notes_type ON report_notes(note_type);
+"#;

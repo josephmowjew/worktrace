@@ -1,0 +1,37 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Commit {
+    pub id: String,
+    pub project_id: String,
+    pub commit_hash: String,
+    pub message: String,
+    pub author_name: Option<String>,
+    pub author_email: Option<String>,
+    pub branch: Option<String>,
+    pub committed_at: String,
+    pub files_changed: Option<i64>,
+    pub insertions: Option<i64>,
+    pub deletions: Option<i64>,
+    pub included_in_report: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncCommitsInput {
+    pub from: String,
+    pub to: String,
+    pub author_email: Option<String>,
+    pub project_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncCommitsResult {
+    pub scanned_projects: i64,
+    pub skipped_projects: i64,
+    pub new_commits: i64,
+    pub updated_commits: i64,
+    pub errors: Vec<String>,
+}
