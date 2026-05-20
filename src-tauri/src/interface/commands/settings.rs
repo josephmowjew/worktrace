@@ -1,21 +1,35 @@
-use crate::domain::settings::Settings;
+use tauri::State;
+
+use crate::application::settings::{SettingsService, SettingsServiceError};
+use crate::domain::settings::{Settings, UpdateSettingsInput};
+use crate::infrastructure::database::repositories::SettingsRepository;
 use crate::interface::dto::app_result::AppResult;
+use crate::AppState;
 
 #[tauri::command]
-pub async fn get_settings() -> Result<AppResult<Settings>, String> {
-    Ok(AppResult::ok(Settings {
-        name: "John Developer".to_string(),
-        email: "johndev@worktrace.app".to_string(),
-        default_manager_name: String::new(),
-        git_author_email: String::new(),
-        default_report_template: "professional_weekly_summary".to_string(),
-        working_days: vec![
-            "monday".to_string(),
-            "tuesday".to_string(),
-            "wednesday".to_string(),
-            "thursday".to_string(),
-            "friday".to_string(),
-        ],
-        theme: "dark".to_string(),
-    }))
+pub async fn get_settings(state: State<'_, AppState>) -> Result<AppResult<Settings>, String> {
+    let repository = SettingsRepository::new(state.database.pool());
+
+    Ok(match SettingsService::get(&repository).await {
+        Ok(settings) => AppResult::ok(settings),
+        Err(error) => AppResult::err("DATABASE_ERROR", error.to_string()),
+    })
+}
+
+#[tauri::command]
+pub async fn update_settings(
+    state: State<'_, AppState>,
+    input: UpdateSettingsInput,
+) -> Result<AppResult<Settings>, String> {
+    let repository = SettingsRepository::new(state.database.pool());
+
+    Ok(match SettingsService::update(&repository, input).await {
+        Ok(settings) => AppResult::ok(settings),
+        Err(SettingsServiceError::Validation(message)) => {
+            AppResult::err("VALIDATION_ERROR", message)
+        }
+        Err(SettingsServiceError::Database(error)) => {
+            AppResult::err("DATABASE_ERROR", error.to_string())
+        }
+    })
 }

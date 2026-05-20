@@ -17,8 +17,27 @@ export function currentWeekRange(date = new Date()) {
   };
 }
 
+export function recentHistoryRange(date = new Date(), days = 90) {
+  const end = new Date(date);
+  end.setHours(23, 59, 59, 999);
+
+  const start = new Date(end);
+  start.setDate(end.getDate() - Math.max(days - 1, 0));
+  start.setHours(0, 0, 0, 0);
+
+  return {
+    from: formatDateOnly(start),
+    to: formatDateOnly(end),
+    label: `${formatShortDate(start)} - ${formatShortDate(end)}`,
+  };
+}
+
 function formatDateOnly(date: Date) {
-  return date.toISOString().slice(0, 10);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
 }
 
 function formatShortDate(date: Date) {

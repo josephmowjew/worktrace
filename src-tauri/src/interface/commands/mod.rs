@@ -4,6 +4,7 @@ pub mod manual_logs;
 pub mod projects;
 pub mod reports;
 pub mod settings;
+pub mod weekly_tasks;
 
 pub fn handlers() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
@@ -14,8 +15,19 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         projects::validate_repo_path,
         activity::list_activity,
         git_sync::sync_commits,
+        manual_logs::list_manual_logs,
         manual_logs::create_manual_log,
+        manual_logs::update_manual_log,
+        manual_logs::delete_manual_log,
+        reports::generate_report,
+        reports::save_report,
         reports::list_reports,
-        settings::get_settings
+        reports::get_report,
+        settings::get_settings,
+        settings::update_settings,
+        weekly_tasks::list_weekly_tasks,
+        weekly_tasks::create_weekly_task,
+        weekly_tasks::update_weekly_task,
+        weekly_tasks::delete_weekly_task
     ]
 }

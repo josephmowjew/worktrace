@@ -108,4 +108,25 @@ CREATE TABLE IF NOT EXISTS report_notes (
 
 CREATE INDEX IF NOT EXISTS idx_report_notes_date ON report_notes(date);
 CREATE INDEX IF NOT EXISTS idx_report_notes_type ON report_notes(note_type);
+
+CREATE TABLE IF NOT EXISTS weekly_tasks (
+  id TEXT PRIMARY KEY,
+  project_id TEXT,
+  task_type TEXT NOT NULL,
+  status TEXT NOT NULL,
+  title TEXT NOT NULL,
+  details TEXT,
+  week_start_date TEXT NOT NULL,
+  target_date TEXT,
+  completed_at TEXT,
+  priority TEXT NOT NULL DEFAULT 'normal',
+  included_in_report INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_weekly_tasks_week ON weekly_tasks(week_start_date);
+CREATE INDEX IF NOT EXISTS idx_weekly_tasks_status ON weekly_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_weekly_tasks_project ON weekly_tasks(project_id);
 "#;

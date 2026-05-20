@@ -20,8 +20,8 @@ pub struct Commit {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncCommitsInput {
-    pub from: String,
-    pub to: String,
+    pub from: Option<String>,
+    pub to: Option<String>,
     pub author_email: Option<String>,
     pub project_ids: Option<Vec<String>>,
 }

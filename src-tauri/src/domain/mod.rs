@@ -4,3 +4,4 @@ pub mod manual_log;
 pub mod project;
 pub mod report;
 pub mod settings;
+pub mod weekly_task;

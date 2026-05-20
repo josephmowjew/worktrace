@@ -1,6 +1,6 @@
 export type SyncCommitsInput = {
-  from: string;
-  to: string;
+  from?: string | null;
+  to?: string | null;
   authorEmail?: string | null;
   projectIds?: string[] | null;
 };

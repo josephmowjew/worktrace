@@ -22,14 +22,14 @@ export function StatCard({
   }[tone];
 
   return (
-    <Panel className="flex items-center gap-4">
-      <div className={`flex h-14 w-14 items-center justify-center rounded-2xl ${iconTone}`}>
-        <Icon className="h-7 w-7" />
+    <Panel className="flex items-center gap-3">
+      <div className={`flex h-11 w-11 items-center justify-center rounded-lg ${iconTone}`}>
+        <Icon className="h-5 w-5" />
       </div>
       <div>
-        <p className="text-sm text-slate-300">{label}</p>
-        <p className="mt-1 text-3xl font-semibold tracking-tight">{value}</p>
-        <p className="mt-1 text-xs text-slate-400">{hint}</p>
+        <p className="text-xs text-slate-400">{label}</p>
+        <p className="mt-0.5 text-2xl font-semibold tracking-tight">{value}</p>
+        <p className="mt-0.5 text-[10px] text-slate-500">{hint}</p>
       </div>
     </Panel>
   );

@@ -14,6 +14,7 @@ pub struct AppState {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let app_handle = app.handle().clone();
             let database = tauri::async_runtime::block_on(Database::connect(&app_handle))?;
