@@ -1,4 +1,5 @@
 import { AlertTriangle, CheckCircle2, ClipboardEdit, FileText, GitCommit, ListChecks, RefreshCw, X } from "lucide-react";
+import { useEffect } from "react";
 import type { ActivityItem } from "../../types/activity";
 import type { WeeklyTask } from "../../types/weeklyTask";
 import { Button } from "./Button";
@@ -35,6 +36,19 @@ export function EndOfDayReviewModal({
   onCarryTask: (task: WeeklyTask) => void;
   onIncludeTask: (task: WeeklyTask) => void;
 }) {
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const commits = activityItems.filter((item) => item.activityType === "commit");

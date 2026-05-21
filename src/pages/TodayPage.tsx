@@ -76,7 +76,7 @@ export function TodayPage() {
   const activeFocusQuery = useQuery({
     queryKey: ["focusSession", "active"],
     queryFn: getActiveFocusSession,
-    refetchInterval: 30_000,
+    refetchInterval: 5_000,
   });
   const nudgeDismissalsQuery = useQuery({
     queryKey: ["nudgeDismissals", today.date, "today"],

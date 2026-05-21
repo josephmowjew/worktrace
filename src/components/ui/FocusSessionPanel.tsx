@@ -23,7 +23,7 @@ export function FocusSessionPanel({
 }) {
   const [title, setTitle] = useState("");
   const [projectId, setProjectId] = useState("none");
-  const elapsed = useElapsedMinutes(activeSession?.startedAt);
+  const elapsed = useElapsedSeconds(activeSession?.startedAt);
 
   return (
     <Panel className="border-emerald-300/15 bg-emerald-400/10">
@@ -104,12 +104,12 @@ export function FocusSessionPanel({
   );
 }
 
-function useElapsedMinutes(startedAt?: string) {
+function useElapsedSeconds(startedAt?: string) {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     if (!startedAt) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);
   }, [startedAt]);
 
@@ -117,12 +117,13 @@ function useElapsedMinutes(startedAt?: string) {
     if (!startedAt) return 0;
     const started = new Date(startedAt).getTime();
     if (Number.isNaN(started)) return 0;
-    return Math.max(0, Math.floor((now - started) / 60_000));
+    return Math.max(0, Math.floor((now - started) / 1_000));
   }, [now, startedAt]);
 }
 
-function formatElapsed(minutes: number) {
-  const hours = Math.floor(minutes / 60);
-  const remainder = minutes % 60;
-  return `${hours.toString().padStart(2, "0")}:${remainder.toString().padStart(2, "0")}`;
+function formatElapsed(seconds: number) {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainder = seconds % 60;
+  return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${remainder.toString().padStart(2, "0")}`;
 }

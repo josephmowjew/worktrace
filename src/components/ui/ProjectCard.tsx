@@ -53,17 +53,36 @@ function getCategoryColor(projectType?: string | null): string {
   return categoryColors[projectType] || categoryColors["Company"];
 }
 
-function formatTimeAgo(dateString: string): string {
+function parseDateWithTimezone(dateString: string): Date {
   const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) {
+    return new Date(0);
+  }
+
+  if (!dateString.includes("T")) {
+    const parts = dateString.split(/[- :]/);
+    if (parts.length >= 6) {
+      const [year, month, day, hour, minute, second] = parts.map(Number);
+      return new Date(year, month - 1, day, hour, minute, second);
+    }
+  }
+
+  return date;
+}
+
+function formatTimeAgo(dateString: string): string {
+  const date = parseDateWithTimezone(dateString);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
+  const diffMinutes = Math.floor(diffMs / (1000 * 60));
   const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  const diffDays = Math.floor(diffHours / 24);
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
-  if (diffHours < 1) return "Just now";
+  if (diffMinutes < 1) return "Just now";
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
   if (diffHours < 24) return `${diffHours}h ago`;
   if (diffDays < 7) return `${diffDays}d ago`;
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
 function formatHours(hours: number): string {
@@ -177,7 +196,7 @@ export function ProjectCard({
             <p className="text-lg font-semibold text-white">
               {lastSync ? formatTimeAgo(lastSync) : "N/A"}
             </p>
-            <p className="text-[10px] text-slate-500">Last Sync</p>
+            <p className="text-[10px] text-slate-500">Latest Commit</p>
           </div>
           <div className="text-center">
             <p className="text-lg font-semibold text-white">
