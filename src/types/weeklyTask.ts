@@ -27,6 +27,7 @@ export type WeeklyTask = {
   completedAt?: string | null;
   priority: WeeklyTaskPriority;
   includedInReport: boolean;
+  progressPercent?: number | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -51,6 +52,7 @@ export type CreateWeeklyTaskInput = {
   completedAt?: string | null;
   priority?: WeeklyTaskPriority | null;
   includedInReport?: boolean | null;
+  progressPercent?: number | null;
 };
 
 export type UpdateWeeklyTaskInput = Partial<CreateWeeklyTaskInput>;

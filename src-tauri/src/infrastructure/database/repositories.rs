@@ -35,7 +35,7 @@ impl<'a> ProjectRepository<'a> {
     pub async fn list(&self) -> Result<Vec<Project>, sqlx::Error> {
         let rows = sqlx::query(
             r#"
-            SELECT id, name, repo_path, github_url, type, status, created_at, updated_at
+            SELECT id, name, description, repo_path, github_url, type, status, created_at, updated_at
             FROM projects
             ORDER BY status ASC, updated_at DESC, name ASC
             "#,
@@ -49,7 +49,7 @@ impl<'a> ProjectRepository<'a> {
     pub async fn list_active(&self) -> Result<Vec<Project>, sqlx::Error> {
         let rows = sqlx::query(
             r#"
-            SELECT id, name, repo_path, github_url, type, status, created_at, updated_at
+            SELECT id, name, description, repo_path, github_url, type, status, created_at, updated_at
             FROM projects
             WHERE status = 'active'
             ORDER BY updated_at DESC, name ASC
@@ -66,6 +66,7 @@ impl<'a> ProjectRepository<'a> {
         let project = Project {
             id: generate_id("project"),
             name: input.name.trim().to_string(),
+            description: normalize_optional(input.description),
             repo_path: normalize_optional(input.repo_path),
             github_url: normalize_optional(input.github_url),
             project_type: normalize_optional(input.project_type),
@@ -76,12 +77,13 @@ impl<'a> ProjectRepository<'a> {
 
         sqlx::query(
             r#"
-            INSERT INTO projects (id, name, repo_path, github_url, type, status, created_at, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            INSERT INTO projects (id, name, description, repo_path, github_url, type, status, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
             "#,
         )
         .bind(&project.id)
         .bind(&project.name)
+        .bind(&project.description)
         .bind(&project.repo_path)
         .bind(&project.github_url)
         .bind(&project.project_type)
@@ -107,6 +109,10 @@ impl<'a> ProjectRepository<'a> {
             project.name = name.trim().to_string();
         }
 
+        if input.description.is_some() {
+            project.description = normalize_optional(input.description);
+        }
+
         if input.repo_path.is_some() {
             project.repo_path = normalize_optional(input.repo_path);
         }
@@ -129,16 +135,18 @@ impl<'a> ProjectRepository<'a> {
             r#"
             UPDATE projects
             SET name = ?2,
-                repo_path = ?3,
-                github_url = ?4,
-                type = ?5,
-                status = ?6,
-                updated_at = ?7
+                description = ?3,
+                repo_path = ?4,
+                github_url = ?5,
+                type = ?6,
+                status = ?7,
+                updated_at = ?8
             WHERE id = ?1
             "#,
         )
         .bind(&project.id)
         .bind(&project.name)
+        .bind(&project.description)
         .bind(&project.repo_path)
         .bind(&project.github_url)
         .bind(&project.project_type)
@@ -155,6 +163,7 @@ impl<'a> ProjectRepository<'a> {
             id,
             UpdateProjectInput {
                 name: None,
+                description: None,
                 repo_path: None,
                 github_url: None,
                 project_type: None,
@@ -167,7 +176,7 @@ impl<'a> ProjectRepository<'a> {
     async fn find(&self, id: &str) -> Result<Option<Project>, sqlx::Error> {
         let row = sqlx::query(
             r#"
-            SELECT id, name, repo_path, github_url, type, status, created_at, updated_at
+            SELECT id, name, description, repo_path, github_url, type, status, created_at, updated_at
             FROM projects
             WHERE id = ?1
             "#,
@@ -973,6 +982,7 @@ impl<'a> WeeklyTaskRepository<'a> {
                    weekly_tasks.completed_at,
                    weekly_tasks.priority,
                    weekly_tasks.included_in_report,
+                   weekly_tasks.progress_percent,
                    weekly_tasks.created_at,
                    weekly_tasks.updated_at
             FROM weekly_tasks
@@ -1051,6 +1061,7 @@ impl<'a> WeeklyTaskRepository<'a> {
         let included_in_report = input
             .included_in_report
             .unwrap_or_else(|| default_weekly_task_inclusion(&task_type));
+        let progress_percent = input.progress_percent;
         let task = WeeklyTask {
             id: generate_id("weekly_task"),
             project_id: normalize_optional(input.project_id),
@@ -1064,6 +1075,7 @@ impl<'a> WeeklyTaskRepository<'a> {
             completed_at: normalize_optional(input.completed_at),
             priority: input.priority.unwrap_or(WeeklyTaskPriority::Normal),
             included_in_report,
+            progress_percent,
             created_at: now.clone(),
             updated_at: now.clone(),
         };
@@ -1072,9 +1084,9 @@ impl<'a> WeeklyTaskRepository<'a> {
             r#"
             INSERT INTO weekly_tasks (
               id, project_id, task_type, status, title, details, week_start_date,
-              target_date, completed_at, priority, included_in_report, created_at, updated_at
+              target_date, completed_at, priority, included_in_report, progress_percent, created_at, updated_at
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
             "#,
         )
         .bind(&task.id)
@@ -1088,6 +1100,7 @@ impl<'a> WeeklyTaskRepository<'a> {
         .bind(&task.completed_at)
         .bind(task.priority.as_storage_value())
         .bind(bool_to_i64(task.included_in_report))
+        .bind(task.progress_percent)
         .bind(&task.created_at)
         .bind(&task.updated_at)
         .execute(self.pool)
@@ -1135,6 +1148,9 @@ impl<'a> WeeklyTaskRepository<'a> {
         if let Some(included) = input.included_in_report {
             task.included_in_report = included;
         }
+        if input.progress_percent.is_some() {
+            task.progress_percent = input.progress_percent;
+        }
         task.updated_at = current_timestamp();
 
         sqlx::query(
@@ -1150,7 +1166,8 @@ impl<'a> WeeklyTaskRepository<'a> {
                 completed_at = ?9,
                 priority = ?10,
                 included_in_report = ?11,
-                updated_at = ?12
+                progress_percent = ?12,
+                updated_at = ?13
             WHERE id = ?1
             "#,
         )
@@ -1165,6 +1182,7 @@ impl<'a> WeeklyTaskRepository<'a> {
         .bind(&task.completed_at)
         .bind(task.priority.as_storage_value())
         .bind(bool_to_i64(task.included_in_report))
+        .bind(task.progress_percent)
         .bind(&task.updated_at)
         .execute(self.pool)
         .await?;
@@ -1196,6 +1214,7 @@ impl<'a> WeeklyTaskRepository<'a> {
                    weekly_tasks.completed_at,
                    weekly_tasks.priority,
                    weekly_tasks.included_in_report,
+                   weekly_tasks.progress_percent,
                    weekly_tasks.created_at,
                    weekly_tasks.updated_at
             FROM weekly_tasks
@@ -1421,6 +1440,7 @@ fn weekly_task_from_row(row: sqlx::sqlite::SqliteRow) -> WeeklyTask {
         completed_at: row.get("completed_at"),
         priority: WeeklyTaskPriority::try_from(priority).unwrap_or(WeeklyTaskPriority::Normal),
         included_in_report: i64_to_bool(row.get("included_in_report")),
+        progress_percent: row.get("progress_percent"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     }
@@ -1453,6 +1473,7 @@ fn project_from_row(row: sqlx::sqlite::SqliteRow) -> Project {
     Project {
         id: row.get("id"),
         name: row.get("name"),
+        description: row.get("description"),
         repo_path: row.get("repo_path"),
         github_url: row.get("github_url"),
         project_type: row.get("type"),

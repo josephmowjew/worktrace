@@ -14,7 +14,15 @@ export function currentWeekRange(date = new Date()) {
     from: formatDateOnly(monday),
     to: formatDateOnly(friday),
     label: `${formatShortDate(monday)} - ${formatShortDate(friday)}`,
+    monday,
+    friday,
   };
+}
+
+export function shiftWeek(date: Date, direction: number): Date {
+  const shifted = new Date(date);
+  shifted.setDate(shifted.getDate() + direction * 7);
+  return shifted;
 }
 
 export function recentHistoryRange(date = new Date(), days = 90) {

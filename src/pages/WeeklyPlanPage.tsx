@@ -1,24 +1,18 @@
-import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle,
-  Ban,
-  Check,
-  ClipboardList,
-  Edit3,
+  Calendar,
   ListChecks,
-  Play,
-  Save,
-  Trash2,
-  X,
+  RotateCcw,
+  Sparkles,
 } from "lucide-react";
-import { useMemo, useState } from "react";
-import type { ReactNode } from "react";
-import { useForm } from "react-hook-form";
-import { z } from "zod";
-import { Badge } from "../components/ui/Badge";
-import { Button } from "../components/ui/Button";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { KanbanColumn } from "../components/ui/KanbanColumn";
 import { Panel } from "../components/ui/Panel";
+import { ProgressDonut } from "../components/ui/ProgressDonut";
+import { QuickAddBar } from "../components/ui/QuickAddBar";
+import { RecentlyCompletedList } from "../components/ui/RecentlyCompletedList";
+import { AddItemBar } from "../components/ui/AddItemBar";
+import { AddTaskModal } from "../components/ui/AddTaskModal";
 import { listProjects } from "../lib/api/projects";
 import {
   createWeeklyTask,
@@ -50,45 +44,28 @@ const statuses: Array<{ value: WeeklyTaskStatus; label: string }> = [
   { value: "dropped", label: "Dropped" },
 ];
 
-const priorities: Array<{ value: WeeklyTaskPriority; label: string }> = [
-  { value: "low", label: "Low" },
-  { value: "normal", label: "Normal" },
-  { value: "high", label: "High" },
-];
-
-const taskSchema = z.object({
-  projectId: z.string().optional(),
-  taskType: z.enum([
-    "planned_work",
-    "blocker",
-    "carryover",
-    "completed_checklist",
-    "follow_up",
-  ]),
-  status: z.enum(["todo", "in_progress", "blocked", "completed", "dropped"]),
-  title: z.string().trim().min(1, "Task title is required"),
-  details: z.string().optional(),
-  weekStartDate: z.string().trim().min(1, "Week is required"),
-  targetDate: z.string().optional(),
-  completedAt: z.string().optional(),
-  priority: z.enum(["low", "normal", "high"]),
-  includedInReport: z.boolean(),
-});
-
-type TaskFormValues = z.infer<typeof taskSchema>;
-
 export function WeeklyPlanPage() {
   const queryClient = useQueryClient();
   const weekRange = currentWeekRange();
-  const [editingTask, setEditingTask] = useState<WeeklyTask | null>(null);
   const [typeFilter, setTypeFilter] = useState<WeeklyTaskType | "all">("all");
   const [statusFilter, setStatusFilter] = useState<WeeklyTaskStatus | "all">("all");
   const [projectFilter, setProjectFilter] = useState("all");
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingTask, setEditingTask] = useState<WeeklyTask | null>(null);
+  const [prefillData, setPrefillData] = useState<{
+    title: string;
+    priority: WeeklyTaskPriority;
+    projectId?: string;
+  } | null>(null);
+  const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
+  const [activeColumnId, setActiveColumnId] = useState<string | null>(null);
+  const dragOverColumnRef = useRef<string | null>(null);
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
     queryFn: listProjects,
   });
+
   const tasksQuery = useQuery({
     queryKey: [
       "weeklyTasks",
@@ -108,29 +85,87 @@ export function WeeklyPlanPage() {
       }),
   });
 
-  const form = useForm<TaskFormValues>({
-    resolver: zodResolver(taskSchema),
-    defaultValues: defaultValues(weekRange.from),
-  });
-
   const tasks = tasksQuery.data ?? [];
-  const summary = useMemo(() => summarizeTasks(tasks), [tasks]);
+  const projects = projectsQuery.data ?? [];
+
+  const planned = useMemo(
+    () => tasks.filter((t) => t.status === "todo" && t.taskType !== "carryover"),
+    [tasks]
+  );
+  const inProgress = useMemo(
+    () => tasks.filter((t) => t.status === "in_progress" && t.taskType !== "carryover"),
+    [tasks]
+  );
+  const done = useMemo(
+    () => tasks.filter((t) => t.status === "completed"),
+    [tasks]
+  );
+  const carryForward = useMemo(
+    () => tasks.filter((t) => t.taskType === "carryover" && t.status !== "completed"),
+    [tasks]
+  );
+
+  const recentlyCompleted = useMemo(
+    () =>
+      done
+        .filter((t) => t.completedAt)
+        .sort((a, b) => (b.completedAt || "").localeCompare(a.completedAt || ""))
+        .slice(0, 5)
+        .map((t) => ({ id: t.id, title: t.title, completedAt: t.completedAt! })),
+    [done]
+  );
 
   const saveMutation = useMutation({
-    mutationFn: (values: TaskFormValues) => {
-      const input = toTaskInput(values);
+    mutationFn: (values: {
+      title: string;
+      taskType?: WeeklyTaskType;
+      status?: WeeklyTaskStatus;
+      projectId?: string;
+      priority: WeeklyTaskPriority;
+      details?: string;
+      weekStartDate: string;
+      targetDate?: string;
+      completedAt?: string;
+      includedInReport?: boolean;
+      progressPercent?: number;
+    }) => {
       if (editingTask) {
-        return updateWeeklyTask(editingTask.id, input);
+        return updateWeeklyTask(editingTask.id, {
+          title: values.title,
+          taskType: values.taskType,
+          status: values.status,
+          projectId: values.projectId || null,
+          priority: values.priority,
+          details: values.details || null,
+          weekStartDate: values.weekStartDate,
+          targetDate: values.targetDate || null,
+          completedAt: values.completedAt || null,
+          includedInReport: values.includedInReport,
+          progressPercent: values.progressPercent,
+        });
       }
-
-      return createWeeklyTask(input);
+      return createWeeklyTask({
+        title: values.title,
+        taskType: values.taskType || "planned_work",
+        status: values.status || "todo",
+        projectId: values.projectId || null,
+        priority: values.priority,
+        details: values.details || null,
+        weekStartDate: values.weekStartDate,
+        targetDate: values.targetDate || null,
+        completedAt: values.completedAt || null,
+        includedInReport: values.includedInReport ?? false,
+        progressPercent: values.progressPercent,
+      });
     },
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["weeklyTasks"] }),
         queryClient.invalidateQueries({ queryKey: ["reports"] }),
       ]);
-      clearForm();
+      setModalOpen(false);
+      setEditingTask(null);
+      setPrefillData(null);
     },
   });
 
@@ -158,27 +193,103 @@ export function WeeklyPlanPage() {
     },
   });
 
-  function editTask(task: WeeklyTask) {
-    setEditingTask(task);
-    form.reset({
-      projectId: task.projectId ?? "",
-      taskType: task.taskType,
-      status: task.status,
-      title: task.title,
-      details: task.details ?? "",
-      weekStartDate: task.weekStartDate,
-      targetDate: task.targetDate ?? "",
-      completedAt: task.completedAt ?? "",
-      priority: task.priority,
-      includedInReport: task.includedInReport,
-    });
+  const moveTaskMutation = useMutation({
+    mutationFn: ({ id, status, taskType }: { id: string; status: WeeklyTaskStatus; taskType?: WeeklyTaskType }) =>
+      updateWeeklyTask(id, {
+        status,
+        taskType,
+        completedAt: status === "completed" || status === "dropped" ? today() : null,
+      }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["weeklyTasks"] }),
+        queryClient.invalidateQueries({ queryKey: ["reports"] }),
+      ]);
+    },
+  });
+
+  const handleDragOverColumn = useCallback((columnId: string | null) => {
+    dragOverColumnRef.current = columnId;
+    setActiveColumnId(columnId);
+  }, []);
+
+  const handleDrop = useCallback(() => {
+    const targetColumn = dragOverColumnRef.current;
+    if (!draggedTaskId || !targetColumn) {
+      setDraggedTaskId(null);
+      setActiveColumnId(null);
+      dragOverColumnRef.current = null;
+      return;
+    }
+
+    const task = tasks.find((t) => t.id === draggedTaskId);
+    if (!task) {
+      setDraggedTaskId(null);
+      setActiveColumnId(null);
+      dragOverColumnRef.current = null;
+      return;
+    }
+
+    let newStatus: WeeklyTaskStatus = task.status;
+    let newTaskType: WeeklyTaskType | undefined;
+
+    switch (targetColumn) {
+      case "planned":
+        newStatus = "todo";
+        newTaskType = task.taskType === "carryover" ? "planned_work" : task.taskType;
+        break;
+      case "in-progress":
+        newStatus = "in_progress";
+        newTaskType = task.taskType === "carryover" ? "planned_work" : task.taskType;
+        break;
+      case "done":
+        newStatus = "completed";
+        break;
+      case "carry-forward":
+        newTaskType = "carryover";
+        newStatus = task.status === "completed" ? "todo" : task.status;
+        break;
+    }
+
+    moveTaskMutation.mutate({ id: draggedTaskId, status: newStatus, taskType: newTaskType });
+    setDraggedTaskId(null);
+    setActiveColumnId(null);
+    dragOverColumnRef.current = null;
+  }, [draggedTaskId, tasks, moveTaskMutation]);
+
+  function handleAddItem(title: string, priority: WeeklyTaskPriority, projectId?: string) {
+    setPrefillData({ title, priority, projectId });
+    setEditingTask(null);
+    setModalOpen(true);
   }
 
-  function clearForm() {
+  function handleOpenFullForm(title: string, priority: WeeklyTaskPriority, projectId?: string) {
+    setPrefillData({ title, priority, projectId });
     setEditingTask(null);
-    saveMutation.reset();
-    form.reset(defaultValues(weekRange.from));
+    setModalOpen(true);
   }
+
+  const handleEditTask = useCallback((task: WeeklyTask) => {
+    setEditingTask(task);
+    setModalOpen(true);
+  }, []);
+
+  const handleToggleComplete = useCallback((task: WeeklyTask) => {
+    const newStatus = task.status === "completed" ? "todo" : "completed";
+    updateMutation.mutate({ id: task.id, status: newStatus });
+  }, [updateMutation]);
+
+  const handleDeleteTask = useCallback((task: WeeklyTask) => {
+    deleteMutation.mutate(task.id);
+  }, [deleteMutation]);
+
+  function handleClearFilters() {
+    setTypeFilter("all");
+    setStatusFilter("all");
+    setProjectFilter("all");
+  }
+
+  const hasActiveFilters = typeFilter !== "all" || statusFilter !== "all" || projectFilter !== "all";
 
   return (
     <div className="space-y-4">
@@ -188,7 +299,7 @@ export function WeeklyPlanPage() {
           <div>
             <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-cyan-300/15 bg-cyan-300/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
               <ListChecks className="h-3.5 w-3.5" />
-              Weekly plan
+              Weekly Plan
             </div>
             <h1 className="text-2xl font-semibold tracking-tight text-white">
               Weekly Plan
@@ -200,314 +311,220 @@ export function WeeklyPlanPage() {
           </div>
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <MiniStat label="Open" value={summary.open.toString()} />
-            <MiniStat label="Blocked" value={summary.blocked.toString()} />
-            <MiniStat label="Done" value={summary.completed.toString()} />
-            <MiniStat label="Report" value={summary.included.toString()} />
+            <MiniStat label="Open" value={planned.length.toString()} dotColor="bg-blue-400" />
+            <MiniStat label="In Progress" value={inProgress.length.toString()} dotColor="bg-violet-400" />
+            <MiniStat label="Done" value={done.length.toString()} dotColor="bg-emerald-400" />
+            <MiniStat label="Carry Forward" value={carryForward.length.toString()} dotColor="bg-orange-400" />
           </div>
         </div>
       </Panel>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
-        <div className="space-y-4">
-          <Panel className="grid gap-3 p-3 lg:grid-cols-3">
-            <FilterSelect label="Type" value={typeFilter} onChange={setTypeFilter}>
-              <option value="all">All types</option>
-              {taskTypes.map((type) => (
-                <option key={type.value} value={type.value}>
-                  {type.label}
-                </option>
-              ))}
-            </FilterSelect>
-            <FilterSelect label="Status" value={statusFilter} onChange={setStatusFilter}>
-              <option value="all">All statuses</option>
-              {statuses.map((status) => (
-                <option key={status.value} value={status.value}>
-                  {status.label}
-                </option>
-              ))}
-            </FilterSelect>
-            <FilterSelect
-              label="Project"
-              value={projectFilter}
-              onChange={setProjectFilter}
-            >
-              <option value="all">All projects</option>
-              {(projectsQuery.data ?? []).map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </FilterSelect>
-          </Panel>
+      <div className="flex flex-wrap items-center gap-2">
+        <FilterSelect label="Type" value={typeFilter} onChange={setTypeFilter}>
+          <option value="all">All Types</option>
+          {taskTypes.map((type) => (
+            <option key={type.value} value={type.value}>
+              {type.label}
+            </option>
+          ))}
+        </FilterSelect>
+        <FilterSelect label="Status" value={statusFilter} onChange={setStatusFilter}>
+          <option value="all">All Statuses</option>
+          {statuses.map((status) => (
+            <option key={status.value} value={status.value}>
+              {status.label}
+            </option>
+          ))}
+        </FilterSelect>
+        <FilterSelect label="Project" value={projectFilter} onChange={setProjectFilter}>
+          <option value="all">All Projects</option>
+          {projects.map((project) => (
+            <option key={project.id} value={project.id}>
+              {project.name}
+            </option>
+          ))}
+        </FilterSelect>
+        {hasActiveFilters && (
+          <button
+            onClick={handleClearFilters}
+            className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-200"
+          >
+            <RotateCcw className="h-3 w-3" />
+            Clear
+          </button>
+        )}
+      </div>
 
-          <Panel className="min-h-[520px]">
-            {tasksQuery.isLoading ? (
-              <TaskSkeleton />
-            ) : tasksQuery.isError ? (
-              <div className="rounded-xl border border-red-400/20 bg-red-500/10 p-4 text-sm text-red-100">
-                {tasksQuery.error instanceof Error
-                  ? tasksQuery.error.message
-                  : "Weekly tasks could not be loaded."}
-              </div>
-            ) : tasks.length === 0 ? (
-              <div className="flex min-h-[420px] items-center justify-center rounded-xl border border-dashed border-white/10 bg-white/[0.02] px-4 text-center">
-                <div>
-                  <ClipboardList className="mx-auto h-9 w-9 text-blue-300" />
-                  <p className="mt-3 text-sm font-semibold text-white">
-                    No weekly plan items yet
-                  </p>
-                  <p className="mt-1 text-xs leading-5 text-slate-400">
-                    Add planned work, blockers, follow-ups, or completed checklist
-                    items for {weekRange.label}.
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-5">
-                {taskTypes.map((type) => {
-                  const sectionTasks = tasks.filter((task) => task.taskType === type.value);
-                  if (sectionTasks.length === 0) {
-                    return null;
-                  }
+      <AddItemBar
+        onAdd={handleAddItem}
+        projects={projects}
+        weekRange={weekRange}
+      />
 
-                  return (
-                    <section key={type.value} className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <h2 className="text-sm font-semibold text-slate-100">
-                          {type.label}
-                        </h2>
-                        <Badge tone="slate">{sectionTasks.length}</Badge>
-                      </div>
-                      <div className="grid gap-2">
-                        {sectionTasks.map((task) => (
-                          <TaskRow
-                            key={task.id}
-                            task={task}
-                            onEdit={() => editTask(task)}
-                            onDelete={() => deleteMutation.mutate(task.id)}
-                            onStatus={(status) =>
-                              updateMutation.mutate({ id: task.id, status })
-                            }
-                            isPending={updateMutation.isPending || deleteMutation.isPending}
-                          />
-                        ))}
-                      </div>
-                    </section>
-                  );
-                })}
-              </div>
-            )}
-          </Panel>
+      <div className="grid gap-4 xl:grid-cols-[1fr_320px]">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <KanbanColumn
+            title="Planned"
+            color="bg-blue-400"
+            tasks={planned}
+            count={planned.length}
+            columnId="planned"
+            onAdd={() => handleAddItem("", "normal")}
+            onToggleComplete={handleToggleComplete}
+            onEdit={handleEditTask}
+            onDelete={handleDeleteTask}
+            onDragOverColumn={handleDragOverColumn}
+            onDrop={handleDrop}
+            onDragStart={setDraggedTaskId}
+            activeColumnId={activeColumnId}
+          />
+          <KanbanColumn
+            title="In Progress"
+            color="bg-violet-400"
+            tasks={inProgress}
+            count={inProgress.length}
+            columnId="in-progress"
+            onAdd={() => handleAddItem("", "normal")}
+            onToggleComplete={handleToggleComplete}
+            onEdit={handleEditTask}
+            onDelete={handleDeleteTask}
+            onDragOverColumn={handleDragOverColumn}
+            onDrop={handleDrop}
+            onDragStart={setDraggedTaskId}
+            activeColumnId={activeColumnId}
+          />
+          <KanbanColumn
+            title="Done"
+            color="bg-emerald-400"
+            tasks={done}
+            count={done.length}
+            columnId="done"
+            onAdd={() => handleAddItem("", "normal")}
+            onToggleComplete={handleToggleComplete}
+            onEdit={handleEditTask}
+            onDelete={handleDeleteTask}
+            onDragOverColumn={handleDragOverColumn}
+            onDrop={handleDrop}
+            onDragStart={setDraggedTaskId}
+            activeColumnId={activeColumnId}
+          />
+          <KanbanColumn
+            title="Carry Forward"
+            color="bg-orange-400"
+            tasks={carryForward}
+            count={carryForward.length}
+            columnId="carry-forward"
+            onAdd={() => handleAddItem("", "normal")}
+            onToggleComplete={handleToggleComplete}
+            onEdit={handleEditTask}
+            onDelete={handleDeleteTask}
+            onDragOverColumn={handleDragOverColumn}
+            onDrop={handleDrop}
+            onDragStart={setDraggedTaskId}
+            activeColumnId={activeColumnId}
+          />
         </div>
 
-        <Panel className="h-fit p-0">
-          <div className="border-b border-white/8 px-4 py-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-base font-semibold text-white">
-                  {editingTask ? "Edit Plan Item" : "Add Plan Item"}
-                </h2>
-                <p className="mt-1 text-xs text-slate-400">{weekRange.label}</p>
+        <div className="flex flex-col gap-4">
+          <Panel>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-white">
+                Week of {weekRange.label}
+              </h2>
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-800 text-slate-400">
+                <Calendar className="h-3.5 w-3.5" />
               </div>
-              {editingTask ? (
-                <Button variant="ghost" onClick={clearForm}>
-                  <X className="h-4 w-4" />
-                  Cancel
-                </Button>
-              ) : null}
             </div>
-          </div>
+            <ProgressDonut
+              done={done.length}
+              inProgress={inProgress.length}
+              planned={planned.length}
+              carryForward={carryForward.length}
+            />
+          </Panel>
 
-          <form
-            className="space-y-4 p-4"
-            onSubmit={form.handleSubmit((values) => saveMutation.mutate(values))}
-          >
-            <Field label="Title" error={form.formState.errors.title?.message}>
-              <input
-                className={inputClass}
-                placeholder="Finalize report export polish"
-                {...form.register("title")}
-              />
-            </Field>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Type">
-                <select className={inputClass} {...form.register("taskType")}>
-                  {taskTypes.map((type) => (
-                    <option key={type.value} value={type.value}>
-                      {type.label}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Status">
-                <select className={inputClass} {...form.register("status")}>
-                  {statuses.map((status) => (
-                    <option key={status.value} value={status.value}>
-                      {status.label}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+          <Panel>
+            <div className="mb-3 flex items-center gap-2">
+              <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+              <h2 className="text-sm font-semibold text-white">Focus</h2>
             </div>
+            <p className="text-xs leading-5 text-slate-400">
+              {done.length > 0
+                ? `Keep going! You've completed ${done.length} item${done.length > 1 ? "s" : ""} this week.`
+                : "Start by planning your top priorities for the week."}
+            </p>
+          </Panel>
 
-            <Field label="Project">
-              <select className={inputClass} {...form.register("projectId")}>
-                <option value="">General / no project</option>
-                {(projectsQuery.data ?? []).map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
+          <Panel>
+            <h2 className="mb-3 text-sm font-semibold text-white">
+              Recently Completed
+            </h2>
+            <RecentlyCompletedList tasks={recentlyCompleted} />
+          </Panel>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Week Start">
-                <input type="date" className={inputClass} {...form.register("weekStartDate")} />
-              </Field>
-              <Field label="Target Date">
-                <input type="date" className={inputClass} {...form.register("targetDate")} />
-              </Field>
-            </div>
-
-            <Field label="Priority">
-              <select className={inputClass} {...form.register("priority")}>
-                {priorities.map((priority) => (
-                  <option key={priority.value} value={priority.value}>
-                    {priority.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-
-            <Field label="Details">
-              <textarea
-                className={`${inputClass} min-h-24 resize-y py-3`}
-                placeholder="Context, blocker details, or report wording"
-                {...form.register("details")}
-              />
-            </Field>
-
-            <label className="flex items-center gap-3 rounded-xl border border-white/10 bg-slate-950/45 px-3 py-2 text-sm text-slate-300">
-              <input
-                type="checkbox"
-                className="h-4 w-4 accent-blue-500"
-                {...form.register("includedInReport")}
-              />
-              Include in weekly report
-            </label>
-
-            {saveMutation.isError ? (
-              <div className="rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-xs text-red-100">
-                {saveMutation.error instanceof Error
-                  ? saveMutation.error.message
-                  : "Task could not be saved."}
-              </div>
-            ) : null}
-
-            <Button
-              type="submit"
-              variant="primary"
-              className="w-full"
-              disabled={saveMutation.isPending}
-            >
-              <Save className="h-4 w-4" />
-              {saveMutation.isPending
-                ? "Saving..."
-                : editingTask
-                  ? "Save Task"
-                  : "Add Task"}
-            </Button>
-          </form>
-        </Panel>
+          <Panel>
+            <h2 className="mb-3 text-sm font-semibold text-white">Quick Add</h2>
+            <QuickAddBar
+              onAdd={handleAddItem}
+              projects={projects}
+              onOpenFullForm={handleOpenFullForm}
+            />
+          </Panel>
+        </div>
       </div>
+
+      <AddTaskModal
+        isOpen={modalOpen}
+        onClose={() => {
+          setModalOpen(false);
+          setEditingTask(null);
+          setPrefillData(null);
+        }}
+        onSubmit={(values) => {
+          const data = prefillData;
+          saveMutation.mutate({
+            title: data?.title || values.title,
+            taskType: values.taskType,
+            status: values.status,
+            projectId: data?.projectId || values.projectId || undefined,
+            priority: data?.priority || values.priority,
+            details: values.details,
+            weekStartDate: values.weekStartDate,
+            targetDate: values.targetDate,
+            completedAt: values.completedAt,
+            includedInReport: values.includedInReport,
+            progressPercent: values.progressPercent,
+          });
+        }}
+        projects={projects}
+        weekStartDate={weekRange.from}
+        editingTask={editingTask}
+        isPending={saveMutation.isPending}
+        error={saveMutation.error instanceof Error ? saveMutation.error.message : undefined}
+      />
     </div>
   );
 }
 
-function TaskRow({
-  task,
-  onEdit,
-  onDelete,
-  onStatus,
-  isPending,
-}: {
-  task: WeeklyTask;
-  onEdit: () => void;
-  onDelete: () => void;
-  onStatus: (status: WeeklyTaskStatus) => void;
-  isPending: boolean;
-}) {
-  return (
-    <article className="rounded-xl border border-white/8 bg-slate-950/45 p-3 shadow-lg shadow-black/10">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <Badge tone={task.status === "blocked" ? "orange" : "blue"}>
-              {labelStatus(task.status)}
-            </Badge>
-            <Badge tone={task.priority === "high" ? "orange" : "slate"}>
-              {task.priority}
-            </Badge>
-            {task.projectName ? <Badge tone="cyan">{task.projectName}</Badge> : null}
-            {task.includedInReport ? <Badge tone="green">Report</Badge> : null}
-          </div>
-          <p className="mt-2 text-sm font-semibold text-white">{task.title}</p>
-          {task.details ? (
-            <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-400">
-              {task.details}
-            </p>
-          ) : null}
-        </div>
-        <div className="flex shrink-0 flex-wrap justify-end gap-1">
-          <IconButton label="Start" disabled={isPending} onClick={() => onStatus("in_progress")}>
-            <Play className="h-4 w-4" />
-          </IconButton>
-          <IconButton label="Block" disabled={isPending} onClick={() => onStatus("blocked")}>
-            <AlertTriangle className="h-4 w-4" />
-          </IconButton>
-          <IconButton label="Complete" disabled={isPending} onClick={() => onStatus("completed")}>
-            <Check className="h-4 w-4" />
-          </IconButton>
-          <IconButton label="Drop" disabled={isPending} onClick={() => onStatus("dropped")}>
-            <Ban className="h-4 w-4" />
-          </IconButton>
-          <IconButton label="Edit" disabled={isPending} onClick={onEdit}>
-            <Edit3 className="h-4 w-4" />
-          </IconButton>
-          <IconButton label="Delete" disabled={isPending} onClick={onDelete}>
-            <Trash2 className="h-4 w-4" />
-          </IconButton>
-        </div>
-      </div>
-    </article>
-  );
-}
-
-function IconButton({
+function MiniStat({
   label,
-  disabled,
-  onClick,
-  children,
+  value,
+  dotColor,
 }: {
   label: string;
-  disabled?: boolean;
-  onClick: () => void;
-  children: ReactNode;
+  value: string;
+  dotColor: string;
 }) {
   return (
-    <Button
-      variant="ghost"
-      className="h-8 w-8 px-0"
-      disabled={disabled}
-      onClick={onClick}
-      aria-label={label}
-      title={label}
-    >
-      {children}
-    </Button>
+    <div className="rounded-xl border border-white/10 bg-slate-950/50 px-4 py-3 text-center shadow-xl shadow-black/10">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+        {label}
+      </p>
+      <div className="mt-1 flex items-center justify-center gap-1.5">
+        <div className={`h-1.5 w-1.5 rounded-full ${dotColor}`} />
+        <p className="text-2xl font-semibold text-white">{value}</p>
+      </div>
+    </div>
   );
 }
 
@@ -520,10 +537,13 @@ function FilterSelect<T extends string>({
   label: string;
   value: T;
   onChange: (value: T) => void;
-  children: ReactNode;
+  children: React.ReactNode;
 }) {
+  const inputClass =
+    "h-9 w-full rounded-xl border border-white/10 bg-slate-950/75 px-3 text-xs text-slate-200 outline-none transition focus:border-blue-300/50 focus:ring-2 focus:ring-blue-500/15";
+
   return (
-    <label className="grid gap-2 text-xs font-semibold text-slate-300">
+    <label className="grid gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
       {label}
       <select
         className={inputClass}
@@ -536,99 +556,10 @@ function FilterSelect<T extends string>({
   );
 }
 
-function Field({
-  label,
-  error,
-  children,
-}: {
-  label: string;
-  error?: string;
-  children: ReactNode;
-}) {
-  return (
-    <label className="grid gap-2 text-xs font-semibold text-slate-300">
-      {label}
-      {children}
-      {error ? <span className="text-[11px] text-red-300">{error}</span> : null}
-    </label>
-  );
-}
-
-function MiniStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-white/10 bg-slate-950/50 px-4 py-3 text-right shadow-xl shadow-black/10">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-        {label}
-      </p>
-      <p className="mt-1 text-2xl font-semibold text-white">{value}</p>
-    </div>
-  );
-}
-
-function TaskSkeleton() {
-  return (
-    <div className="grid gap-2">
-      {[0, 1, 2, 3].map((item) => (
-        <div
-          key={item}
-          className="h-24 animate-pulse rounded-xl border border-white/8 bg-white/[0.03]"
-        />
-      ))}
-    </div>
-  );
-}
-
-const inputClass =
-  "h-10 w-full rounded-xl border border-white/10 bg-slate-950/75 px-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-blue-300/50 focus:ring-2 focus:ring-blue-500/15";
-
-function defaultValues(weekStartDate: string): TaskFormValues {
-  return {
-    projectId: "",
-    taskType: "planned_work",
-    status: "todo",
-    title: "",
-    details: "",
-    weekStartDate,
-    targetDate: "",
-    completedAt: "",
-    priority: "normal",
-    includedInReport: false,
-  };
-}
-
-function toTaskInput(values: TaskFormValues) {
-  return {
-    projectId: values.projectId || null,
-    taskType: values.taskType,
-    status: values.status,
-    title: values.title,
-    details: values.details?.trim() || null,
-    weekStartDate: values.weekStartDate,
-    targetDate: values.targetDate || null,
-    completedAt: values.completedAt || null,
-    priority: values.priority,
-    includedInReport: values.includedInReport,
-  };
-}
-
-function summarizeTasks(tasks: WeeklyTask[]) {
-  return {
-    open: tasks.filter((task) => ["todo", "in_progress"].includes(task.status)).length,
-    blocked: tasks.filter((task) => task.status === "blocked").length,
-    completed: tasks.filter((task) => task.status === "completed").length,
-    included: tasks.filter((task) => task.includedInReport).length,
-  };
-}
-
-function labelStatus(value: WeeklyTaskStatus) {
-  return statuses.find((status) => status.value === value)?.label ?? value;
-}
-
 function today() {
   const date = new Date();
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
-
   return `${year}-${month}-${day}`;
 }

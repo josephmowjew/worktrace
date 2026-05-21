@@ -4,10 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
   Archive,
-  CheckCircle2,
-  Clock3,
-  Database,
-  ExternalLink,
+  ChevronDown,
   FolderKanban,
   FolderOpen,
   GitBranch,
@@ -21,21 +18,32 @@ import { useMemo, useState } from "react";
 import type { InputHTMLAttributes } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Panel } from "../components/ui/Panel";
-import { syncCommits } from "../lib/api/gitSync";
+import { ProjectCard } from "../components/ui/ProjectCard";
+import { DonutChart, CategoryLegend } from "../components/ui/DonutChart";
+import { RepositoriesTable } from "../components/ui/RepositoriesTable";
+import { ContributorsList } from "../components/ui/ContributorsList";
+import { Pagination } from "../components/ui/Pagination";
 import {
   archiveProject,
   createProject,
   listProjects,
   updateProject,
   validateRepoPath,
+  getProjectStats,
+  getCategoryDistribution,
+  getRecentCommits,
+  getTopContributors,
 } from "../lib/api/projects";
-import type { Project } from "../types/project";
+import type {
+  Project,
+  ProjectStats,
+} from "../types/project";
 
 const projectSchema = z.object({
   name: z.string().trim().min(1, "Project name is required"),
+  description: z.string().trim().optional(),
   repoPath: z.string().trim().optional(),
   githubUrl: z
     .string()
@@ -51,40 +59,60 @@ type ProjectFormValues = z.infer<typeof projectSchema>;
 
 const emptyValues: ProjectFormValues = {
   name: "",
+  description: "",
   repoPath: "",
   githubUrl: "",
-  projectType: "Company",
+  projectType: "Backend",
 };
+
+const ITEMS_PER_PAGE = 6;
 
 export function ProjectsPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"active" | "archived" | "all">(
-    "active",
-  );
+  const [statusFilter, setStatusFilter] = useState<"active" | "archived" | "all">("active");
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [sortBy, setSortBy] = useState<"recentlyUpdated" | "name" | "commits">("recentlyUpdated");
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [repoValidation, setRepoValidation] = useState<ValidationState | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
     queryFn: listProjects,
   });
+
+  const statsQuery = useQuery({
+    queryKey: ["projectStats"],
+    queryFn: getProjectStats,
+  });
+
+  const categoryQuery = useQuery({
+    queryKey: ["categoryDistribution"],
+    queryFn: getCategoryDistribution,
+  });
+
+  const recentCommitsQuery = useQuery({
+    queryKey: ["recentCommits"],
+    queryFn: () => getRecentCommits(5),
+  });
+
+  const contributorsQuery = useQuery({
+    queryKey: ["topContributors"],
+    queryFn: () => getTopContributors(4),
+  });
+
   const form = useForm<ProjectFormValues>({
     resolver: zodResolver(projectSchema),
     defaultValues: emptyValues,
   });
 
   const autoSyncMutation = useMutation({
-    mutationFn: (project: Project) =>
-      syncCommits({
-        from: null,
-        to: null,
-        authorEmail: null,
-        projectIds: [project.id],
-      }),
+    mutationFn: () => Promise.resolve(),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["activity"] });
+      await queryClient.invalidateQueries({ queryKey: ["projectStats"] });
     },
   });
 
@@ -92,6 +120,7 @@ export function ProjectsPage() {
     mutationFn: async (values: ProjectFormValues) => {
       const input = {
         name: values.name,
+        description: normalizeOptional(values.description),
         repoPath: normalizeOptional(values.repoPath),
         githubUrl: normalizeOptional(values.githubUrl),
         projectType: normalizeOptional(values.projectType),
@@ -112,40 +141,84 @@ export function ProjectsPage() {
     },
     onSuccess: async (project) => {
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
+      await queryClient.invalidateQueries({ queryKey: ["projectStats"] });
+      await queryClient.invalidateQueries({ queryKey: ["categoryDistribution"] });
       closeForm();
 
       if (project.repoPath && project.status === "active") {
-        autoSyncMutation.mutate(project);
+        autoSyncMutation.mutate();
       }
     },
   });
 
   const archiveMutation = useMutation({
     mutationFn: archiveProject,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["projects"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: ["projectStats"] });
+      queryClient.invalidateQueries({ queryKey: ["categoryDistribution"] });
+    },
   });
 
   const projects = projectsQuery.data ?? [];
-  const activeProjects = projects.filter((project) => project.status === "active");
-  const archivedProjects = projects.filter((project) => project.status === "archived");
-  const activeGitBackedProjects = activeProjects.filter((project) => project.repoPath);
-  const activeManualOnlyProjects = activeProjects.filter((project) => !project.repoPath);
+  const statsMap = useMemo(() => {
+    const map = new Map<string, ProjectStats>();
+    statsQuery.data?.forEach((s) => map.set(s.projectId, s));
+    return map;
+  }, [statsQuery.data]);
+
+  const categories = categoryQuery.data ?? [];
+  const totalProjects = projects.filter((p) => p.status === "active").length;
 
   const filteredProjects = useMemo(() => {
     const needle = search.trim().toLowerCase();
 
     return projects.filter((project) => {
-      const matchesStatus =
-        statusFilter === "all" || project.status === statusFilter;
+      const matchesStatus = statusFilter === "all" || project.status === statusFilter;
+      const matchesCategory =
+        categoryFilter === "all" || project.projectType === categoryFilter;
       const matchesSearch =
         !needle ||
         project.name.toLowerCase().includes(needle) ||
+        project.description?.toLowerCase().includes(needle) ||
         project.repoPath?.toLowerCase().includes(needle) ||
         project.githubUrl?.toLowerCase().includes(needle);
 
-      return matchesStatus && matchesSearch;
+      return matchesStatus && matchesCategory && matchesSearch;
     });
-  }, [projects, search, statusFilter]);
+  }, [projects, search, statusFilter, categoryFilter]);
+
+  const sortedProjects = useMemo(() => {
+    const sorted = [...filteredProjects];
+    switch (sortBy) {
+      case "name":
+        sorted.sort((a, b) => a.name.localeCompare(b.name));
+        break;
+      case "commits":
+        sorted.sort((a, b) => {
+          const aCommits = statsMap.get(a.id)?.commitsThisWeek ?? 0;
+          const bCommits = statsMap.get(b.id)?.commitsThisWeek ?? 0;
+          return bCommits - aCommits;
+        });
+        break;
+      case "recentlyUpdated":
+      default:
+        sorted.sort(
+          (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+        );
+        break;
+    }
+    return sorted;
+  }, [filteredProjects, sortBy, statsMap]);
+
+  const totalPages = Math.ceil(sortedProjects.length / ITEMS_PER_PAGE);
+  const paginatedProjects = sortedProjects.slice(
+    (currentPage - 1) * ITEMS_PER_PAGE,
+    currentPage * ITEMS_PER_PAGE,
+  );
+
+  const activeProjects = projects.filter((project) => project.status === "active");
+  const archivedProjects = projects.filter((project) => project.status === "archived");
 
   function openCreateForm() {
     setEditingProject(null);
@@ -159,9 +232,10 @@ export function ProjectsPage() {
     setRepoValidation(null);
     form.reset({
       name: project.name,
+      description: project.description ?? "",
       repoPath: project.repoPath ?? "",
       githubUrl: project.githubUrl ?? "",
-      projectType: project.projectType ?? "Company",
+      projectType: project.projectType ?? "Backend",
     });
     setIsFormOpen(true);
   }
@@ -225,6 +299,10 @@ export function ProjectsPage() {
     }
   }
 
+  function handlePageChange(page: number) {
+    setCurrentPage(page);
+  }
+
   return (
     <div className="space-y-4">
       <Panel className="relative overflow-hidden p-0">
@@ -233,25 +311,26 @@ export function ProjectsPage() {
           <div className="min-w-0">
             <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-cyan-300/15 bg-cyan-300/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
               <ShieldCheck className="h-3.5 w-3.5" />
-              Local project registry
+              Project Management
             </div>
             <h1 className="text-2xl font-semibold tracking-tight text-white">
               Projects
             </h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-400">
-              Connect local repositories, keep manual-only work visible, and prepare
-              each source for weekly activity reporting.
+              View and manage all your software projects and repositories.
             </p>
           </div>
 
           <div className="flex shrink-0 items-center gap-3">
-            <div className="hidden rounded-xl border border-white/8 bg-slate-950/45 px-4 py-3 text-right shadow-2xl shadow-blue-950/20 backdrop-blur-xl lg:block">
-              <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-slate-500">
-                Active Sources
-              </p>
-              <p className="mt-1 text-2xl font-semibold text-white">
-                {activeProjects.length}
-              </p>
+            <div className="hidden items-center gap-4 rounded-xl border border-white/8 bg-slate-950/45 px-4 py-3 shadow-2xl shadow-blue-950/20 backdrop-blur-xl lg:flex">
+              <div className="text-right">
+                <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-slate-500">
+                  Total Projects
+                </p>
+                <p className="mt-1 text-2xl font-semibold text-white">
+                  {projects.length}
+                </p>
+              </div>
             </div>
             <Button variant="primary" onClick={openCreateForm}>
               <Plus className="h-4 w-4" />
@@ -261,122 +340,210 @@ export function ProjectsPage() {
         </div>
       </Panel>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_350px]">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-4">
           <Panel className="flex flex-wrap items-center justify-between gap-3 p-3">
-            <label className="flex min-w-0 flex-1 basis-[280px] items-center gap-2 rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2.5 text-xs text-slate-400 shadow-inner shadow-black/20">
+            <label className="flex min-w-0 flex-1 basis-[240px] items-center gap-2 rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2.5 text-xs text-slate-400 shadow-inner shadow-black/20">
               <Search className="h-4 w-4 text-slate-500" />
               <input
                 value={search}
                 onChange={(event) => setSearch(event.currentTarget.value)}
                 className="w-full bg-transparent text-slate-100 outline-none placeholder:text-slate-500"
-                placeholder="Search projects, repositories, GitHub URLs..."
+                placeholder="Search projects, repos..."
               />
             </label>
 
-            <div className="flex items-center gap-1.5 rounded-xl border border-white/8 bg-slate-950/50 p-1">
-              {(["active", "archived", "all"] as const).map((status) => (
+            <div className="flex flex-wrap items-center gap-2">
+              <FilterSelect
+                value={statusFilter}
+                onChange={(v) => {
+                  setStatusFilter(v as typeof statusFilter);
+                  setCurrentPage(1);
+                }}
+                options={[
+                  { value: "all", label: "All Status" },
+                  { value: "active", label: "Active" },
+                  { value: "archived", label: "Archived" },
+                ]}
+              />
+
+              <FilterSelect
+                value={categoryFilter}
+                onChange={(v) => {
+                  setCategoryFilter(v);
+                  setCurrentPage(1);
+                }}
+                options={[
+                  { value: "all", label: "All Categories" },
+                  ...Array.from(
+                    new Set(projects.map((p) => p.projectType).filter(Boolean)),
+                  ).map((cat) => ({ value: cat!, label: cat! })),
+                ]}
+              />
+
+              <FilterSelect
+                value={sortBy}
+                onChange={(v) => {
+                  setSortBy(v as typeof sortBy);
+                  setCurrentPage(1);
+                }}
+                options={[
+                  { value: "recentlyUpdated", label: "Recently Updated" },
+                  { value: "name", label: "Name" },
+                  { value: "commits", label: "Most Commits" },
+                ]}
+              />
+
+              {(search || statusFilter !== "active" || categoryFilter !== "all") && (
                 <button
-                  key={status}
-                  type="button"
-                  onClick={() => setStatusFilter(status)}
-                  className={[
-                    "rounded-lg px-3 py-1.5 text-xs font-semibold capitalize transition-all duration-150",
-                    statusFilter === status
-                      ? "bg-blue-500 text-white shadow-lg shadow-blue-500/25"
-                      : "text-slate-400 hover:bg-white/10 hover:text-slate-200",
-                  ].join(" ")}
+                  onClick={() => {
+                    setSearch("");
+                    setStatusFilter("active");
+                    setCategoryFilter("all");
+                    setCurrentPage(1);
+                  }}
+                  className="rounded-lg px-3 py-2 text-xs font-medium text-blue-300 transition-colors hover:bg-white/10"
                 >
-                  {status}
+                  Clear
                 </button>
-              ))}
+              )}
             </div>
           </Panel>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-4">
-            <ProjectMetric
-              icon={FolderKanban}
-              label="Visible"
-              value={filteredProjects.length.toString()}
-              caption={`Of ${projects.length} registered`}
+          {projectsQuery.isLoading ? (
+            <ProjectListSkeleton />
+          ) : projectsQuery.isError ? (
+            <EmptyProjects
+              tone="error"
+              title="Project data is not available"
+              message={toMessage(projectsQuery.error)}
+              actionLabel="Try Again"
+              onAction={() => projectsQuery.refetch()}
             />
-            <ProjectMetric
-              icon={CheckCircle2}
-              label="Active"
-              value={activeProjects.length.toString()}
-              caption="Ready for reports"
-              tone="green"
+          ) : paginatedProjects.length === 0 ? (
+            <EmptyProjects
+              title={projects.length === 0 ? "No projects yet" : "No matching projects"}
+              message={
+                projects.length === 0
+                  ? "Create your first project to start tracking activity."
+                  : "Adjust your filters or search query."
+              }
+              actionLabel="New Project"
+              onAction={openCreateForm}
             />
-            <ProjectMetric
-              icon={GitBranch}
-              label="Git Repos"
-              value={activeGitBackedProjects.length.toString()}
-              caption="Active local repos"
-              tone="cyan"
-            />
-            <ProjectMetric
-              icon={Archive}
-              label="Archived"
-              value={archivedProjects.length.toString()}
-              caption="Hidden by default"
-              tone="orange"
-            />
-          </div>
-
-          <Panel className="min-h-[360px] p-3 lg:min-h-[420px]">
-            <div className="mb-3 flex items-center justify-between px-1">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-100">
-                  Project Sources
-                </h2>
-                <p className="mt-0.5 text-xs text-slate-500">
-                  {filteredProjects.length} visible of {projects.length} registered
-                </p>
-              </div>
-              <Badge tone={statusFilter === "archived" ? "orange" : "blue"}>
-                {statusFilter}
-              </Badge>
-            </div>
-
-            {projectsQuery.isLoading ? (
-              <ProjectListSkeleton />
-            ) : projectsQuery.isError ? (
-              <EmptyProjects
-                tone="error"
-                title="Project data is not available"
-                message={toMessage(projectsQuery.error)}
-                actionLabel="Try Again"
-                onAction={() => projectsQuery.refetch()}
-              />
-            ) : filteredProjects.length === 0 ? (
-              <EmptyProjects
-                title={projects.length === 0 ? "No projects yet" : "No matching projects"}
-                message={
-                  projects.length === 0
-                    ? "Create your first project to start syncing local Git activity."
-                    : "Adjust your filters or search query."
-                }
-                actionLabel="New Project"
-                onAction={openCreateForm}
-              />
-            ) : (
-              <div className="grid gap-2.5">
-                {filteredProjects.map((project) => (
-                  <ProjectRow
+          ) : (
+            <>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {paginatedProjects.map((project) => (
+                  <ProjectCard
                     key={project.id}
                     project={project}
-                    isArchiving={archiveMutation.isPending}
+                    stats={statsMap.get(project.id)}
                     onEdit={() => openEditForm(project)}
                     onArchive={() => archiveMutation.mutate(project.id)}
                   />
                 ))}
               </div>
-            )}
+
+              <Pagination
+                currentPage={currentPage}
+                totalPages={totalPages}
+                totalItems={sortedProjects.length}
+                itemsPerPage={ITEMS_PER_PAGE}
+                onPageChange={handlePageChange}
+              />
+            </>
+          )}
+
+          <Panel className="p-0">
+            <div className="border-b border-white/8 px-4 py-3">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-slate-100">
+                  Recent Repositories
+                </h2>
+                <button className="text-xs font-medium text-blue-300 transition-colors hover:text-blue-200">
+                  View all repositories
+                </button>
+              </div>
+            </div>
+            <div className="p-3">
+              {recentCommitsQuery.isLoading ? (
+                <div className="flex h-32 items-center justify-center">
+                  <RefreshCw className="h-5 w-5 animate-spin text-slate-500" />
+                </div>
+              ) : (
+                <RepositoriesTable commits={recentCommitsQuery.data ?? []} />
+              )}
+            </div>
           </Panel>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2 xl:block xl:space-y-4">
-          <Panel className="h-fit p-0">
+        <div className="space-y-4">
+          <Panel className="p-4">
+            <h2 className="mb-4 text-sm font-semibold text-slate-100">
+              Project Categories
+            </h2>
+            {categoryQuery.isLoading ? (
+              <div className="flex h-40 items-center justify-center">
+                <RefreshCw className="h-5 w-5 animate-spin text-slate-500" />
+              </div>
+            ) : (
+              <div className="flex flex-col items-center gap-4">
+                <DonutChart data={categories} size={120} strokeWidth={16} />
+                <CategoryLegend data={categories} total={totalProjects} />
+              </div>
+            )}
+          </Panel>
+
+          <Panel className="p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-slate-100">
+                Status Summary
+              </h2>
+            </div>
+            <div className="space-y-2">
+              <StatusRow
+                label="Active"
+                count={activeProjects.length}
+                dotColor="bg-emerald-400"
+              />
+              <StatusRow
+                label="Archived"
+                count={archivedProjects.length}
+                dotColor="bg-slate-400"
+              />
+              <StatusRow
+                label="Maintenance"
+                count={0}
+                dotColor="bg-orange-400"
+              />
+            </div>
+            <button className="mt-3 flex w-full items-center justify-between rounded-xl border border-white/8 bg-slate-950/35 px-3 py-2 text-xs text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-300">
+              <span className="flex items-center gap-2">
+                <Archive className="h-3.5 w-3.5" />
+                View Archived Projects
+              </span>
+              <ChevronDown className="h-3.5 w-3.5 -rotate-90" />
+            </button>
+          </Panel>
+
+          <Panel className="p-4">
+            <div className="mb-3 flex items-center gap-2">
+              <h2 className="text-sm font-semibold text-slate-100">
+                Top Contributors
+              </h2>
+              <span className="text-[10px] text-slate-500">(This Week)</span>
+            </div>
+            {contributorsQuery.isLoading ? (
+              <div className="flex h-32 items-center justify-center">
+                <RefreshCw className="h-5 w-5 animate-spin text-slate-500" />
+              </div>
+            ) : (
+              <ContributorsList contributors={contributorsQuery.data ?? []} />
+            )}
+          </Panel>
+
+          <Panel className="p-0">
             <div className="border-b border-white/8 px-4 py-3">
               <div className="flex items-start justify-between gap-2">
                 <div>
@@ -407,6 +574,13 @@ export function ProjectsPage() {
                   placeholder="Sparc Force API"
                   error={form.formState.errors.name?.message}
                   {...form.register("name")}
+                />
+
+                <TextField
+                  label="Description"
+                  placeholder="Backend REST API for platform..."
+                  error={form.formState.errors.description?.message}
+                  {...form.register("description")}
                 />
 
                 <div className="space-y-2">
@@ -442,6 +616,11 @@ export function ProjectsPage() {
                     className="h-10 rounded-xl border border-white/10 bg-slate-950/75 px-3 text-sm text-slate-100 outline-none transition focus:border-blue-300/50 focus:ring-2 focus:ring-blue-500/15"
                     {...form.register("projectType")}
                   >
+                    <option>Backend</option>
+                    <option>Frontend</option>
+                    <option>Marketing</option>
+                    <option>Tools</option>
+                    <option>Service</option>
                     <option>Company</option>
                     <option>Client</option>
                     <option>Internal</option>
@@ -479,66 +658,11 @@ export function ProjectsPage() {
                     Add a source when you are ready.
                   </p>
                   <p className="mt-1.5 text-xs leading-5 text-slate-500">
-                    Git-backed projects auto-sync as soon as they are saved and then
-                    refresh while WorkTrace is open. Manual-only projects stay available
-                    for planning, meetings, and reports.
+                    Git-backed projects auto-sync as soon as they are saved.
                   </p>
                 </div>
               </div>
             )}
-          </Panel>
-
-          <Panel className="space-y-3">
-            <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
-              <Database className="h-4 w-4 text-cyan-300" />
-              Runtime Gate
-            </div>
-            <GateLine label="SQLite persistence" value="Ready" tone="green" />
-            <GateLine
-              label="Folder picker"
-              value="Native dialog"
-              tone="blue"
-            />
-            <GateLine
-              label="Manual-only sources"
-              value={activeManualOnlyProjects.length.toString()}
-              tone="slate"
-            />
-            {autoSyncMutation.isPending ? (
-              <div className="flex items-center gap-2 rounded-xl border border-blue-300/20 bg-blue-500/10 p-3 text-xs text-blue-100">
-                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                Syncing new project activity...
-              </div>
-            ) : null}
-            {autoSyncMutation.data ? (
-              <div
-                className={[
-                  "rounded-xl border p-3 text-xs",
-                  autoSyncMutation.data.errors.length
-                    ? "border-orange-300/20 bg-orange-500/10 text-orange-100"
-                    : "border-emerald-300/20 bg-emerald-500/10 text-emerald-100",
-                ].join(" ")}
-              >
-                Auto-sync checked repository history: added{" "}
-                {autoSyncMutation.data.newCommits} commits and updated{" "}
-                {autoSyncMutation.data.updatedCommits}.
-                {autoSyncMutation.data.errors.length ? (
-                  <div className="mt-2 leading-5">
-                    {autoSyncMutation.data.errors.join(" ")}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-            {autoSyncMutation.isError ? (
-              <div className="rounded-xl border border-orange-300/20 bg-orange-500/10 p-3 text-xs text-orange-100">
-                Project was saved, but automatic sync needs attention:{" "}
-                {toMessage(autoSyncMutation.error)}
-              </div>
-            ) : null}
-            <div className="rounded-xl border border-cyan-300/10 bg-cyan-300/5 p-3 text-xs leading-5 text-slate-400">
-              New Git-backed projects sync repository history first, then refresh every 5
-              minutes while WorkTrace is open.
-            </div>
           </Panel>
         </div>
       </div>
@@ -546,124 +670,60 @@ export function ProjectsPage() {
   );
 }
 
-function ProjectRow({
-  project,
-  isArchiving,
-  onEdit,
-  onArchive,
+function FilterSelect({
+  value,
+  onChange,
+  options,
 }: {
-  project: Project;
-  isArchiving: boolean;
-  onEdit: () => void;
-  onArchive: () => void;
+  value: string;
+  onChange: (value: string) => void;
+  options: { value: string; label: string }[];
 }) {
   return (
-    <article className="group relative overflow-hidden rounded-xl border border-white/8 bg-slate-950/45 p-3.5 shadow-lg shadow-black/15 transition-all duration-150 hover:border-blue-300/25 hover:bg-slate-900/60">
-      <div className="absolute inset-y-3 left-0 w-1 rounded-r-full bg-gradient-to-b from-blue-400 via-cyan-300 to-blue-600 opacity-70" />
-      <div className="flex items-start justify-between gap-3 pl-2">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <h3 className="truncate text-sm font-semibold text-white">{project.name}</h3>
-            <Badge tone={project.status === "active" ? "green" : "orange"}>
-              {project.status}
-            </Badge>
-            {project.projectType ? <Badge tone="blue">{project.projectType}</Badge> : null}
-          </div>
-          <p className="mt-2 truncate text-xs text-slate-400">
-            {project.repoPath || "Manual-only project"}
-          </p>
-          {project.githubUrl ? (
-            <a
-              href={project.githubUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-2 inline-flex max-w-full items-center gap-1 text-xs text-cyan-300/85 hover:text-cyan-200"
-            >
-              <span className="truncate">{project.githubUrl}</span>
-              <ExternalLink className="h-3 w-3 shrink-0" />
-            </a>
-          ) : null}
-        </div>
-
-        <div className="flex shrink-0 items-center gap-1.5">
-          <Button variant="secondary" onClick={onEdit} className="h-8 px-3 text-xs">
-            Edit
-          </Button>
-          {project.status === "active" ? (
-            <Button
-              variant="ghost"
-              onClick={onArchive}
-              disabled={isArchiving}
-              className="h-8 px-3 text-xs text-orange-200 hover:bg-orange-500/10 hover:text-orange-100"
-              aria-label={`Archive ${project.name}`}
-              title={`Archive ${project.name}`}
-            >
-              <Archive className="h-4 w-4" />
-              Archive
-            </Button>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="mt-3 flex items-center gap-3 pl-2 text-[10px] text-slate-500">
-        <span className="inline-flex items-center gap-1">
-          <Clock3 className="h-3 w-3" />
-          Updated {formatDate(project.updatedAt)}
-        </span>
-      </div>
-    </article>
+    <div className="relative">
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="appearance-none rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2 pr-8 text-xs text-slate-300 outline-none transition focus:border-blue-300/50 focus:ring-2 focus:ring-blue-500/15"
+      >
+        {options.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+    </div>
   );
 }
 
-function ProjectMetric({
-  icon: Icon,
+function StatusRow({
   label,
-  value,
-  caption,
-  tone = "blue",
+  count,
+  dotColor,
 }: {
-  icon: typeof FolderKanban;
   label: string;
-  value: string;
-  caption: string;
-  tone?: "blue" | "cyan" | "green" | "orange";
+  count: number;
+  dotColor: string;
 }) {
-  const toneClass = {
-    blue: "border-blue-300/20 bg-blue-500/15 text-blue-200 shadow-blue-500/10",
-    cyan: "border-cyan-300/20 bg-cyan-500/15 text-cyan-200 shadow-cyan-500/10",
-    green:
-      "border-emerald-300/20 bg-emerald-500/15 text-emerald-200 shadow-emerald-500/10",
-    orange:
-      "border-orange-300/20 bg-orange-500/15 text-orange-200 shadow-orange-500/10",
-  }[tone];
-
   return (
-    <Panel className="p-3">
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-            {label}
-          </p>
-          <p className="mt-1 text-2xl font-semibold text-white">{value}</p>
-          <p className="mt-1 text-[11px] text-slate-500">{caption}</p>
-        </div>
-        <div
-          className={`flex h-9 w-9 items-center justify-center rounded-xl border shadow-lg ${toneClass}`}
-        >
-          <Icon className="h-4 w-4" />
-        </div>
-      </div>
-    </Panel>
+    <div className="flex items-center justify-between rounded-xl border border-white/8 bg-slate-950/35 px-3 py-2 text-xs">
+      <span className="flex items-center gap-2 text-slate-400">
+        <span className={`h-1.5 w-1.5 rounded-full ${dotColor}`} />
+        {label}
+      </span>
+      <span className="font-semibold text-white">{count}</span>
+    </div>
   );
 }
 
 function ProjectListSkeleton() {
   return (
-    <div className="grid gap-2.5">
-      {[0, 1, 2, 3].map((item) => (
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {[0, 1, 2, 3, 4, 5].map((item) => (
         <div
           key={item}
-          className="h-24 animate-pulse rounded-xl border border-white/8 bg-white/[0.035]"
+          className="h-48 animate-pulse rounded-2xl border border-white/8 bg-white/[0.035]"
         />
       ))}
     </div>
@@ -744,49 +804,9 @@ function ValidationMessage({ state }: { state: ValidationState }) {
   );
 }
 
-function GateLine({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone: "blue" | "green" | "slate";
-}) {
-  const dotClass = {
-    blue: "bg-blue-300",
-    green: "bg-emerald-300",
-    slate: "bg-slate-400",
-  }[tone];
-
-  return (
-    <div className="flex items-center justify-between rounded-xl border border-white/8 bg-slate-950/35 px-3 py-2 text-xs">
-      <span className="inline-flex items-center gap-2 text-slate-400">
-        <span className={`h-1.5 w-1.5 rounded-full ${dotClass}`} />
-        {label}
-      </span>
-      <span className="font-semibold text-slate-200">{value}</span>
-    </div>
-  );
-}
-
 function normalizeOptional(value?: string) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
-}
-
-function formatDate(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
 }
 
 function toMessage(error: unknown) {

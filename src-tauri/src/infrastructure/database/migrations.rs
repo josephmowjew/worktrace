@@ -6,6 +6,24 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .await?;
     sqlx::raw_sql(SCHEMA_SQL).execute(pool).await?;
 
+    sqlx::query(
+        r#"
+        ALTER TABLE projects ADD COLUMN description TEXT;
+        "#,
+    )
+    .execute(pool)
+    .await
+    .ok();
+
+    sqlx::query(
+        r#"
+        ALTER TABLE weekly_tasks ADD COLUMN progress_percent INTEGER;
+        "#,
+    )
+    .execute(pool)
+    .await
+    .ok();
+
     Ok(())
 }
 
@@ -13,6 +31,7 @@ const SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
+  description TEXT,
   repo_path TEXT,
   github_url TEXT,
   type TEXT,

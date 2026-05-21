@@ -5,26 +5,47 @@ import {
   FolderKanban,
   GitCommit,
   RefreshCw,
+  Search,
   Sparkles,
 } from "lucide-react";
+import { useState } from "react";
+import { AreaChart } from "../components/ui/AreaChart";
 import { Badge } from "../components/ui/Badge";
+import { BlockersPanel } from "../components/ui/BlockersPanel";
 import { Button } from "../components/ui/Button";
 import { Panel } from "../components/ui/Panel";
-import { StatCard } from "../components/ui/StatCard";
+import { ProjectBreakdownPanel } from "../components/ui/ProjectBreakdownPanel";
+import { RecentActivityItem } from "../components/ui/RecentActivityItem";
+import { StatCardWithDelta } from "../components/ui/StatCardWithDelta";
+import { UpcomingWorkPanel } from "../components/ui/UpcomingWorkPanel";
+import { WeekRangePicker } from "../components/ui/WeekRangePicker";
+import { getDashboardStats, getProjectBreakdown, getWeeklyActivityHours } from "../lib/api/dashboard";
 import { listActivity } from "../lib/api/activity";
 import { syncCommits } from "../lib/api/gitSync";
-import { listProjects } from "../lib/api/projects";
-import { listReports } from "../lib/api/reports";
+import { listWeeklyTasks } from "../lib/api/weeklyTasks";
 import { getSettings } from "../lib/api/settings";
-import { currentWeekRange } from "../lib/dates";
+import { currentWeekRange, shiftWeek } from "../lib/dates";
 
 export function DashboardPage() {
   const queryClient = useQueryClient();
-  const weekRange = currentWeekRange();
-  const projectsQuery = useQuery({
-    queryKey: ["projects"],
-    queryFn: listProjects,
+  const [anchorDate, setAnchorDate] = useState(new Date());
+  const weekRange = currentWeekRange(anchorDate);
+
+  const statsQuery = useQuery({
+    queryKey: ["dashboard-stats", weekRange.from, weekRange.to],
+    queryFn: getDashboardStats,
   });
+
+  const activityHoursQuery = useQuery({
+    queryKey: ["dashboard-activity-hours", weekRange.from, weekRange.to],
+    queryFn: getWeeklyActivityHours,
+  });
+
+  const breakdownQuery = useQuery({
+    queryKey: ["dashboard-breakdown", weekRange.from, weekRange.to],
+    queryFn: getProjectBreakdown,
+  });
+
   const activityQuery = useQuery({
     queryKey: ["activity", weekRange.from, weekRange.to],
     queryFn: () =>
@@ -33,14 +54,21 @@ export function DashboardPage() {
         to: weekRange.to,
       }),
   });
-  const reportsQuery = useQuery({
-    queryKey: ["reports"],
-    queryFn: listReports,
+
+  const tasksQuery = useQuery({
+    queryKey: ["weekly-tasks", weekRange.from, weekRange.to],
+    queryFn: () =>
+      listWeeklyTasks({
+        weekStartDate: weekRange.from,
+        weekEndDate: weekRange.to,
+      }),
   });
+
   const settingsQuery = useQuery({
     queryKey: ["settings"],
     queryFn: getSettings,
   });
+
   const syncMutation = useMutation({
     mutationFn: () =>
       syncCommits({
@@ -49,209 +77,204 @@ export function DashboardPage() {
         authorEmail: settingsQuery.data?.gitAuthorEmail || null,
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       queryClient.invalidateQueries({ queryKey: ["activity"] });
+      queryClient.invalidateQueries({ queryKey: ["weekly-tasks"] });
     },
   });
 
-  const projects = projectsQuery.data ?? [];
-  const activityDays = activityQuery.data ?? [];
-  const activityItems = activityDays.flatMap((day) => day.items);
-  const commitCount = activityItems.filter((item) => item.activityType === "commit").length;
-  const manualCount = activityItems.filter((item) => item.activityType !== "commit").length;
-  const activeProjects = projects.filter((project) => project.status === "active").length;
+  const activityItems = (activityQuery.data ?? []).flatMap((day) => day.items);
   const recentItems = activityItems.slice(0, 5);
-  const hasLoadError =
-    projectsQuery.isError || activityQuery.isError || reportsQuery.isError;
+  const allTasks = tasksQuery.data ?? [];
+  const upcomingTasks = allTasks.filter(
+    (t) => t.status === "todo" || t.status === "in_progress"
+  );
+  const totalHours = (breakdownQuery.data ?? []).reduce((sum, p) => sum + p.hours, 0);
+
+  const stats = statsQuery.data;
+  const isLoading =
+    statsQuery.isLoading ||
+    activityHoursQuery.isLoading ||
+    breakdownQuery.isLoading ||
+    activityQuery.isLoading ||
+    tasksQuery.isLoading;
 
   return (
     <div className="space-y-4">
       <Panel className="relative overflow-hidden p-0">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_25%,rgba(59,130,246,0.18),transparent_28%),radial-gradient(circle_at_78%_8%,rgba(20,184,166,0.14),transparent_24%)]" />
         <div className="relative flex flex-wrap items-center justify-between gap-4 px-5 py-4">
-          <div>
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-cyan-300/15 bg-cyan-300/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
-              <Sparkles className="h-3.5 w-3.5" />
-              Current week command center
+          <div className="flex flex-wrap items-center gap-3">
+            <div>
+              <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-cyan-300/15 bg-cyan-300/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
+                <Sparkles className="h-3.5 w-3.5" />
+                Weekly work command center
+              </div>
+              <h1 className="text-2xl font-semibold tracking-tight text-white">Dashboard</h1>
             </div>
-            <h1 className="text-2xl font-semibold tracking-tight text-white">Dashboard</h1>
-            <p className="mt-1 max-w-2xl text-sm text-slate-400">
-              Your local work summary for {weekRange.label}, built from explicit Git
-              syncs and manual logs.
-            </p>
-          </div>
-          <Button
-            variant="primary"
-            onClick={() => syncMutation.mutate()}
-            disabled={syncMutation.isPending}
-          >
-            <RefreshCw
-              className={`h-4 w-4 ${syncMutation.isPending ? "animate-spin" : ""}`}
+            <WeekRangePicker
+              label={weekRange.label}
+              onPrev={() => setAnchorDate(shiftWeek(anchorDate, -1))}
+              onNext={() => setAnchorDate(shiftWeek(anchorDate, 1))}
             />
-            {syncMutation.isPending ? "Syncing..." : "Sync Repositories"}
-          </Button>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2">
+              <Search className="h-4 w-4 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search..."
+                className="bg-transparent text-sm text-slate-200 placeholder:text-slate-500 focus:outline-none"
+              />
+            </div>
+            <Button
+              variant="primary"
+              onClick={() => syncMutation.mutate()}
+              disabled={syncMutation.isPending}
+            >
+              <RefreshCw
+                className={`h-4 w-4 ${syncMutation.isPending ? "animate-spin" : ""}`}
+              />
+              {syncMutation.isPending ? "Syncing..." : "Sync"}
+            </Button>
+          </div>
         </div>
       </Panel>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-4">
-        <StatCard
+        <StatCardWithDelta
           icon={FolderKanban}
-          label="Active Projects"
-          value={projectsQuery.isLoading ? "..." : activeProjects.toString()}
-          hint={
-            projectsQuery.isLoading ? "Loading local registry" : `${projects.length} total registered`
-          }
+          label="Projects Worked On"
+          value={isLoading ? "..." : (stats?.projectsWorkedOn ?? 0)}
+          delta={stats?.projectsDelta ?? 0}
+          deltaType="count"
+          tone="blue"
         />
-        <StatCard
+        <StatCardWithDelta
           icon={GitCommit}
           label="Commits This Week"
-          value={activityQuery.isLoading ? "..." : commitCount.toString()}
-          hint={activityQuery.isLoading ? "Loading activity" : "From local Git sync"}
+          value={isLoading ? "..." : (stats?.commitsThisWeek ?? 0)}
+          delta={stats?.commitsDeltaPercent ?? 0}
+          deltaType="percent"
           tone="purple"
         />
-        <StatCard
+        <StatCardWithDelta
           icon={ClipboardList}
-          label="Manual Logs"
-          value={activityQuery.isLoading ? "..." : manualCount.toString()}
-          hint={activityQuery.isLoading ? "Loading activity" : "Meetings and non-code work"}
+          label="Meetings Logged"
+          value={isLoading ? "..." : (stats?.meetingsLogged ?? 0)}
+          delta={stats?.meetingsDelta ?? 0}
+          deltaType="count"
           tone="cyan"
         />
-        <StatCard
+        <StatCardWithDelta
           icon={BarChart3}
-          label="Reports Saved"
-          value={reportsQuery.isLoading ? "..." : (reportsQuery.data ?? []).length.toString()}
-          hint={reportsQuery.isLoading ? "Loading report history" : "Local Markdown history"}
+          label="Reports Generated"
+          value={isLoading ? "..." : (stats?.reportsGenerated ?? 0)}
+          delta={stats?.reportsDelta ?? 0}
+          deltaType="count"
           tone="green"
         />
       </div>
 
-      {hasLoadError ? (
-        <Panel className="border-red-400/20 bg-red-500/10 p-3 text-sm text-red-100">
-          {projectsQuery.error instanceof Error
-            ? projectsQuery.error.message
-            : activityQuery.error instanceof Error
-              ? activityQuery.error.message
-              : reportsQuery.error instanceof Error
-                ? reportsQuery.error.message
-                : "Dashboard data could not be loaded."}
-        </Panel>
-      ) : null}
-
-      <div className="grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
-        <Panel className="min-h-[320px]">
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Panel>
           <div className="mb-4 flex items-center justify-between">
             <div>
               <h2 className="text-base font-semibold text-white">
                 Weekly Activity Overview
               </h2>
               <p className="text-xs text-slate-400">
-                Daily volume across commits and manual logs.
+                Hours tracked across commits and manual logs.
               </p>
             </div>
-            <Badge tone="blue">{activityItems.length} items</Badge>
+            <Badge tone="blue">
+              {activityHoursQuery.data?.reduce((s, d) => s + d.hours, 0).toFixed(1)}h total
+            </Badge>
           </div>
-          {activityQuery.isLoading ? (
+          {activityHoursQuery.isLoading ? (
             <div className="h-52 animate-pulse rounded-xl border border-white/8 bg-white/[0.03]" />
-          ) : activityDays.length > 0 ? (
-            <div className="grid h-56 grid-cols-7 items-end gap-2 rounded-xl border border-white/8 bg-slate-950/35 p-4">
-              {activityDaysForWeek(weekRange.from).map((date) => {
-                const day = activityDays.find((item) => item.date === date);
-                const count = day?.items.length ?? 0;
-                const height = Math.max(8, Math.min(100, count * 18));
-
-                return (
-                  <div key={date} className="flex h-full flex-col justify-end gap-2">
-                    <div
-                      className="rounded-t-lg border border-cyan-300/20 bg-gradient-to-t from-blue-600/40 to-cyan-300/70 shadow-lg shadow-cyan-500/10"
-                      style={{ height: `${height}%` }}
-                    />
-                    <span className="text-center text-[10px] text-slate-500">
-                      {formatDay(date)}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
           ) : (
-            <div className="flex h-52 items-center justify-center rounded-xl border border-dashed border-white/8 bg-white/[0.02] px-4 text-center text-xs leading-5 text-slate-400">
-              Add a project, sync commits, or create manual logs to see your week at a
-              glance.
-            </div>
+            <AreaChart data={activityHoursQuery.data ?? []} height={240} />
           )}
         </Panel>
 
         <Panel>
-          <h2 className="text-base font-semibold text-white">Recent Activity</h2>
+          <h2 className="mb-3 text-base font-semibold text-white">Recent Activity</h2>
           {syncMutation.data ? (
-            <div className="mt-4 rounded-xl border border-emerald-400/20 bg-emerald-500/10 p-3 text-xs text-emerald-100">
+            <div className="mb-3 rounded-xl border border-emerald-400/20 bg-emerald-500/10 p-3 text-xs text-emerald-100">
               Synced {syncMutation.data.scannedProjects} projects. Added{" "}
               {syncMutation.data.newCommits} commits and updated{" "}
               {syncMutation.data.updatedCommits}.
             </div>
           ) : null}
           {syncMutation.isError ? (
-            <div className="mt-4 rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-xs text-red-100">
+            <div className="mb-3 rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-xs text-red-100">
               {syncMutation.error instanceof Error
                 ? syncMutation.error.message
                 : "Sync failed."}
             </div>
           ) : null}
-          <div className="mt-4 grid gap-2">
+          <div className="grid gap-2">
             {recentItems.length > 0 ? (
               recentItems.map((item) => (
-                <article
-                  key={item.id}
-                  className="rounded-xl border border-white/8 bg-slate-950/45 p-3"
-                >
-                  <div className="mb-1 flex items-center gap-2">
-                    <Badge tone={item.activityType === "commit" ? "cyan" : "blue"}>
-                      {item.activityType === "commit" ? "Commit" : item.activityType}
-                    </Badge>
-                    {item.projectName ? (
-                      <span className="truncate text-[11px] text-slate-500">
-                        {item.projectName}
-                      </span>
-                    ) : null}
-                  </div>
-                  <p className="truncate text-sm font-medium text-slate-100">
-                    {item.summary}
-                  </p>
-                </article>
+                <RecentActivityItem key={item.id} item={item} />
               ))
             ) : (
               <div className="rounded-xl border border-dashed border-white/8 bg-white/[0.02] p-4 text-xs leading-5 text-slate-400">
-                No activity yet. WorkTrace only tracks what you explicitly add or sync
-                from local repositories.
+                No activity yet. Sync repositories or add manual logs to see your week at a
+                glance.
               </div>
             )}
           </div>
         </Panel>
       </div>
+
+      <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+        <Panel>
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <h2 className="text-base font-semibold text-white">
+                Project Breakdown
+              </h2>
+              <p className="text-xs text-slate-400">
+                Hours spent per project this week.
+              </p>
+            </div>
+          </div>
+          {breakdownQuery.isLoading ? (
+            <div className="h-40 animate-pulse rounded-xl border border-white/8 bg-white/[0.03]" />
+          ) : (
+            <ProjectBreakdownPanel
+              breakdown={breakdownQuery.data ?? []}
+              totalHours={totalHours}
+            />
+          )}
+        </Panel>
+
+        <div className="flex flex-col gap-4">
+          <Panel>
+            <h2 className="mb-3 text-base font-semibold text-white">
+              Upcoming / Planned Work
+            </h2>
+            {tasksQuery.isLoading ? (
+              <div className="h-32 animate-pulse rounded-xl border border-white/8 bg-white/[0.03]" />
+            ) : (
+              <UpcomingWorkPanel tasks={upcomingTasks} />
+            )}
+          </Panel>
+
+          <Panel>
+            <h2 className="mb-3 text-base font-semibold text-white">
+              Blockers / Pending Items
+            </h2>
+            {tasksQuery.isLoading ? (
+              <div className="h-32 animate-pulse rounded-xl border border-white/8 bg-white/[0.03]" />
+            ) : (
+              <BlockersPanel tasks={allTasks} />
+            )}
+          </Panel>
+        </div>
+      </div>
     </div>
   );
-}
-
-function activityDaysForWeek(start: string) {
-  const [year, month, day] = start.split("-").map(Number);
-  const startDate = new Date(year, month - 1, day);
-
-  return Array.from({ length: 7 }, (_, index) => {
-    const date = new Date(startDate);
-    date.setDate(startDate.getDate() + index);
-    return formatDateOnly(date);
-  });
-}
-
-function formatDay(value: string) {
-  return new Intl.DateTimeFormat(undefined, {
-    weekday: "short",
-  }).format(new Date(`${value}T00:00:00`));
-}
-
-function formatDateOnly(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
 }

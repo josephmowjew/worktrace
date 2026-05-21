@@ -1,6 +1,8 @@
 pub mod activity;
+pub mod dashboard;
 pub mod git_sync;
 pub mod manual_logs;
+pub mod project_stats;
 pub mod projects;
 pub mod reports;
 pub mod settings;
@@ -13,6 +15,13 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         projects::update_project,
         projects::archive_project,
         projects::validate_repo_path,
+        project_stats::get_project_stats,
+        project_stats::get_category_distribution,
+        project_stats::get_recent_commits,
+        project_stats::get_top_contributors,
+        dashboard::get_dashboard_stats,
+        dashboard::get_weekly_activity_hours,
+        dashboard::get_project_breakdown,
         activity::list_activity,
         git_sync::sync_commits,
         manual_logs::list_manual_logs,

@@ -43,6 +43,7 @@ pub struct WeeklyTask {
     pub completed_at: Option<String>,
     pub priority: WeeklyTaskPriority,
     pub included_in_report: bool,
+    pub progress_percent: Option<i32>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -71,6 +72,7 @@ pub struct CreateWeeklyTaskInput {
     pub completed_at: Option<String>,
     pub priority: Option<WeeklyTaskPriority>,
     pub included_in_report: Option<bool>,
+    pub progress_percent: Option<i32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -86,6 +88,7 @@ pub struct UpdateWeeklyTaskInput {
     pub completed_at: Option<String>,
     pub priority: Option<WeeklyTaskPriority>,
     pub included_in_report: Option<bool>,
+    pub progress_percent: Option<i32>,
 }
 
 impl WeeklyTaskType {

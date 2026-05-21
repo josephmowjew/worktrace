@@ -1,6 +1,7 @@
 use crate::application::repositories::WeeklyTaskStore;
 use crate::domain::weekly_task::{
     CreateWeeklyTaskInput, ListWeeklyTasksInput, UpdateWeeklyTaskInput, WeeklyTask,
+    WeeklyTaskStatus,
 };
 
 pub struct WeeklyTaskService;
@@ -20,9 +21,14 @@ impl WeeklyTaskService {
 
     pub async fn create(
         repository: &impl WeeklyTaskStore,
-        input: CreateWeeklyTaskInput,
+        mut input: CreateWeeklyTaskInput,
     ) -> Result<WeeklyTask, WeeklyTaskServiceError> {
         validate_create(&input)?;
+
+        let status = input.status.clone().unwrap_or(WeeklyTaskStatus::Todo);
+        if status == WeeklyTaskStatus::InProgress && input.progress_percent.is_none() {
+            input.progress_percent = Some(0);
+        }
 
         repository
             .create(input)
