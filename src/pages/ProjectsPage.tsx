@@ -19,7 +19,7 @@ import {
   X,
   LayoutGrid,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import type { InputHTMLAttributes } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -108,14 +108,41 @@ export function ProjectsPage() {
   const [workspaceDiscoveries, setWorkspaceDiscoveries] = useState<WorkspaceRepoDiscovery[]>([]);
   const [selectedRepoPaths, setSelectedRepoPaths] = useState<Set<string>>(new Set());
 
+  const projectFormRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isFormOpen && projectFormRef.current) {
+      setTimeout(() => {
+        projectFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 100);
+    }
+  }, [isFormOpen]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        if (isFormOpen) {
+          closeForm();
+        } else if (isWorkspaceFormOpen) {
+          setIsWorkspaceFormOpen(false);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isFormOpen, isWorkspaceFormOpen]);
+
   const projectsQuery = useQuery({
     queryKey: ["projects"],
     queryFn: listProjects,
+    refetchInterval: 30_000,
   });
 
   const statsQuery = useQuery({
     queryKey: ["projectStats"],
     queryFn: getProjectStats,
+    refetchInterval: 30_000,
   });
 
   const categoryQuery = useQuery({
@@ -126,6 +153,7 @@ export function ProjectsPage() {
   const recentCommitsQuery = useQuery({
     queryKey: ["recentCommits", recentCommitLimit],
     queryFn: () => getRecentCommits(recentCommitLimit),
+    refetchInterval: 30_000,
   });
 
   const contributorsQuery = useQuery({
@@ -626,6 +654,135 @@ export function ProjectsPage() {
           </div>
         </div>
       </Panel>
+
+      <div
+        ref={projectFormRef}
+        className={`transition-all duration-300 ease-out overflow-hidden ${
+          isFormOpen
+            ? "max-h-[1200px] opacity-100 translate-y-0"
+            : "max-h-0 opacity-0 -translate-y-4 pointer-events-none"
+        }`}
+      >
+        <Panel className="relative overflow-hidden border-blue-300/20 bg-blue-500/5">
+          <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 via-transparent to-cyan-500/10 opacity-50" />
+          <div className="relative">
+            <div className="flex items-start justify-between gap-3 border-b border-white/8 px-5 py-4">
+              <div>
+                <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-blue-300/15 bg-blue-300/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-blue-200">
+                  <FolderKanban className="h-3.5 w-3.5" />
+                  {editingProject ? "Edit Project" : "New Project"}
+                </div>
+                <h2 className="text-lg font-semibold text-white">
+                  {editingProject ? "Modify Project Details" : "Register a New Source"}
+                </h2>
+                <p className="mt-1 text-xs text-slate-400">
+                  {editingProject
+                    ? "Update project settings and repository configuration."
+                    : "Use the native picker or paste a local repository path. Git-backed projects auto-sync on save."}
+                </p>
+              </div>
+              <Button variant="ghost" onClick={closeForm} aria-label="Close form" className="shrink-0">
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <form
+              className="space-y-4 p-5"
+              onSubmit={form.handleSubmit((values) => saveMutation.mutate(values))}
+            >
+              <div className="grid gap-4 sm:grid-cols-2">
+                <TextField
+                  label="Project Name"
+                  placeholder="Sparc Force API"
+                  error={form.formState.errors.name?.message}
+                  {...form.register("name")}
+                />
+
+                <TextField
+                  label="Description"
+                  placeholder="Backend REST API for platform..."
+                  error={form.formState.errors.description?.message}
+                  {...form.register("description")}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <TextField
+                  label="Local Repository Path"
+                  placeholder="C:\\Users\\Sparc\\Documents\\projects\\repo"
+                  error={form.formState.errors.repoPath?.message}
+                  {...form.register("repoPath")}
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <Button type="button" variant="secondary" onClick={chooseRepoPath}>
+                    <FolderOpen className="h-4 w-4" />
+                    Choose Folder
+                  </Button>
+                  <Button type="button" variant="secondary" onClick={checkRepoPath}>
+                    <GitBranch className="h-4 w-4" />
+                    Validate
+                  </Button>
+                </div>
+                {repoValidation ? <ValidationMessage state={repoValidation} /> : null}
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <TextField
+                  label="GitHub Repository URL"
+                  placeholder="https://github.com/company/repo"
+                  error={form.formState.errors.githubUrl?.message}
+                  {...form.register("githubUrl")}
+                />
+
+                <label className="grid gap-2 text-xs font-semibold text-slate-300">
+                  Project Type
+                  <SelectField
+                    control={form.control}
+                    name="projectType"
+                    options={[
+                      { value: "Backend", label: "Backend", icon: FolderKanban },
+                      { value: "Frontend", label: "Frontend", icon: FolderKanban },
+                      { value: "Marketing", label: "Marketing", icon: FolderKanban },
+                      { value: "Tools", label: "Tools", icon: FolderKanban },
+                      { value: "Service", label: "Service", icon: FolderKanban },
+                      { value: "Company", label: "Company", icon: FolderKanban },
+                      { value: "Client", label: "Client", icon: FolderKanban },
+                      { value: "Internal", label: "Internal", icon: FolderKanban },
+                      { value: "Personal", label: "Personal", icon: FolderKanban },
+                      { value: "Manual Only", label: "Manual Only", icon: FolderKanban },
+                    ]}
+                    size="sm"
+                  />
+                </label>
+              </div>
+
+              {saveMutation.isError ? (
+                <div className="rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-xs text-red-100">
+                  {toMessage(saveMutation.error)}
+                </div>
+              ) : null}
+
+              <div className="flex gap-2 pt-2">
+                <Button type="button" variant="secondary" onClick={closeForm} className="flex-1">
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  className="flex-1 py-2.5"
+                  disabled={saveMutation.isPending}
+                >
+                  {saveMutation.isPending
+                    ? "Saving..."
+                    : editingProject
+                      ? "Save Changes"
+                      : "Create Project"}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </Panel>
+      </div>
 
       <Panel className="flex flex-wrap items-center justify-between gap-3 p-2">
         <div className="flex rounded-2xl border border-white/8 bg-slate-950/55 p-1">
@@ -1404,128 +1561,23 @@ export function ProjectsPage() {
             )}
           </Panel>
 
-          <Panel className="p-0">
-            <div className="border-b border-white/8 px-4 py-3">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <h2 className="text-base font-semibold text-white">
-                    {editingProject ? "Edit Project" : "Project Setup"}
-                  </h2>
-                  <p className="mt-1 text-xs text-slate-400">
-                    {isFormOpen
-                      ? "Use the native picker or paste a local repository path."
-                      : "Open the form to register a source."}
-                  </p>
-                </div>
-                {isFormOpen ? (
-                  <Button variant="ghost" onClick={closeForm} aria-label="Close form">
-                    <X className="h-4 w-4" />
-                  </Button>
-                ) : null}
-              </div>
+          <Panel className="p-4">
+            <div className="mb-3 flex items-center gap-2">
+              <h2 className="text-sm font-semibold text-slate-100">Quick Actions</h2>
             </div>
-
-            {isFormOpen ? (
-              <form
-                className="space-y-4 p-4"
-                onSubmit={form.handleSubmit((values) => saveMutation.mutate(values))}
-              >
-                <TextField
-                  label="Project Name"
-                  placeholder="Sparc Force API"
-                  error={form.formState.errors.name?.message}
-                  {...form.register("name")}
-                />
-
-                <TextField
-                  label="Description"
-                  placeholder="Backend REST API for platform..."
-                  error={form.formState.errors.description?.message}
-                  {...form.register("description")}
-                />
-
-                <div className="space-y-2">
-                  <TextField
-                    label="Local Repository Path"
-                    placeholder="C:\\Users\\Sparc\\Documents\\projects\\repo"
-                    error={form.formState.errors.repoPath?.message}
-                    {...form.register("repoPath")}
-                  />
-                  <div className="grid grid-cols-2 gap-2">
-                    <Button type="button" variant="secondary" onClick={chooseRepoPath}>
-                      <FolderOpen className="h-4 w-4" />
-                      Choose Folder
-                    </Button>
-                    <Button type="button" variant="secondary" onClick={checkRepoPath}>
-                      <GitBranch className="h-4 w-4" />
-                      Validate
-                    </Button>
-                  </div>
-                  {repoValidation ? <ValidationMessage state={repoValidation} /> : null}
-                </div>
-
-                <TextField
-                  label="GitHub Repository URL"
-                  placeholder="https://github.com/company/repo"
-                  error={form.formState.errors.githubUrl?.message}
-                  {...form.register("githubUrl")}
-                />
-
-                <label className="grid gap-2 text-xs font-semibold text-slate-300">
-                  Project Type
-                  <SelectField
-                    control={form.control}
-                    name="projectType"
-                    options={[
-                      { value: "Backend", label: "Backend", icon: FolderKanban },
-                      { value: "Frontend", label: "Frontend", icon: FolderKanban },
-                      { value: "Marketing", label: "Marketing", icon: FolderKanban },
-                      { value: "Tools", label: "Tools", icon: FolderKanban },
-                      { value: "Service", label: "Service", icon: FolderKanban },
-                      { value: "Company", label: "Company", icon: FolderKanban },
-                      { value: "Client", label: "Client", icon: FolderKanban },
-                      { value: "Internal", label: "Internal", icon: FolderKanban },
-                      { value: "Personal", label: "Personal", icon: FolderKanban },
-                      { value: "Manual Only", label: "Manual Only", icon: FolderKanban },
-                    ]}
-                    size="sm"
-                  />
-                </label>
-
-                {saveMutation.isError ? (
-                  <div className="rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-xs text-red-100">
-                    {toMessage(saveMutation.error)}
-                  </div>
-                ) : null}
-
-                <Button
-                  type="submit"
-                  variant="primary"
-                  className="w-full py-2.5"
-                  disabled={saveMutation.isPending}
-                >
-                  {saveMutation.isPending
-                    ? "Saving..."
-                    : editingProject
-                      ? "Save Project"
-                      : "Create Project"}
-                </Button>
-              </form>
-            ) : (
-              <div className="p-4">
-                <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.025] p-4">
-                  <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl border border-blue-300/20 bg-blue-500/15 text-blue-200">
-                    <FolderKanban className="h-5 w-5" />
-                  </div>
-                  <p className="text-sm font-semibold text-slate-200">
-                    Add a source when you are ready.
-                  </p>
-                  <p className="mt-1.5 text-xs leading-5 text-slate-500">
-                    Git-backed projects auto-sync as soon as they are saved.
-                  </p>
-                </div>
+            <button
+              type="button"
+              onClick={openCreateForm}
+              className="flex w-full items-center gap-3 rounded-xl border border-blue-300/15 bg-blue-500/5 px-4 py-3 text-left transition-all duration-200 hover:border-blue-300/30 hover:bg-blue-500/10"
+            >
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-blue-300/20 bg-blue-500/10 text-blue-200">
+                <Plus className="h-4 w-4" />
               </div>
-            )}
+              <div>
+                <p className="text-sm font-semibold text-slate-100">Add Project</p>
+                <p className="text-xs text-slate-500">Register a new repository</p>
+              </div>
+            </button>
           </Panel>
         </div>
       </div>
