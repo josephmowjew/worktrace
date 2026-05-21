@@ -2,6 +2,7 @@ import { Flag, FolderKanban, Plus } from "lucide-react";
 import { useState } from "react";
 import type { Project } from "../../types/project";
 import type { WeeklyTaskPriority } from "../../types/weeklyTask";
+import { Select } from "./Select";
 
 export function QuickAddBar({
   onAdd,
@@ -57,34 +58,32 @@ export function QuickAddBar({
       </div>
 
       <div className="flex items-center gap-1.5">
-        <div className="relative flex-1">
-          <select
-            value={priority}
-            onChange={(e) => setPriority(e.target.value as WeeklyTaskPriority)}
-            className="w-full appearance-none rounded-lg border border-white/8 bg-slate-900/50 py-1.5 pl-6 pr-5 text-[10px] text-slate-300 focus:outline-none"
-          >
-            <option value="high">P High</option>
-            <option value="normal">P Normal</option>
-            <option value="low">P Low</option>
-          </select>
-          <Flag className="pointer-events-none absolute left-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-slate-500" />
-        </div>
+        <Select
+          value={priority}
+          onChange={(value) => setPriority(value as WeeklyTaskPriority)}
+          options={[
+            { value: "high", label: "P High", icon: Flag },
+            { value: "normal", label: "P Normal", icon: Flag },
+            { value: "low", label: "P Low", icon: Flag },
+          ]}
+          className="flex-1"
+          size="sm"
+        />
 
-        <div className="relative flex-1">
-          <select
-            value={projectId}
-            onChange={(e) => setProjectId(e.target.value)}
-            className="w-full appearance-none rounded-lg border border-white/8 bg-slate-900/50 py-1.5 pl-6 pr-5 text-[10px] text-slate-300 focus:outline-none"
-          >
-            <option value="">Select project</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-          <FolderKanban className="pointer-events-none absolute left-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-slate-500" />
-        </div>
+        <Select
+          value={projectId}
+          onChange={setProjectId}
+          options={[
+            { value: "", label: "Select project", icon: FolderKanban },
+            ...projects.map((p) => ({
+              value: p.id,
+              label: p.name,
+              icon: FolderKanban,
+            })),
+          ]}
+          className="flex-1"
+          size="sm"
+        />
       </div>
     </div>
   );

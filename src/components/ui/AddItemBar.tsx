@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { Project } from "../../types/project";
 import type { WeeklyTaskPriority } from "../../types/weeklyTask";
 import { Button } from "./Button";
+import { Select } from "./Select";
 
 export function AddItemBar({
   onAdd,
@@ -55,34 +56,30 @@ export function AddItemBar({
         <span>{weekRange.label}</span>
       </div>
 
-      <div className="relative">
-        <select
-          value={priority}
-          onChange={(e) => setPriority(e.target.value as WeeklyTaskPriority)}
-          className="appearance-none rounded-lg border border-white/8 bg-slate-900/50 py-1.5 pl-7 pr-6 text-xs text-slate-300 focus:outline-none"
-        >
-          <option value="high">P High</option>
-          <option value="normal">P Normal</option>
-          <option value="low">P Low</option>
-        </select>
-        <Flag className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
-      </div>
+      <Select
+        value={priority}
+        onChange={(value) => setPriority(value as WeeklyTaskPriority)}
+        options={[
+          { value: "high", label: "P High", icon: Flag },
+          { value: "normal", label: "P Normal", icon: Flag },
+          { value: "low", label: "P Low", icon: Flag },
+        ]}
+        size="sm"
+      />
 
-      <div className="relative">
-        <select
-          value={projectId}
-          onChange={(e) => setProjectId(e.target.value)}
-          className="appearance-none rounded-lg border border-white/8 bg-slate-900/50 py-1.5 pl-7 pr-6 text-xs text-slate-300 focus:outline-none"
-        >
-          <option value="">Select project</option>
-          {projects.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-        <FolderKanban className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
-      </div>
+      <Select
+        value={projectId}
+        onChange={setProjectId}
+        options={[
+          { value: "", label: "Select project", icon: FolderKanban },
+          ...projects.map((p) => ({
+            value: p.id,
+            label: p.name,
+            icon: FolderKanban,
+          })),
+        ]}
+        size="sm"
+      />
 
       <Button variant="primary" onClick={handleSubmit} disabled={!title.trim()}>
         <Sparkles className="h-3.5 w-3.5" />

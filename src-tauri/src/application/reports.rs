@@ -299,6 +299,7 @@ mod tests {
         let project = ProjectRepository::new(&pool)
             .create(CreateProjectInput {
                 name: "WorkTrace".to_string(),
+                description: None,
                 repo_path: None,
                 github_url: None,
                 project_type: Some("Company".to_string()),
@@ -350,6 +351,7 @@ mod tests {
                 completed_at: None,
                 priority: Some(WeeklyTaskPriority::High),
                 included_in_report: Some(true),
+                progress_percent: None,
             })
             .await
             .expect("create weekly task");

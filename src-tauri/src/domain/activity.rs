@@ -9,6 +9,22 @@ pub struct ListActivityInput {
     pub project_ids: Option<Vec<String>>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeatmapInput {
+    pub from: String,
+    pub to: String,
+    pub project_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WeekSummaryInput {
+    pub from: String,
+    pub to: String,
+    pub project_ids: Option<Vec<String>>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityDay {
@@ -33,4 +49,50 @@ pub struct ActivityItem {
     pub files_changed: Option<i64>,
     pub insertions: Option<i64>,
     pub deletions: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeatmapCell {
+    pub day: i64,
+    pub hour: i64,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeatmapData {
+    pub cells: Vec<HeatmapCell>,
+    pub max_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TopProject {
+    pub name: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WeekSummary {
+    pub total_activities: i64,
+    pub total_activities_trend: f64,
+    pub coding_time_minutes: i64,
+    pub coding_time_trend: f64,
+    pub meeting_count: i64,
+    pub meeting_trend: f64,
+    pub deployment_count: i64,
+    pub deployment_trend: f64,
+    pub top_project: TopProject,
+    pub focus_time_minutes: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyHighlight {
+    pub title: String,
+    pub description: String,
+    pub trend: f64,
+    pub icon: String,
 }

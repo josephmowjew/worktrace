@@ -11,6 +11,9 @@ use crate::domain::settings::{Settings, UpdateSettingsInput};
 use crate::domain::weekly_task::{
     CreateWeeklyTaskInput, ListWeeklyTasksInput, UpdateWeeklyTaskInput, WeeklyTask,
 };
+use crate::domain::workspace::{
+    CreateWorkspaceInput, UpdateWorkspaceInput, Workspace, WorkspaceRepoDiscovery,
+};
 use crate::infrastructure::database::repositories::CommitUpsertResult;
 
 #[async_trait]
@@ -89,4 +92,21 @@ pub trait WeeklyTaskStore: Send + Sync {
         input: UpdateWeeklyTaskInput,
     ) -> Result<Option<WeeklyTask>, sqlx::Error>;
     async fn delete(&self, id: &str) -> Result<bool, sqlx::Error>;
+}
+
+#[async_trait]
+pub trait WorkspaceStore: Send + Sync {
+    async fn list(&self) -> Result<Vec<Workspace>, sqlx::Error>;
+    async fn create(&self, input: CreateWorkspaceInput) -> Result<Workspace, sqlx::Error>;
+    async fn update(
+        &self,
+        id: &str,
+        input: UpdateWorkspaceInput,
+    ) -> Result<Option<Workspace>, sqlx::Error>;
+    async fn archive(&self, id: &str) -> Result<Option<Workspace>, sqlx::Error>;
+    async fn scan(
+        &self,
+        workspace_id: &str,
+        discovered: Vec<WorkspaceRepoDiscovery>,
+    ) -> Result<Vec<WorkspaceRepoDiscovery>, sqlx::Error>;
 }

@@ -7,6 +7,8 @@ export type Project = {
   repoPath?: string | null;
   githubUrl?: string | null;
   projectType?: string | null;
+  workspaceId?: string | null;
+  workspaceRelativePath?: string | null;
   status: ProjectStatus;
   createdAt: string;
   updatedAt: string;
@@ -55,4 +57,3 @@ export type TopContributor = {
   authorEmail?: string | null;
   commitCount: number;
 };
-

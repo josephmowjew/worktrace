@@ -7,17 +7,22 @@ import {
   LayoutDashboard,
   Settings,
   ListChecks,
+  ListTodo,
+  ArrowLeft,
 } from "lucide-react";
 import type { PropsWithChildren } from "react";
-import { NavLink } from "react-router-dom";
-import { useEffect } from "react";
+import { NavLink, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listActivity } from "../../lib/api/activity";
 import { syncCommits } from "../../lib/api/gitSync";
 import { listProjects } from "../../lib/api/projects";
 import { getSettings } from "../../lib/api/settings";
+import { toggleTodoWidget } from "../../lib/api/todoWidget";
 import { currentWeekRange } from "../../lib/dates";
 import { TitleBar } from "./TitleBar";
+import { useToast } from "../ui/ToastProvider";
 
 const navItems = [
   { label: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -31,7 +36,10 @@ const navItems = [
 
 export function AppLayout({ children }: PropsWithChildren) {
   const queryClient = useQueryClient();
+  const toast = useToast();
+  const navigate = useNavigate();
   const weekRange = currentWeekRange();
+  const [isWidgetWindow, setIsWidgetWindow] = useState(false);
   const settingsQuery = useQuery({
     queryKey: ["settings"],
     queryFn: getSettings,
@@ -56,9 +64,27 @@ export function AppLayout({ children }: PropsWithChildren) {
         to: null,
         authorEmail: null,
       }),
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["activity"] });
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
+      if (result.newCommits > 0 || result.updatedCommits > 0) {
+        toast.info(
+          "Auto-sync complete",
+          `Added ${result.newCommits} commits and updated ${result.updatedCommits}.`,
+        );
+      }
+    },
+  });
+  const widgetMutation = useMutation({
+    mutationFn: toggleTodoWidget,
+    onSuccess: (isVisible) => {
+      toast.info(isVisible ? "Todo widget shown" : "Todo widget hidden");
+    },
+    onError: (error) => {
+      toast.error(
+        "Todo widget failed",
+        error instanceof Error ? error.message : "Could not toggle the todo widget.",
+      );
     },
   });
   const settings = settingsQuery.data;
@@ -69,6 +95,14 @@ export function AppLayout({ children }: PropsWithChildren) {
     projectsQuery.data?.some(
       (project) => project.status === "active" && Boolean(project.repoPath),
     ) ?? false;
+
+  useEffect(() => {
+    try {
+      setIsWidgetWindow(getCurrentWindow().label === "widget");
+    } catch {
+      setIsWidgetWindow(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!hasSyncableProjects) {
@@ -167,9 +201,35 @@ export function AppLayout({ children }: PropsWithChildren) {
                 ))}
               </div>
             </div>
+
+            <button
+              type="button"
+              onClick={() => widgetMutation.mutate()}
+              disabled={widgetMutation.isPending}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-blue-300/20 bg-blue-500/15 px-3 py-2.5 text-xs font-semibold text-blue-100 shadow-lg shadow-blue-950/20 transition hover:border-blue-300/35 hover:bg-blue-500/25 disabled:opacity-60"
+            >
+              <ListTodo className="h-4 w-4" />
+              {widgetMutation.isPending ? "Opening..." : "Todo Widget"}
+            </button>
           </aside>
 
           <main className="flex min-w-0 flex-1 flex-col overflow-hidden px-3 py-3 md:px-4 md:py-4">
+            {isWidgetWindow ? (
+              <div className="mb-3 flex shrink-0 items-center justify-between gap-2 rounded-2xl border border-blue-300/20 bg-blue-500/15 p-2 shadow-lg shadow-blue-950/20 backdrop-blur-xl">
+                <button
+                  type="button"
+                  onClick={() => navigate("/widget")}
+                  className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-500"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  Back to Todos
+                </button>
+                <p className="truncate pr-2 text-[11px] text-blue-100/75">
+                  You are browsing from the floating widget.
+                </p>
+              </div>
+            ) : null}
+
             <nav className="mb-3 flex shrink-0 gap-2 overflow-x-auto rounded-lg border border-white/10 bg-slate-950/55 p-2 shadow-lg shadow-black/10 backdrop-blur-xl lg:hidden">
               {navItems.map((item) => (
                 <NavLink
@@ -199,6 +259,15 @@ export function AppLayout({ children }: PropsWithChildren) {
               </div>
 
               <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => widgetMutation.mutate()}
+                  disabled={widgetMutation.isPending}
+                  className="inline-flex items-center gap-2 rounded-xl border border-blue-300/20 bg-blue-500/15 px-3 py-2 text-xs font-semibold text-blue-100 shadow-lg shadow-black/10 backdrop-blur-xl transition hover:border-blue-300/35 hover:bg-blue-500/25 disabled:opacity-60"
+                >
+                  <ListTodo className="h-4 w-4" />
+                  Widget
+                </button>
                 <div className="rounded-xl border border-white/10 bg-slate-950/50 px-3 py-2 shadow-lg shadow-black/10 backdrop-blur-xl">
                   <p className="text-xs font-medium">{settings?.name ?? "John Developer"}</p>
                   <p className="text-[10px] text-slate-500">

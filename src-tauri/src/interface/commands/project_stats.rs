@@ -1,9 +1,7 @@
 use chrono::Utc;
 use tauri::State;
 
-use crate::domain::project::{
-    CategoryDistribution, ProjectStats, RecentCommit, TopContributor,
-};
+use crate::domain::project::{CategoryDistribution, ProjectStats, RecentCommit, TopContributor};
 use crate::interface::dto::app_result::AppResult;
 use crate::AppState;
 
@@ -56,15 +54,17 @@ pub async fn get_project_stats(
 
     let stats = rows
         .into_iter()
-        .map(|(project_id, project_name, commits_this_week, last_sync, hours_tracked)| {
-            ProjectStats {
-                project_id,
-                project_name,
-                commits_this_week,
-                last_sync,
-                hours_tracked,
-            }
-        })
+        .map(
+            |(project_id, project_name, commits_this_week, last_sync, hours_tracked)| {
+                ProjectStats {
+                    project_id,
+                    project_name,
+                    commits_this_week,
+                    last_sync,
+                    hours_tracked,
+                }
+            },
+        )
         .collect();
 
     Ok(AppResult::ok(stats))
@@ -118,7 +118,19 @@ pub async fn get_recent_commits(
     let pool = state.database.pool();
     let limit = limit.unwrap_or(10);
 
-    let rows = sqlx::query_as::<_, (String, String, Option<String>, String, String, Option<String>, Option<String>, String)>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            String,
+        ),
+    >(
         r#"
         SELECT 
             p.id as project_id,
@@ -143,8 +155,8 @@ pub async fn get_recent_commits(
 
     let commits = rows
         .into_iter()
-        .map(|(project_id, project_name, repo_path, commit_hash, message, author_name, branch, committed_at)| {
-            RecentCommit {
+        .map(
+            |(
                 project_id,
                 project_name,
                 repo_path,
@@ -153,9 +165,20 @@ pub async fn get_recent_commits(
                 author_name,
                 branch,
                 committed_at,
-                status: "Up to date".to_string(),
-            }
-        })
+            )| {
+                RecentCommit {
+                    project_id,
+                    project_name,
+                    repo_path,
+                    commit_hash,
+                    message,
+                    author_name,
+                    branch,
+                    committed_at,
+                    status: "Up to date".to_string(),
+                }
+            },
+        )
         .collect();
 
     Ok(AppResult::ok(commits))

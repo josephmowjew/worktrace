@@ -17,6 +17,28 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 
     sqlx::query(
         r#"
+        ALTER TABLE projects ADD COLUMN workspace_id TEXT;
+        "#,
+    )
+    .execute(pool)
+    .await
+    .ok();
+
+    sqlx::query(
+        r#"
+        ALTER TABLE projects ADD COLUMN workspace_relative_path TEXT;
+        "#,
+    )
+    .execute(pool)
+    .await
+    .ok();
+
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_projects_workspace ON projects(workspace_id);")
+        .execute(pool)
+        .await?;
+
+    sqlx::query(
+        r#"
         ALTER TABLE weekly_tasks ADD COLUMN progress_percent INTEGER;
         "#,
     )
@@ -35,12 +57,37 @@ CREATE TABLE IF NOT EXISTS projects (
   repo_path TEXT,
   github_url TEXT,
   type TEXT,
+  workspace_id TEXT,
+  workspace_relative_path TEXT,
   status TEXT NOT NULL DEFAULT 'active',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
+
+CREATE TABLE IF NOT EXISTS workspaces (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  root_path TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  last_scanned_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspaces_status ON workspaces(status);
+
+CREATE TABLE IF NOT EXISTS workspace_repo_ignores (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  repo_path TEXT NOT NULL,
+  relative_path TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_ignores_unique ON workspace_repo_ignores(workspace_id, repo_path);
 
 CREATE TABLE IF NOT EXISTS commits (
   id TEXT PRIMARY KEY,

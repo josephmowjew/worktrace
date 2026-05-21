@@ -9,6 +9,8 @@ pub struct Project {
     pub repo_path: Option<String>,
     pub github_url: Option<String>,
     pub project_type: Option<String>,
+    pub workspace_id: Option<String>,
+    pub workspace_relative_path: Option<String>,
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
@@ -32,6 +34,8 @@ pub struct UpdateProjectInput {
     pub repo_path: Option<String>,
     pub github_url: Option<String>,
     pub project_type: Option<String>,
+    pub workspace_id: Option<String>,
+    pub workspace_relative_path: Option<String>,
     pub status: Option<String>,
 }
 

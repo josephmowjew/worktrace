@@ -4,7 +4,7 @@ pub mod infrastructure;
 pub mod interface;
 
 use infrastructure::database::Database;
-use tauri::Manager;
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 pub struct AppState {
     pub database: Database,
@@ -20,6 +20,20 @@ pub fn run() {
             let database = tauri::async_runtime::block_on(Database::connect(&app_handle))?;
 
             app.manage(AppState { database });
+
+            WebviewWindowBuilder::new(app, "widget", WebviewUrl::App("/widget".into()))
+                .title("WorkTrace Todo")
+                .inner_size(360.0, 520.0)
+                .min_inner_size(280.0, 240.0)
+                .decorations(false)
+                .transparent(true)
+                .always_on_top(true)
+                .skip_taskbar(true)
+                .resizable(true)
+                .focused(false)
+                .visible(false)
+                .prevent_overflow()
+                .build()?;
 
             Ok(())
         })

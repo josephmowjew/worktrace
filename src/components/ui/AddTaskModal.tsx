@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Save, X } from "lucide-react";
+import { Save, X, ListTodo, AlertCircle, CheckCircle2, Clock, FolderKanban, Flag } from "lucide-react";
 import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -12,6 +12,7 @@ import type {
 } from "../../types/weeklyTask";
 import { Button } from "./Button";
 import { Panel } from "./Panel";
+import { SelectField } from "./SelectField";
 
 const taskSchema = z.object({
   projectId: z.string().optional(),
@@ -159,34 +160,45 @@ export function AddTaskModal({
 
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Type">
-              <select className={inputClass} {...form.register("taskType")}>
-                {taskTypes.map((type) => (
-                  <option key={type.value} value={type.value}>
-                    {type.label}
-                  </option>
-                ))}
-              </select>
+              <SelectField
+                control={form.control}
+                name="taskType"
+                options={taskTypes.map((type) => ({
+                  value: type.value,
+                  label: type.label,
+                  icon: ListTodo,
+                }))}
+                size="sm"
+              />
             </Field>
             <Field label="Status">
-              <select className={inputClass} {...form.register("status")}>
-                {statuses.map((status) => (
-                  <option key={status.value} value={status.value}>
-                    {status.label}
-                  </option>
-                ))}
-              </select>
+              <SelectField
+                control={form.control}
+                name="status"
+                options={statuses.map((status) => ({
+                  value: status.value,
+                  label: status.label,
+                  icon: status.value === "completed" ? CheckCircle2 : status.value === "blocked" ? AlertCircle : status.value === "in_progress" ? Clock : ListTodo,
+                }))}
+                size="sm"
+              />
             </Field>
           </div>
 
           <Field label="Project">
-            <select className={inputClass} {...form.register("projectId")}>
-              <option value="">General / no project</option>
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
+            <SelectField
+              control={form.control}
+              name="projectId"
+              options={[
+                { value: "", label: "General / no project", icon: FolderKanban },
+                ...projects.map((project) => ({
+                  value: project.id,
+                  label: project.name,
+                  icon: FolderKanban,
+                })),
+              ]}
+              size="sm"
+            />
           </Field>
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -200,13 +212,16 @@ export function AddTaskModal({
 
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Priority">
-              <select className={inputClass} {...form.register("priority")}>
-                {priorities.map((priority) => (
-                  <option key={priority.value} value={priority.value}>
-                    {priority.label}
-                  </option>
-                ))}
-              </select>
+              <SelectField
+                control={form.control}
+                name="priority"
+                options={priorities.map((priority) => ({
+                  value: priority.value,
+                  label: priority.label,
+                  icon: Flag,
+                }))}
+                size="sm"
+              />
             </Field>
             <Field label="Progress (%)">
               <input

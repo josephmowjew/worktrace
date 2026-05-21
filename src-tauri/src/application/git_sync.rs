@@ -104,6 +104,7 @@ mod tests {
         let project = project_repository
             .create(CreateProjectInput {
                 name: "Phase 5 Test Repo".to_string(),
+                description: None,
                 repo_path: Some(repo_path.to_string_lossy().to_string()),
                 github_url: None,
                 project_type: Some("Company".to_string()),

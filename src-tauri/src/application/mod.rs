@@ -6,3 +6,4 @@ pub mod reports;
 pub mod repositories;
 pub mod settings;
 pub mod weekly_tasks;
+pub mod workspaces;

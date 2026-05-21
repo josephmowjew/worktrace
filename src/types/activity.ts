@@ -26,3 +26,51 @@ export type ListActivityInput = {
   activityType?: string | null;
   projectIds?: string[] | null;
 };
+
+export type HeatmapInput = {
+  from: string;
+  to: string;
+  projectIds?: string[] | null;
+};
+
+export type HeatmapCell = {
+  day: number;
+  hour: number;
+  count: number;
+};
+
+export type HeatmapData = {
+  cells: HeatmapCell[];
+  maxCount: number;
+};
+
+export type WeekSummaryInput = {
+  from: string;
+  to: string;
+  projectIds?: string[] | null;
+};
+
+export type TopProject = {
+  name: string;
+  count: number;
+};
+
+export type WeekSummary = {
+  totalActivities: number;
+  totalActivitiesTrend: number;
+  codingTimeMinutes: number;
+  codingTimeTrend: number;
+  meetingCount: number;
+  meetingTrend: number;
+  deploymentCount: number;
+  deploymentTrend: number;
+  topProject: TopProject;
+  focusTimeMinutes: number;
+};
+
+export type KeyHighlight = {
+  title: string;
+  description: string;
+  trend: number;
+  icon: string;
+};

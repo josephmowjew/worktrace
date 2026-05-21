@@ -1,6 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Mail, Palette, Save, Settings as SettingsIcon, User } from "lucide-react";
+import { Check, Mail, Palette, Save, Settings as SettingsIcon, User, FileText, Monitor } from "lucide-react";
 import { useEffect } from "react";
 import type { ReactNode } from "react";
 import { useForm } from "react-hook-form";
@@ -8,6 +8,8 @@ import { z } from "zod";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Panel } from "../components/ui/Panel";
+import { SelectField } from "../components/ui/SelectField";
+import { useToast } from "../components/ui/ToastProvider";
 import { getSettings, updateSettings } from "../lib/api/settings";
 import type { Settings } from "../types/settings";
 
@@ -51,6 +53,7 @@ type SettingsFormValues = z.infer<typeof settingsSchema>;
 
 export function SettingsPage() {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const settingsQuery = useQuery({
     queryKey: ["settings"],
     queryFn: getSettings,
@@ -89,6 +92,10 @@ export function SettingsPage() {
     onSuccess: async (settings) => {
       form.reset(toFormValues(settings));
       await queryClient.invalidateQueries({ queryKey: ["settings"] });
+      toast.success("Preferences saved", "Settings have been updated.");
+    },
+    onError: (error) => {
+      toast.error("Settings failed", error instanceof Error ? error.message : "Settings could not be saved.");
     },
   });
 
@@ -188,29 +195,29 @@ export function SettingsPage() {
             </div>
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="Default Report Template">
-                <select
-                  className={inputClass}
+                <SelectField
+                  control={form.control}
+                  name="defaultReportTemplate"
                   disabled={settingsQuery.isLoading}
-                  {...form.register("defaultReportTemplate")}
-                >
-                  <option value="professional_weekly_summary">
-                    Professional weekly summary
-                  </option>
-                  <option value="project_based">Project based</option>
-                  <option value="concise_manager_update">
-                    Concise manager update
-                  </option>
-                </select>
+                  options={[
+                    { value: "professional_weekly_summary", label: "Professional weekly summary", icon: FileText },
+                    { value: "project_based", label: "Project based", icon: FileText },
+                    { value: "concise_manager_update", label: "Concise manager update", icon: FileText },
+                  ]}
+                  size="sm"
+                />
               </Field>
               <Field label="Theme Preference">
-                <select
-                  className={inputClass}
+                <SelectField
+                  control={form.control}
+                  name="theme"
                   disabled={settingsQuery.isLoading}
-                  {...form.register("theme")}
-                >
-                  <option value="dark">Dark</option>
-                  <option value="system">System</option>
-                </select>
+                  options={[
+                    { value: "dark", label: "Dark", icon: Monitor },
+                    { value: "system", label: "System", icon: Monitor },
+                  ]}
+                  size="sm"
+                />
               </Field>
             </div>
           </Panel>

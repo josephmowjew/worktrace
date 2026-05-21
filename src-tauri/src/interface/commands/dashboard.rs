@@ -1,5 +1,4 @@
 use chrono::{Datelike, Duration, NaiveDate, Utc};
-use sqlx::SqlitePool;
 use tauri::State;
 
 use crate::domain::dashboard::{DailyActivityHours, DashboardStats, ProjectBreakdown};
@@ -23,7 +22,9 @@ fn day_label(date: NaiveDate) -> String {
 }
 
 #[tauri::command]
-pub async fn get_dashboard_stats(state: State<'_, AppState>) -> Result<AppResult<DashboardStats>, String> {
+pub async fn get_dashboard_stats(
+    state: State<'_, AppState>,
+) -> Result<AppResult<DashboardStats>, String> {
     let pool = state.database.pool();
     let now = Utc::now().naive_utc().date();
     let (current_monday, current_friday) = get_week_range(now);

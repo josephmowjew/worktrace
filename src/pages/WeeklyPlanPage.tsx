@@ -4,6 +4,9 @@ import {
   ListChecks,
   RotateCcw,
   Sparkles,
+  ListTodo,
+  CheckCircle2,
+  FolderKanban,
 } from "lucide-react";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { KanbanColumn } from "../components/ui/KanbanColumn";
@@ -13,6 +16,8 @@ import { QuickAddBar } from "../components/ui/QuickAddBar";
 import { RecentlyCompletedList } from "../components/ui/RecentlyCompletedList";
 import { AddItemBar } from "../components/ui/AddItemBar";
 import { AddTaskModal } from "../components/ui/AddTaskModal";
+import { Select } from "../components/ui/Select";
+import { useToast } from "../components/ui/ToastProvider";
 import { listProjects } from "../lib/api/projects";
 import {
   createWeeklyTask,
@@ -20,6 +25,7 @@ import {
   listWeeklyTasks,
   updateWeeklyTask,
 } from "../lib/api/weeklyTasks";
+import { weeklyTaskQueryRoots } from "../lib/api/queryKeys";
 import { currentWeekRange } from "../lib/dates";
 import type {
   WeeklyTask,
@@ -46,6 +52,7 @@ const statuses: Array<{ value: WeeklyTaskStatus; label: string }> = [
 
 export function WeeklyPlanPage() {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const weekRange = currentWeekRange();
   const [typeFilter, setTypeFilter] = useState<WeeklyTaskType | "all">("all");
   const [statusFilter, setStatusFilter] = useState<WeeklyTaskStatus | "all">("all");
@@ -60,6 +67,16 @@ export function WeeklyPlanPage() {
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [activeColumnId, setActiveColumnId] = useState<string | null>(null);
   const dragOverColumnRef = useRef<string | null>(null);
+
+  async function invalidateWeeklyTaskViews() {
+    await Promise.all([
+      ...weeklyTaskQueryRoots.map((queryKey) =>
+        queryClient.invalidateQueries({ queryKey }),
+      ),
+      queryClient.invalidateQueries({ queryKey: ["reports"] }),
+      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] }),
+    ]);
+  }
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -86,7 +103,9 @@ export function WeeklyPlanPage() {
   });
 
   const tasks = tasksQuery.data ?? [];
-  const projects = projectsQuery.data ?? [];
+  const projects = (projectsQuery.data ?? []).filter(
+    (project) => project.status === "active",
+  );
 
   const planned = useMemo(
     () => tasks.filter((t) => t.status === "todo" && t.taskType !== "carryover"),
@@ -159,13 +178,14 @@ export function WeeklyPlanPage() {
       });
     },
     onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["weeklyTasks"] }),
-        queryClient.invalidateQueries({ queryKey: ["reports"] }),
-      ]);
+      await invalidateWeeklyTaskViews();
+      toast.success(editingTask ? "Task updated" : "Task added");
       setModalOpen(false);
       setEditingTask(null);
       setPrefillData(null);
+    },
+    onError: (error) => {
+      toast.error("Task save failed", error instanceof Error ? error.message : "The task could not be saved.");
     },
   });
 
@@ -176,20 +196,22 @@ export function WeeklyPlanPage() {
         completedAt: status === "completed" || status === "dropped" ? today() : null,
       }),
     onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["weeklyTasks"] }),
-        queryClient.invalidateQueries({ queryKey: ["reports"] }),
-      ]);
+      await invalidateWeeklyTaskViews();
+      toast.success("Task updated");
+    },
+    onError: (error) => {
+      toast.error("Task update failed", error instanceof Error ? error.message : "The task could not be updated.");
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: deleteWeeklyTask,
     onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["weeklyTasks"] }),
-        queryClient.invalidateQueries({ queryKey: ["reports"] }),
-      ]);
+      await invalidateWeeklyTaskViews();
+      toast.success("Task deleted");
+    },
+    onError: (error) => {
+      toast.error("Task delete failed", error instanceof Error ? error.message : "The task could not be deleted.");
     },
   });
 
@@ -201,10 +223,11 @@ export function WeeklyPlanPage() {
         completedAt: status === "completed" || status === "dropped" ? today() : null,
       }),
     onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["weeklyTasks"] }),
-        queryClient.invalidateQueries({ queryKey: ["reports"] }),
-      ]);
+      await invalidateWeeklyTaskViews();
+      toast.success("Task moved");
+    },
+    onError: (error) => {
+      toast.error("Task move failed", error instanceof Error ? error.message : "The task could not be moved.");
     },
   });
 
@@ -320,30 +343,54 @@ export function WeeklyPlanPage() {
       </Panel>
 
       <div className="flex flex-wrap items-center gap-2">
-        <FilterSelect label="Type" value={typeFilter} onChange={setTypeFilter}>
-          <option value="all">All Types</option>
-          {taskTypes.map((type) => (
-            <option key={type.value} value={type.value}>
-              {type.label}
-            </option>
-          ))}
-        </FilterSelect>
-        <FilterSelect label="Status" value={statusFilter} onChange={setStatusFilter}>
-          <option value="all">All Statuses</option>
-          {statuses.map((status) => (
-            <option key={status.value} value={status.value}>
-              {status.label}
-            </option>
-          ))}
-        </FilterSelect>
-        <FilterSelect label="Project" value={projectFilter} onChange={setProjectFilter}>
-          <option value="all">All Projects</option>
-          {projects.map((project) => (
-            <option key={project.id} value={project.id}>
-              {project.name}
-            </option>
-          ))}
-        </FilterSelect>
+        <div className="grid gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">Type</span>
+          <Select
+            value={typeFilter}
+            onChange={setTypeFilter}
+            options={[
+              { value: "all", label: "All Types", icon: ListTodo },
+              ...taskTypes.map((type) => ({
+                value: type.value,
+                label: type.label,
+                icon: ListTodo,
+              })),
+            ]}
+            size="sm"
+          />
+        </div>
+        <div className="grid gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">Status</span>
+          <Select
+            value={statusFilter}
+            onChange={setStatusFilter}
+            options={[
+              { value: "all", label: "All Statuses", icon: CheckCircle2 },
+              ...statuses.map((status) => ({
+                value: status.value,
+                label: status.label,
+                icon: status.value === "completed" ? CheckCircle2 : ListTodo,
+              })),
+            ]}
+            size="sm"
+          />
+        </div>
+        <div className="grid gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">Project</span>
+          <Select
+            value={projectFilter}
+            onChange={setProjectFilter}
+            options={[
+              { value: "all", label: "All Projects", icon: FolderKanban },
+              ...projects.map((project) => ({
+                value: project.id,
+                label: project.name,
+                icon: FolderKanban,
+              })),
+            ]}
+            size="sm"
+          />
+        </div>
         {hasActiveFilters && (
           <button
             onClick={handleClearFilters}
@@ -525,34 +572,6 @@ function MiniStat({
         <p className="text-2xl font-semibold text-white">{value}</p>
       </div>
     </div>
-  );
-}
-
-function FilterSelect<T extends string>({
-  label,
-  value,
-  onChange,
-  children,
-}: {
-  label: string;
-  value: T;
-  onChange: (value: T) => void;
-  children: React.ReactNode;
-}) {
-  const inputClass =
-    "h-9 w-full rounded-xl border border-white/10 bg-slate-950/75 px-3 text-xs text-slate-200 outline-none transition focus:border-blue-300/50 focus:ring-2 focus:ring-blue-500/15";
-
-  return (
-    <label className="grid gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-      {label}
-      <select
-        className={inputClass}
-        value={value}
-        onChange={(event) => onChange(event.currentTarget.value as T)}
-      >
-        {children}
-      </select>
-    </label>
   );
 }
 

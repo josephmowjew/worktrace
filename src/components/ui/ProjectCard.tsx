@@ -4,6 +4,7 @@ import {
   ExternalLink,
   GitBranch,
   Globe,
+  Layers,
   Mail,
   Package,
   PenTool,
@@ -76,11 +77,13 @@ function formatHours(hours: number): string {
 export function ProjectCard({
   project,
   stats,
+  workspaceName,
   onEdit,
   onArchive,
 }: {
   project: Project;
   stats?: ProjectStats;
+  workspaceName?: string;
   onEdit: () => void;
   onArchive: () => void;
 }) {
@@ -132,6 +135,13 @@ export function ProjectCard({
                   </span>
                   <ExternalLink className="h-3 w-3 shrink-0" />
                 </a>
+              )}
+
+              {workspaceName && (
+                <div className="mt-2 inline-flex max-w-full items-center gap-1 rounded-md border border-cyan-300/15 bg-cyan-500/10 px-2 py-1 text-[10px] font-semibold text-cyan-200">
+                  <Layers className="h-3 w-3 shrink-0" />
+                  <span className="truncate">{workspaceName}</span>
+                </div>
               )}
             </div>
           </div>

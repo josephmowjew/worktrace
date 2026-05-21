@@ -7,6 +7,8 @@ pub mod projects;
 pub mod reports;
 pub mod settings;
 pub mod weekly_tasks;
+pub mod windows;
+pub mod workspaces;
 
 pub fn handlers() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
@@ -23,6 +25,9 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         dashboard::get_weekly_activity_hours,
         dashboard::get_project_breakdown,
         activity::list_activity,
+        activity::get_activity_heatmap,
+        activity::get_week_summary,
+        activity::get_key_highlights,
         git_sync::sync_commits,
         manual_logs::list_manual_logs,
         manual_logs::create_manual_log,
@@ -37,6 +42,18 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         weekly_tasks::list_weekly_tasks,
         weekly_tasks::create_weekly_task,
         weekly_tasks::update_weekly_task,
-        weekly_tasks::delete_weekly_task
+        weekly_tasks::delete_weekly_task,
+        windows::show_todo_widget,
+        windows::hide_todo_widget,
+        windows::toggle_todo_widget,
+        windows::set_todo_widget_always_on_top,
+        workspaces::list_workspaces,
+        workspaces::create_workspace,
+        workspaces::update_workspace,
+        workspaces::archive_workspace,
+        workspaces::scan_workspace,
+        workspaces::import_workspace_repositories,
+        workspaces::ignore_workspace_repository,
+        workspaces::unignore_workspace_repository
     ]
 }

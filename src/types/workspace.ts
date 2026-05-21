@@ -1,0 +1,49 @@
+import type { Project } from "./project";
+
+export type WorkspaceStatus = "active" | "archived";
+
+export type Workspace = {
+  id: string;
+  name: string;
+  rootPath: string;
+  status: WorkspaceStatus;
+  lastScannedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CreateWorkspaceInput = {
+  name: string;
+  rootPath: string;
+};
+
+export type UpdateWorkspaceInput = Partial<CreateWorkspaceInput> & {
+  status?: WorkspaceStatus;
+};
+
+export type WorkspaceRepoDiscoveryStatus = "new" | "imported" | "archived" | "ignored";
+
+export type WorkspaceRepoDiscovery = {
+  repoPath: string;
+  relativePath: string;
+  suggestedName: string;
+  status: WorkspaceRepoDiscoveryStatus;
+  projectId?: string | null;
+  projectName?: string | null;
+};
+
+export type ImportWorkspaceRepositoriesInput = {
+  workspaceId: string;
+  repositories: Array<{
+    repoPath: string;
+    name?: string | null;
+    projectType?: string | null;
+  }>;
+};
+
+export type WorkspaceRepositoryActionInput = {
+  workspaceId: string;
+  repoPath: string;
+};
+
+export type ImportedWorkspaceProject = Project;
