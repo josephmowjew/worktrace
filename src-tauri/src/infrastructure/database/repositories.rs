@@ -4,17 +4,22 @@ use chrono::Utc;
 use sqlx::{Row, SqlitePool};
 
 use crate::application::repositories::{
-    CommitStore, ManualLogStore, ProjectStore, ReportItemStore, ReportNoteStore, ReportStore,
-    SettingsStore, WeeklyTaskStore, WorkspaceStore,
+    CommitStore, FocusSessionStore, ManualLogStore, NudgeDismissalStore, ProjectStore,
+    ReportItemStore, ReportNoteStore, ReportStore, SettingsStore, WeeklyTaskStore, WorkspaceStore,
 };
 use crate::domain::activity::{
     ActivityDay, ActivityItem, HeatmapCell, HeatmapData, HeatmapInput, KeyHighlight,
     ListActivityInput, TopProject, WeekSummary, WeekSummaryInput,
 };
 use crate::domain::commit::Commit;
+use crate::domain::focus_session::{
+    CreateFocusSessionInput, FocusSession, FocusSessionStatus, ListFocusSessionsInput,
+    StopFocusSessionInput,
+};
 use crate::domain::manual_log::{
     ActivityType, CreateManualLogInput, ManualLog, UpdateManualLogInput,
 };
+use crate::domain::nudge::{DismissNudgeInput, ListNudgeDismissalsInput, NudgeDismissal};
 use crate::domain::project::{CreateProjectInput, Project, UpdateProjectInput};
 use crate::domain::report::{
     CreateReportItemInput, CreateReportNoteInput, Report, ReportItem, ReportNote, ReportSummary,
@@ -2080,6 +2085,358 @@ impl WeeklyTaskStore for WeeklyTaskRepository<'_> {
     }
 }
 
+pub struct FocusSessionRepository<'a> {
+    pool: &'a SqlitePool,
+}
+
+impl<'a> FocusSessionRepository<'a> {
+    pub fn new(pool: &'a SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn active(&self) -> Result<Option<FocusSession>, sqlx::Error> {
+        let sql = focus_session_select_sql("WHERE focus_sessions.status = 'active' LIMIT 1");
+        let row = sqlx::query(&sql).fetch_optional(self.pool).await?;
+
+        Ok(row.map(focus_session_from_row))
+    }
+
+    pub async fn list(
+        &self,
+        input: ListFocusSessionsInput,
+    ) -> Result<Vec<FocusSession>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT focus_sessions.id,
+                   focus_sessions.project_id,
+                   projects.name AS project_name,
+                   focus_sessions.task_id,
+                   weekly_tasks.title AS task_title,
+                   focus_sessions.title,
+                   focus_sessions.notes,
+                   focus_sessions.status,
+                   focus_sessions.started_at,
+                   focus_sessions.ended_at,
+                   focus_sessions.duration_minutes,
+                   focus_sessions.manual_log_id,
+                   focus_sessions.created_at,
+                   focus_sessions.updated_at
+            FROM focus_sessions
+            LEFT JOIN projects ON projects.id = focus_sessions.project_id
+            LEFT JOIN weekly_tasks ON weekly_tasks.id = focus_sessions.task_id
+            WHERE (?1 IS NULL OR substr(focus_sessions.started_at, 1, 10) >= ?1)
+              AND (?2 IS NULL OR substr(focus_sessions.started_at, 1, 10) <= ?2)
+            ORDER BY focus_sessions.started_at DESC
+            "#,
+        )
+        .bind(&input.from)
+        .bind(&input.to)
+        .fetch_all(self.pool)
+        .await?;
+
+        let mut sessions = Vec::new();
+        for row in rows {
+            let session = focus_session_from_row(row);
+            if input
+                .status
+                .as_ref()
+                .map(|status| session.status != *status)
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            if let Some(project_ids) = &input.project_ids {
+                match &session.project_id {
+                    Some(project_id) if project_ids.iter().any(|id| id == project_id) => {}
+                    _ => continue,
+                }
+            }
+            sessions.push(session);
+        }
+
+        Ok(sessions)
+    }
+
+    pub async fn create(
+        &self,
+        input: CreateFocusSessionInput,
+    ) -> Result<FocusSession, sqlx::Error> {
+        let now = current_timestamp();
+        let title = input
+            .title
+            .and_then(|title| normalize_optional(Some(title)))
+            .unwrap_or_else(|| "Focus session".to_string());
+        let session = FocusSession {
+            id: generate_id("focus_session"),
+            project_id: normalize_optional(input.project_id),
+            project_name: None,
+            task_id: normalize_optional(input.task_id),
+            task_title: None,
+            title,
+            notes: normalize_optional(input.notes),
+            status: FocusSessionStatus::Active,
+            started_at: now.clone(),
+            ended_at: None,
+            duration_minutes: None,
+            manual_log_id: None,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+
+        sqlx::query(
+            r#"
+            INSERT INTO focus_sessions (
+              id, project_id, task_id, title, notes, status, started_at, ended_at,
+              duration_minutes, manual_log_id, created_at, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            "#,
+        )
+        .bind(&session.id)
+        .bind(&session.project_id)
+        .bind(&session.task_id)
+        .bind(&session.title)
+        .bind(&session.notes)
+        .bind(session.status.as_storage_value())
+        .bind(&session.started_at)
+        .bind(&session.ended_at)
+        .bind(session.duration_minutes)
+        .bind(&session.manual_log_id)
+        .bind(&session.created_at)
+        .bind(&session.updated_at)
+        .execute(self.pool)
+        .await?;
+
+        Ok(session)
+    }
+
+    pub async fn stop(
+        &self,
+        id: &str,
+        input: StopFocusSessionInput,
+    ) -> Result<Option<FocusSession>, sqlx::Error> {
+        let Some(mut session) = self.find(id).await? else {
+            return Ok(None);
+        };
+        if session.status != FocusSessionStatus::Active {
+            return Ok(Some(session));
+        }
+
+        let now = current_timestamp();
+        session.status = FocusSessionStatus::Completed;
+        session.ended_at = Some(now.clone());
+        session.duration_minutes = Some(minutes_between(&session.started_at, &now).max(1));
+        if input.notes.is_some() {
+            session.notes = normalize_optional(input.notes);
+        }
+        session.updated_at = now;
+        self.persist(&session).await?;
+        self.find(id).await
+    }
+
+    pub async fn cancel(&self, id: &str) -> Result<Option<FocusSession>, sqlx::Error> {
+        self.set_status(id, FocusSessionStatus::Cancelled).await
+    }
+
+    pub async fn set_status(
+        &self,
+        id: &str,
+        status: FocusSessionStatus,
+    ) -> Result<Option<FocusSession>, sqlx::Error> {
+        let Some(mut session) = self.find(id).await? else {
+            return Ok(None);
+        };
+        session.status = status;
+        session.ended_at = Some(current_timestamp());
+        session.updated_at = session.ended_at.clone().unwrap_or_else(current_timestamp);
+        self.persist(&session).await?;
+        self.find(id).await
+    }
+
+    pub async fn set_manual_log(
+        &self,
+        id: &str,
+        manual_log_id: &str,
+    ) -> Result<Option<FocusSession>, sqlx::Error> {
+        let Some(mut session) = self.find(id).await? else {
+            return Ok(None);
+        };
+        session.manual_log_id = Some(manual_log_id.to_string());
+        session.updated_at = current_timestamp();
+        self.persist(&session).await?;
+        self.find(id).await
+    }
+
+    async fn find(&self, id: &str) -> Result<Option<FocusSession>, sqlx::Error> {
+        let sql = focus_session_select_sql("WHERE focus_sessions.id = ?1");
+        let row = sqlx::query(&sql).bind(id).fetch_optional(self.pool).await?;
+
+        Ok(row.map(focus_session_from_row))
+    }
+
+    async fn persist(&self, session: &FocusSession) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            UPDATE focus_sessions
+            SET project_id = ?2,
+                task_id = ?3,
+                title = ?4,
+                notes = ?5,
+                status = ?6,
+                started_at = ?7,
+                ended_at = ?8,
+                duration_minutes = ?9,
+                manual_log_id = ?10,
+                updated_at = ?11
+            WHERE id = ?1
+            "#,
+        )
+        .bind(&session.id)
+        .bind(&session.project_id)
+        .bind(&session.task_id)
+        .bind(&session.title)
+        .bind(&session.notes)
+        .bind(session.status.as_storage_value())
+        .bind(&session.started_at)
+        .bind(&session.ended_at)
+        .bind(session.duration_minutes)
+        .bind(&session.manual_log_id)
+        .bind(&session.updated_at)
+        .execute(self.pool)
+        .await?;
+
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl FocusSessionStore for FocusSessionRepository<'_> {
+    async fn active(&self) -> Result<Option<FocusSession>, sqlx::Error> {
+        FocusSessionRepository::active(self).await
+    }
+
+    async fn list(&self, input: ListFocusSessionsInput) -> Result<Vec<FocusSession>, sqlx::Error> {
+        FocusSessionRepository::list(self, input).await
+    }
+
+    async fn create(&self, input: CreateFocusSessionInput) -> Result<FocusSession, sqlx::Error> {
+        FocusSessionRepository::create(self, input).await
+    }
+
+    async fn stop(
+        &self,
+        id: &str,
+        input: StopFocusSessionInput,
+    ) -> Result<Option<FocusSession>, sqlx::Error> {
+        FocusSessionRepository::stop(self, id, input).await
+    }
+
+    async fn cancel(&self, id: &str) -> Result<Option<FocusSession>, sqlx::Error> {
+        FocusSessionRepository::cancel(self, id).await
+    }
+
+    async fn set_status(
+        &self,
+        id: &str,
+        status: FocusSessionStatus,
+    ) -> Result<Option<FocusSession>, sqlx::Error> {
+        FocusSessionRepository::set_status(self, id, status).await
+    }
+
+    async fn set_manual_log(
+        &self,
+        id: &str,
+        manual_log_id: &str,
+    ) -> Result<Option<FocusSession>, sqlx::Error> {
+        FocusSessionRepository::set_manual_log(self, id, manual_log_id).await
+    }
+}
+
+pub struct NudgeDismissalRepository<'a> {
+    pool: &'a SqlitePool,
+}
+
+impl<'a> NudgeDismissalRepository<'a> {
+    pub fn new(pool: &'a SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn list(
+        &self,
+        input: ListNudgeDismissalsInput,
+    ) -> Result<Vec<NudgeDismissal>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, nudge_key, scope, dismissed_for_date, created_at
+            FROM nudge_dismissals
+            WHERE dismissed_for_date = ?1
+              AND (?2 IS NULL OR scope = ?2)
+            ORDER BY created_at DESC
+            "#,
+        )
+        .bind(input.dismissed_for_date.trim())
+        .bind(normalize_optional(input.scope))
+        .fetch_all(self.pool)
+        .await?;
+
+        Ok(rows.into_iter().map(nudge_dismissal_from_row).collect())
+    }
+
+    pub async fn dismiss(&self, input: DismissNudgeInput) -> Result<NudgeDismissal, sqlx::Error> {
+        let now = current_timestamp();
+        let nudge_key = input.nudge_key.trim().to_string();
+        let scope = normalize_optional(input.scope);
+        let dismissed_for_date = input.dismissed_for_date.trim().to_string();
+
+        sqlx::query(
+            r#"
+            INSERT INTO nudge_dismissals (id, nudge_key, scope, dismissed_for_date, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            ON CONFLICT(nudge_key, dismissed_for_date, scope) DO UPDATE SET
+              created_at = excluded.created_at
+            "#,
+        )
+        .bind(generate_id("nudge_dismissal"))
+        .bind(&nudge_key)
+        .bind(&scope)
+        .bind(&dismissed_for_date)
+        .bind(&now)
+        .execute(self.pool)
+        .await?;
+
+        let row = sqlx::query(
+            r#"
+            SELECT id, nudge_key, scope, dismissed_for_date, created_at
+            FROM nudge_dismissals
+            WHERE nudge_key = ?1
+              AND dismissed_for_date = ?2
+              AND (?3 IS NULL OR scope = ?3)
+            "#,
+        )
+        .bind(&nudge_key)
+        .bind(&dismissed_for_date)
+        .bind(&scope)
+        .fetch_one(self.pool)
+        .await?;
+
+        Ok(nudge_dismissal_from_row(row))
+    }
+}
+
+#[async_trait::async_trait]
+impl NudgeDismissalStore for NudgeDismissalRepository<'_> {
+    async fn list(
+        &self,
+        input: ListNudgeDismissalsInput,
+    ) -> Result<Vec<NudgeDismissal>, sqlx::Error> {
+        NudgeDismissalRepository::list(self, input).await
+    }
+
+    async fn dismiss(&self, input: DismissNudgeInput) -> Result<NudgeDismissal, sqlx::Error> {
+        NudgeDismissalRepository::dismiss(self, input).await
+    }
+}
+
 impl<'a> SettingsRepository<'a> {
     pub fn new(pool: &'a SqlitePool) -> Self {
         Self { pool }
@@ -2273,6 +2630,62 @@ fn weekly_task_from_row(row: sqlx::sqlite::SqliteRow) -> WeeklyTask {
     }
 }
 
+fn focus_session_from_row(row: sqlx::sqlite::SqliteRow) -> FocusSession {
+    let status: String = row.get("status");
+
+    FocusSession {
+        id: row.get("id"),
+        project_id: row.get("project_id"),
+        project_name: row.get("project_name"),
+        task_id: row.get("task_id"),
+        task_title: row.get("task_title"),
+        title: row.get("title"),
+        notes: row.get("notes"),
+        status: FocusSessionStatus::try_from(status).unwrap_or(FocusSessionStatus::Cancelled),
+        started_at: row.get("started_at"),
+        ended_at: row.get("ended_at"),
+        duration_minutes: row.get("duration_minutes"),
+        manual_log_id: row.get("manual_log_id"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    }
+}
+
+fn nudge_dismissal_from_row(row: sqlx::sqlite::SqliteRow) -> NudgeDismissal {
+    NudgeDismissal {
+        id: row.get("id"),
+        nudge_key: row.get("nudge_key"),
+        scope: row.get("scope"),
+        dismissed_for_date: row.get("dismissed_for_date"),
+        created_at: row.get("created_at"),
+    }
+}
+
+fn focus_session_select_sql(where_clause: &str) -> String {
+    format!(
+        r#"
+        SELECT focus_sessions.id,
+               focus_sessions.project_id,
+               projects.name AS project_name,
+               focus_sessions.task_id,
+               weekly_tasks.title AS task_title,
+               focus_sessions.title,
+               focus_sessions.notes,
+               focus_sessions.status,
+               focus_sessions.started_at,
+               focus_sessions.ended_at,
+               focus_sessions.duration_minutes,
+               focus_sessions.manual_log_id,
+               focus_sessions.created_at,
+               focus_sessions.updated_at
+        FROM focus_sessions
+        LEFT JOIN projects ON projects.id = focus_sessions.project_id
+        LEFT JOIN weekly_tasks ON weekly_tasks.id = focus_sessions.task_id
+        {where_clause}
+        "#
+    )
+}
+
 fn default_weekly_task_inclusion(task_type: &WeeklyTaskType) -> bool {
     matches!(
         task_type,
@@ -2392,6 +2805,16 @@ fn i64_to_bool(value: i64) -> bool {
     value == 1
 }
 
+fn minutes_between(started_at: &str, ended_at: &str) -> i64 {
+    let started = chrono::DateTime::parse_from_rfc3339(started_at);
+    let ended = chrono::DateTime::parse_from_rfc3339(ended_at);
+
+    match (started, ended) {
+        (Ok(started), Ok(ended)) => (ended - started).num_minutes(),
+        _ => 0,
+    }
+}
+
 fn current_timestamp() -> String {
     Utc::now().to_rfc3339()
 }
@@ -2410,6 +2833,7 @@ mod tests {
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
     use super::*;
+    use crate::application::focus_sessions::FocusSessionService;
     use crate::infrastructure::database::migrations::run_migrations;
 
     async fn test_pool() -> SqlitePool {
@@ -3175,6 +3599,165 @@ mod tests {
 
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].title, "General follow-up");
+    }
+
+    #[tokio::test]
+    async fn focus_session_create_guard_stop_cancel_and_list_work() {
+        let pool = test_pool().await;
+        let project = create_project(&pool).await;
+        let repository = FocusSessionRepository::new(&pool);
+
+        let session = repository
+            .create(CreateFocusSessionInput {
+                project_id: Some(project.id),
+                task_id: None,
+                title: Some("Implement focus mode".to_string()),
+                notes: None,
+            })
+            .await
+            .expect("create focus session");
+
+        assert_eq!(session.status, FocusSessionStatus::Active);
+        assert!(repository.active().await.expect("active").is_some());
+
+        let listed = repository
+            .list(ListFocusSessionsInput {
+                from: Some("2020-01-01".to_string()),
+                to: Some("2099-12-31".to_string()),
+                status: Some(FocusSessionStatus::Active),
+                project_ids: None,
+            })
+            .await
+            .expect("list sessions");
+
+        assert_eq!(listed.len(), 1);
+
+        let stopped = repository
+            .stop(
+                &session.id,
+                StopFocusSessionInput {
+                    notes: Some("Shipped the first pass".to_string()),
+                    create_manual_log: None,
+                    manual_log_summary: None,
+                    complete_task: None,
+                    progress_percent: None,
+                },
+            )
+            .await
+            .expect("stop session")
+            .expect("session exists");
+
+        assert_eq!(stopped.status, FocusSessionStatus::Completed);
+        assert!(stopped.duration_minutes.unwrap_or_default() >= 1);
+        assert!(repository
+            .active()
+            .await
+            .expect("active after stop")
+            .is_none());
+
+        let cancelled = repository
+            .create(CreateFocusSessionInput {
+                project_id: None,
+                task_id: None,
+                title: Some("Discard this block".to_string()),
+                notes: None,
+            })
+            .await
+            .expect("create second focus session");
+
+        assert_eq!(
+            repository
+                .cancel(&cancelled.id)
+                .await
+                .expect("cancel session")
+                .expect("session exists")
+                .status,
+            FocusSessionStatus::Cancelled
+        );
+    }
+
+    #[tokio::test]
+    async fn focus_session_service_blocks_second_active_session() {
+        let pool = test_pool().await;
+        let repository = FocusSessionRepository::new(&pool);
+        let weekly_tasks = WeeklyTaskRepository::new(&pool);
+
+        FocusSessionService::create(
+            &repository,
+            &weekly_tasks,
+            CreateFocusSessionInput {
+                project_id: None,
+                task_id: None,
+                title: Some("First focus".to_string()),
+                notes: None,
+            },
+        )
+        .await
+        .expect("create first focus");
+
+        let duplicate = FocusSessionService::create(
+            &repository,
+            &weekly_tasks,
+            CreateFocusSessionInput {
+                project_id: None,
+                task_id: None,
+                title: Some("Second focus".to_string()),
+                notes: None,
+            },
+        )
+        .await;
+
+        assert!(matches!(
+            duplicate,
+            Err(crate::application::focus_sessions::FocusSessionServiceError::Validation(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn nudge_dismissals_create_list_and_upsert_work() {
+        let pool = test_pool().await;
+        let repository = NudgeDismissalRepository::new(&pool);
+
+        let dismissal = repository
+            .dismiss(DismissNudgeInput {
+                nudge_key: "missing_activity".to_string(),
+                scope: Some("today".to_string()),
+                dismissed_for_date: "2026-05-21".to_string(),
+            })
+            .await
+            .expect("dismiss nudge");
+
+        assert_eq!(dismissal.nudge_key, "missing_activity");
+        assert_eq!(dismissal.scope.as_deref(), Some("today"));
+
+        repository
+            .dismiss(DismissNudgeInput {
+                nudge_key: "missing_activity".to_string(),
+                scope: Some("today".to_string()),
+                dismissed_for_date: "2026-05-21".to_string(),
+            })
+            .await
+            .expect("upsert dismissal");
+
+        repository
+            .dismiss(DismissNudgeInput {
+                nudge_key: "open_blockers".to_string(),
+                scope: Some("today".to_string()),
+                dismissed_for_date: "2026-05-22".to_string(),
+            })
+            .await
+            .expect("dismiss other date");
+
+        let listed = repository
+            .list(ListNudgeDismissalsInput {
+                dismissed_for_date: "2026-05-21".to_string(),
+                scope: Some("today".to_string()),
+            })
+            .await
+            .expect("list dismissals");
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].nudge_key, "missing_activity");
     }
 
     #[tokio::test]

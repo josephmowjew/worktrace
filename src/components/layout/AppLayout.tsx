@@ -2,6 +2,8 @@ import {
   Activity,
   BarChart3,
   CalendarDays,
+  Home,
+  BookOpen,
   ClipboardEdit,
   FolderKanban,
   LayoutDashboard,
@@ -23,14 +25,17 @@ import { toggleTodoWidget } from "../../lib/api/todoWidget";
 import { currentWeekRange } from "../../lib/dates";
 import { TitleBar } from "./TitleBar";
 import { useToast } from "../ui/ToastProvider";
+import { CommandPalette, createBaseCommandActions } from "../ui/CommandPalette";
 
 const navItems = [
-  { label: "Dashboard", href: "/", icon: LayoutDashboard },
+  { label: "Today", href: "/", icon: Home },
+  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "Projects", href: "/projects", icon: FolderKanban },
   { label: "Activity Timeline", href: "/activity", icon: Activity },
   { label: "Manual Log", href: "/manual-log", icon: ClipboardEdit },
   { label: "Weekly Plan", href: "/weekly-plan", icon: ListChecks },
   { label: "Reports", href: "/reports", icon: BarChart3 },
+  { label: "Guide", href: "/guide", icon: BookOpen },
   { label: "Settings", href: "/settings", icon: Settings },
 ];
 
@@ -40,6 +45,7 @@ export function AppLayout({ children }: PropsWithChildren) {
   const navigate = useNavigate();
   const weekRange = currentWeekRange();
   const [isWidgetWindow, setIsWidgetWindow] = useState(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const settingsQuery = useQuery({
     queryKey: ["settings"],
     queryFn: getSettings,
@@ -87,6 +93,30 @@ export function AppLayout({ children }: PropsWithChildren) {
       );
     },
   });
+  const commandSyncMutation = useMutation({
+    mutationFn: () =>
+      syncCommits({
+        from: null,
+        to: null,
+        authorEmail: settingsQuery.data?.gitAuthorEmail || null,
+      }),
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: ["activity"] });
+      await queryClient.invalidateQueries({ queryKey: ["projects"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
+      await queryClient.invalidateQueries({ queryKey: ["weeklyTasks"] });
+      toast.success(
+        "Sync complete",
+        `Added ${result.newCommits} commits and updated ${result.updatedCommits}.`,
+      );
+    },
+    onError: (error) => {
+      toast.error(
+        "Sync failed",
+        error instanceof Error ? error.message : "Repository sync could not be completed.",
+      );
+    },
+  });
   const settings = settingsQuery.data;
   const activityItems = activityQuery.data?.flatMap((day) => day.items) ?? [];
   const commitCount = activityItems.filter((item) => item.activityType === "commit").length;
@@ -102,6 +132,18 @@ export function AppLayout({ children }: PropsWithChildren) {
     } catch {
       setIsWidgetWindow(false);
     }
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setIsCommandPaletteOpen((isOpen) => !isOpen);
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
   useEffect(() => {
@@ -283,6 +325,36 @@ export function AppLayout({ children }: PropsWithChildren) {
           </main>
         </div>
       </div>
+      <CommandPalette
+        isOpen={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        actions={createBaseCommandActions({
+          projects: projectsQuery.data ?? [],
+          navigate: (path, state) => navigate(path, state === undefined ? undefined : { state }),
+          onSync: () => commandSyncMutation.mutate(),
+          onToggleWidget: () => widgetMutation.mutate(),
+        })}
+        onPowerCommand={(query) => {
+          const normalized = query.trim().toLowerCase();
+          if (normalized === "sync") {
+            commandSyncMutation.mutate();
+            return true;
+          }
+          if (normalized === "report") {
+            navigate("/", { state: { openReportPrep: true } });
+            return true;
+          }
+          if (
+            normalized.startsWith("task:") ||
+            normalized.startsWith("log:") ||
+            normalized.startsWith("focus:")
+          ) {
+            navigate("/", { state: { powerCommand: query.trim() } });
+            return true;
+          }
+          return false;
+        }}
+      />
     </div>
   );
 }

@@ -40,7 +40,20 @@ export function recentHistoryRange(date = new Date(), days = 90) {
   };
 }
 
-function formatDateOnly(date: Date) {
+export function todayRange(date = new Date()) {
+  const today = new Date(date);
+  today.setHours(0, 0, 0, 0);
+  const value = formatDateOnly(today);
+
+  return {
+    from: value,
+    to: value,
+    label: formatShortDate(today),
+    date: value,
+  };
+}
+
+export function formatDateOnly(date: Date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");

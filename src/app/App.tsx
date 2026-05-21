@@ -3,10 +3,12 @@ import { AppLayout } from "../components/layout/AppLayout";
 import { FloatingTodoWidget } from "../components/todo/FloatingTodoWidget";
 import { ActivityTimelinePage } from "../pages/ActivityTimelinePage";
 import { DashboardPage } from "../pages/DashboardPage";
+import { GuidePage } from "../pages/GuidePage";
 import { ManualLogPage } from "../pages/ManualLogPage";
 import { ProjectsPage } from "../pages/ProjectsPage";
 import { ReportsPage } from "../pages/ReportsPage";
 import { SettingsPage } from "../pages/SettingsPage";
+import { TodayPage } from "../pages/TodayPage";
 import { WeeklyPlanPage } from "../pages/WeeklyPlanPage";
 import { AppProviders } from "./providers";
 
@@ -20,12 +22,14 @@ export default function App() {
           element={
             <AppLayout>
               <Routes>
-                <Route path="/" element={<DashboardPage />} />
+                <Route path="/" element={<TodayPage />} />
+                <Route path="/dashboard" element={<DashboardPage />} />
                 <Route path="/projects" element={<ProjectsPage />} />
                 <Route path="/activity" element={<ActivityTimelinePage />} />
                 <Route path="/manual-log" element={<ManualLogPage />} />
                 <Route path="/weekly-plan" element={<WeeklyPlanPage />} />
                 <Route path="/reports" element={<ReportsPage />} />
+                <Route path="/guide" element={<GuidePage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>

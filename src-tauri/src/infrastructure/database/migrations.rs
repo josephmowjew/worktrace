@@ -46,6 +46,54 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .await
     .ok();
 
+    sqlx::raw_sql(
+        r#"
+        CREATE TABLE IF NOT EXISTS focus_sessions (
+          id TEXT PRIMARY KEY,
+          project_id TEXT,
+          task_id TEXT,
+          title TEXT NOT NULL,
+          notes TEXT,
+          status TEXT NOT NULL,
+          started_at TEXT NOT NULL,
+          ended_at TEXT,
+          duration_minutes INTEGER,
+          manual_log_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (project_id) REFERENCES projects(id),
+          FOREIGN KEY (task_id) REFERENCES weekly_tasks(id),
+          FOREIGN KEY (manual_log_id) REFERENCES manual_logs(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_focus_sessions_started_at ON focus_sessions(started_at);
+        CREATE INDEX IF NOT EXISTS idx_focus_sessions_status ON focus_sessions(status);
+        CREATE INDEX IF NOT EXISTS idx_focus_sessions_project ON focus_sessions(project_id);
+        CREATE INDEX IF NOT EXISTS idx_focus_sessions_task ON focus_sessions(task_id);
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::raw_sql(
+        r#"
+        CREATE TABLE IF NOT EXISTS nudge_dismissals (
+          id TEXT PRIMARY KEY,
+          nudge_key TEXT NOT NULL,
+          scope TEXT,
+          dismissed_for_date TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_nudge_dismissals_unique
+          ON nudge_dismissals(nudge_key, dismissed_for_date, scope);
+        CREATE INDEX IF NOT EXISTS idx_nudge_dismissals_date
+          ON nudge_dismissals(dismissed_for_date);
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
     Ok(())
 }
 
@@ -195,4 +243,40 @@ CREATE TABLE IF NOT EXISTS weekly_tasks (
 CREATE INDEX IF NOT EXISTS idx_weekly_tasks_week ON weekly_tasks(week_start_date);
 CREATE INDEX IF NOT EXISTS idx_weekly_tasks_status ON weekly_tasks(status);
 CREATE INDEX IF NOT EXISTS idx_weekly_tasks_project ON weekly_tasks(project_id);
+
+CREATE TABLE IF NOT EXISTS focus_sessions (
+  id TEXT PRIMARY KEY,
+  project_id TEXT,
+  task_id TEXT,
+  title TEXT NOT NULL,
+  notes TEXT,
+  status TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  duration_minutes INTEGER,
+  manual_log_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id),
+  FOREIGN KEY (task_id) REFERENCES weekly_tasks(id),
+  FOREIGN KEY (manual_log_id) REFERENCES manual_logs(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_focus_sessions_started_at ON focus_sessions(started_at);
+CREATE INDEX IF NOT EXISTS idx_focus_sessions_status ON focus_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_focus_sessions_project ON focus_sessions(project_id);
+CREATE INDEX IF NOT EXISTS idx_focus_sessions_task ON focus_sessions(task_id);
+
+CREATE TABLE IF NOT EXISTS nudge_dismissals (
+  id TEXT PRIMARY KEY,
+  nudge_key TEXT NOT NULL,
+  scope TEXT,
+  dismissed_for_date TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_nudge_dismissals_unique
+  ON nudge_dismissals(nudge_key, dismissed_for_date, scope);
+CREATE INDEX IF NOT EXISTS idx_nudge_dismissals_date
+  ON nudge_dismissals(dismissed_for_date);
 "#;

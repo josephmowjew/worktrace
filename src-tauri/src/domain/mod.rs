@@ -1,7 +1,9 @@
 pub mod activity;
 pub mod commit;
 pub mod dashboard;
+pub mod focus_session;
 pub mod manual_log;
+pub mod nudge;
 pub mod project;
 pub mod report;
 pub mod settings;

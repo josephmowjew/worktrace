@@ -1,6 +1,8 @@
 pub mod activity;
+pub mod focus_sessions;
 pub mod git_sync;
 pub mod manual_logs;
+pub mod nudges;
 pub mod projects;
 pub mod reports;
 pub mod repositories;

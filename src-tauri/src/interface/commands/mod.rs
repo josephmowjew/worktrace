@@ -1,7 +1,9 @@
 pub mod activity;
 pub mod dashboard;
+pub mod focus_sessions;
 pub mod git_sync;
 pub mod manual_logs;
+pub mod nudges;
 pub mod project_stats;
 pub mod projects;
 pub mod reports;
@@ -28,11 +30,18 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         activity::get_activity_heatmap,
         activity::get_week_summary,
         activity::get_key_highlights,
+        focus_sessions::get_active_focus_session,
+        focus_sessions::list_focus_sessions,
+        focus_sessions::start_focus_session,
+        focus_sessions::stop_focus_session,
+        focus_sessions::cancel_focus_session,
         git_sync::sync_commits,
         manual_logs::list_manual_logs,
         manual_logs::create_manual_log,
         manual_logs::update_manual_log,
         manual_logs::delete_manual_log,
+        nudges::list_nudge_dismissals,
+        nudges::dismiss_nudge,
         reports::generate_report,
         reports::save_report,
         reports::list_reports,
