@@ -1,7 +1,7 @@
 use tauri::State;
 
 use crate::application::settings::{SettingsService, SettingsServiceError};
-use crate::domain::settings::{Settings, UpdateSettingsInput};
+use crate::domain::settings::{BackupLocationValidation, Settings, UpdateSettingsInput};
 use crate::infrastructure::database::repositories::SettingsRepository;
 use crate::interface::dto::app_result::AppResult;
 use crate::AppState;
@@ -32,4 +32,13 @@ pub async fn update_settings(
             AppResult::err("DATABASE_ERROR", error.to_string())
         }
     })
+}
+
+#[tauri::command]
+pub async fn validate_backup_location(
+    location: String,
+) -> Result<AppResult<BackupLocationValidation>, String> {
+    Ok(AppResult::ok(SettingsService::validate_backup_location(
+        &location,
+    )))
 }

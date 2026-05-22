@@ -38,3 +38,27 @@ export type SaveReportInput = {
   recipientName?: string | null;
   content: string;
 };
+
+export type ReportNote = {
+  id: string;
+  projectId?: string | null;
+  noteType: string;
+  date: string;
+  content: string;
+  includedInReport: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ListReportNotesInput = {
+  from: string;
+  to: string;
+};
+
+export type SaveDailyReviewNoteInput = {
+  date: string;
+  finished: string;
+  blocked: string;
+  carryIntoTomorrow: string;
+  includedInReport?: boolean | null;
+};

@@ -93,6 +93,13 @@ pub struct ReportNote {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ListReportNotesInput {
+    pub from: String,
+    pub to: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateReportNoteInput {
     pub project_id: Option<String>,
     pub note_type: String,
@@ -108,5 +115,15 @@ pub struct UpdateReportNoteInput {
     pub note_type: Option<String>,
     pub date: Option<String>,
     pub content: Option<String>,
+    pub included_in_report: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveDailyReviewNoteInput {
+    pub date: String,
+    pub finished: String,
+    pub blocked: String,
+    pub carry_into_tomorrow: String,
     pub included_in_report: Option<bool>,
 }

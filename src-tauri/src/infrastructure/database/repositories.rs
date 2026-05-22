@@ -203,7 +203,7 @@ impl<'a> ProjectRepository<'a> {
         .await
     }
 
-    async fn find(&self, id: &str) -> Result<Option<Project>, sqlx::Error> {
+    pub async fn find(&self, id: &str) -> Result<Option<Project>, sqlx::Error> {
         let row = sqlx::query(
             r#"
             SELECT id, name, description, repo_path, github_url, type, workspace_id, workspace_relative_path, status, created_at, updated_at
@@ -1737,6 +1737,26 @@ impl<'a> ReportNoteRepository<'a> {
         Ok(rows.into_iter().map(report_note_from_row).collect())
     }
 
+    pub async fn find_daily_review_by_date(
+        &self,
+        date: &str,
+    ) -> Result<Option<ReportNote>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, project_id, note_type, date, content, included_in_report, created_at, updated_at
+            FROM report_notes
+            WHERE date = ?1 AND note_type = 'daily_review'
+            ORDER BY updated_at DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(date)
+        .fetch_optional(self.pool)
+        .await?;
+
+        Ok(row.map(report_note_from_row))
+    }
+
     async fn find(&self, id: &str) -> Result<Option<ReportNote>, sqlx::Error> {
         let row = sqlx::query(
             r#"
@@ -2481,6 +2501,30 @@ impl<'a> SettingsRepository<'a> {
         if let Some(value) = input.theme {
             settings.theme = value;
         }
+        if let Some(value) = input.backup_enabled {
+            settings.backup_enabled = value;
+        }
+        if let Some(value) = input.backup_schedule {
+            settings.backup_schedule = value;
+        }
+        if let Some(value) = input.backup_time {
+            settings.backup_time = value;
+        }
+        if let Some(value) = input.backup_day {
+            settings.backup_day = value;
+        }
+        if let Some(value) = input.backup_storage_mode {
+            settings.backup_storage_mode = value;
+        }
+        if let Some(value) = input.backup_storage_location {
+            settings.backup_storage_location = value;
+        }
+        if let Some(value) = input.online_backup_status {
+            settings.online_backup_status = value;
+        }
+        if let Some(value) = input.online_backup_provider {
+            settings.online_backup_provider = value;
+        }
 
         self.upsert("profile.name", &settings.name).await?;
         self.upsert("profile.email", &settings.email).await?;
@@ -2502,6 +2546,27 @@ impl<'a> SettingsRepository<'a> {
         )
         .await?;
         self.upsert("appearance.theme", &settings.theme).await?;
+        self.upsert(
+            "backup.enabled",
+            if settings.backup_enabled {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
+        self.upsert("backup.schedule", &settings.backup_schedule)
+            .await?;
+        self.upsert("backup.time", &settings.backup_time).await?;
+        self.upsert("backup.day", &settings.backup_day).await?;
+        self.upsert("backup.storage_mode", &settings.backup_storage_mode)
+            .await?;
+        self.upsert("backup.storage_location", &settings.backup_storage_location)
+            .await?;
+        self.upsert("backup.online_status", &settings.online_backup_status)
+            .await?;
+        self.upsert("backup.online_provider", &settings.online_backup_provider)
+            .await?;
 
         Ok(settings)
     }
@@ -2705,6 +2770,14 @@ fn apply_setting(settings: &mut Settings, key: &str, value: String) {
                 serde_json::from_str(&value).unwrap_or_else(|_| Settings::default().working_days);
         }
         "appearance.theme" => settings.theme = value,
+        "backup.enabled" => settings.backup_enabled = value == "true",
+        "backup.schedule" => settings.backup_schedule = value,
+        "backup.time" => settings.backup_time = value,
+        "backup.day" => settings.backup_day = value,
+        "backup.storage_mode" => settings.backup_storage_mode = value,
+        "backup.storage_location" => settings.backup_storage_location = value,
+        "backup.online_status" => settings.online_backup_status = value,
+        "backup.online_provider" => settings.online_backup_provider = value,
         _ => {}
     }
 }
@@ -3779,14 +3852,32 @@ mod tests {
                 default_report_template: Some("project_based".to_string()),
                 working_days: Some(vec!["monday".to_string(), "tuesday".to_string()]),
                 theme: Some("system".to_string()),
+                backup_enabled: Some(true),
+                backup_schedule: Some("weekly".to_string()),
+                backup_time: Some("17:30".to_string()),
+                backup_day: Some("friday".to_string()),
+                backup_storage_mode: Some("local".to_string()),
+                backup_storage_location: Some("C:\\Backups".to_string()),
+                online_backup_status: Some("research".to_string()),
+                online_backup_provider: Some(String::new()),
             })
             .await
             .expect("update settings");
 
         assert_eq!(updated.name, "Joseph");
+        assert!(updated.backup_enabled);
+        assert_eq!(updated.backup_time, "17:30");
         assert_eq!(
             repository.get().await.expect("get settings").theme,
             "system"
+        );
+        assert_eq!(
+            repository
+                .get()
+                .await
+                .expect("get settings")
+                .backup_storage_location,
+            "C:\\Backups"
         );
     }
 }

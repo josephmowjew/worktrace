@@ -13,6 +13,7 @@ import {
   Wrench,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { Badge } from "./Badge";
 import { Panel } from "./Panel";
 import type { Project, ProjectStats } from "../../types/project";
@@ -106,6 +107,7 @@ export function ProjectCard({
   onEdit: () => void;
   onArchive: () => void;
 }) {
+  const navigate = useNavigate();
   const Icon = getCategoryIcon(project.projectType);
   const colorClass = getCategoryColor(project.projectType);
   const commitsThisWeek = stats?.commitsThisWeek ?? 0;
@@ -127,9 +129,12 @@ export function ProjectCard({
 
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h3 className="truncate text-sm font-semibold text-white">
+                <button
+                  onClick={() => navigate(`/projects/${project.id}`)}
+                  className="truncate text-sm font-semibold text-white transition-colors hover:text-blue-200"
+                >
                   {project.name}
-                </h3>
+                </button>
                 <Badge tone={project.status === "active" ? "green" : "orange"}>
                   {project.status}
                 </Badge>

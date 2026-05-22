@@ -2,10 +2,11 @@ use tauri::State;
 
 use crate::application::reports::{ReportService, ReportServiceError};
 use crate::domain::report::{
-    GenerateReportInput, GeneratedReport, Report, ReportSummary, SaveReportInput,
+    GenerateReportInput, GeneratedReport, ListReportNotesInput, Report, ReportNote, ReportSummary,
+    SaveDailyReviewNoteInput, SaveReportInput,
 };
 use crate::infrastructure::database::repositories::{
-    ActivityRepository, ReportRepository, WeeklyTaskRepository,
+    ActivityRepository, ReportNoteRepository, ReportRepository, WeeklyTaskRepository,
 };
 use crate::interface::dto::app_result::AppResult;
 use crate::AppState;
@@ -17,10 +18,58 @@ pub async fn generate_report(
 ) -> Result<AppResult<GeneratedReport>, String> {
     let activity_repository = ActivityRepository::new(state.database.pool());
     let weekly_task_repository = WeeklyTaskRepository::new(state.database.pool());
+    let report_note_repository = ReportNoteRepository::new(state.database.pool());
 
     Ok(
-        match ReportService::generate(&activity_repository, &weekly_task_repository, input).await {
+        match ReportService::generate(
+            &activity_repository,
+            &weekly_task_repository,
+            &report_note_repository,
+            input,
+        )
+        .await
+        {
             Ok(report) => AppResult::ok(report),
+            Err(ReportServiceError::Validation(message)) => {
+                AppResult::err("VALIDATION_ERROR", message)
+            }
+            Err(ReportServiceError::Database(error)) => {
+                AppResult::err("DATABASE_ERROR", error.to_string())
+            }
+        },
+    )
+}
+
+#[tauri::command]
+pub async fn list_report_notes(
+    state: State<'_, AppState>,
+    input: ListReportNotesInput,
+) -> Result<AppResult<Vec<ReportNote>>, String> {
+    let report_note_repository = ReportNoteRepository::new(state.database.pool());
+
+    Ok(
+        match ReportService::list_notes(&report_note_repository, input).await {
+            Ok(notes) => AppResult::ok(notes),
+            Err(ReportServiceError::Validation(message)) => {
+                AppResult::err("VALIDATION_ERROR", message)
+            }
+            Err(ReportServiceError::Database(error)) => {
+                AppResult::err("DATABASE_ERROR", error.to_string())
+            }
+        },
+    )
+}
+
+#[tauri::command]
+pub async fn save_daily_review_note(
+    state: State<'_, AppState>,
+    input: SaveDailyReviewNoteInput,
+) -> Result<AppResult<ReportNote>, String> {
+    let report_note_repository = ReportNoteRepository::new(state.database.pool());
+
+    Ok(
+        match ReportService::save_daily_review_note(&report_note_repository, input).await {
+            Ok(note) => AppResult::ok(note),
             Err(ReportServiceError::Validation(message)) => {
                 AppResult::err("VALIDATION_ERROR", message)
             }

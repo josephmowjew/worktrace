@@ -57,3 +57,9 @@ export type TopContributor = {
   authorEmail?: string | null;
   commitCount: number;
 };
+
+export type GitBranch = {
+  name: string;
+  kind: "local" | "remote";
+  isCurrent: boolean;
+};

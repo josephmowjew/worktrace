@@ -19,6 +19,7 @@ import { listActivity } from "../lib/api/activity";
 import {
   cancelFocusSession,
   getActiveFocusSession,
+  listFocusSessions,
   startFocusSession,
   stopFocusSession,
 } from "../lib/api/focusSessions";
@@ -26,6 +27,7 @@ import { syncCommits } from "../lib/api/gitSync";
 import { createManualLog } from "../lib/api/manualLogs";
 import { dismissNudge, listNudgeDismissals } from "../lib/api/nudges";
 import { listProjects } from "../lib/api/projects";
+import { listReportNotes, saveDailyReviewNote } from "../lib/api/reports";
 import { getSettings } from "../lib/api/settings";
 import { weeklyTaskQueryRoots } from "../lib/api/queryKeys";
 import { createWeeklyTask, listWeeklyTasks, updateWeeklyTask } from "../lib/api/weeklyTasks";
@@ -78,6 +80,22 @@ export function TodayPage() {
     queryFn: getActiveFocusSession,
     refetchInterval: 5_000,
   });
+  const focusSessionsQuery = useQuery({
+    queryKey: ["focusSessions", today.from, today.to, "today"],
+    queryFn: () =>
+      listFocusSessions({
+        from: today.from,
+        to: today.to,
+      }),
+  });
+  const dailyReviewNotesQuery = useQuery({
+    queryKey: ["reportNotes", today.date, "dailyReview"],
+    queryFn: () =>
+      listReportNotes({
+        from: today.date,
+        to: today.date,
+      }),
+  });
   const nudgeDismissalsQuery = useQuery({
     queryKey: ["nudgeDismissals", today.date, "today"],
     queryFn: () =>
@@ -110,8 +128,10 @@ export function TodayPage() {
       queryClient.invalidateQueries({ queryKey: ["activity"] }),
       queryClient.invalidateQueries({ queryKey: ["manualLogs"] }),
       queryClient.invalidateQueries({ queryKey: ["reports"] }),
+      queryClient.invalidateQueries({ queryKey: ["reportNotes"] }),
       queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] }),
       queryClient.invalidateQueries({ queryKey: ["focusSession"] }),
+      queryClient.invalidateQueries({ queryKey: ["focusSessions"] }),
       queryClient.invalidateQueries({ queryKey: ["nudgeDismissals"] }),
       ...weeklyTaskQueryRoots.map((queryKey) =>
         queryClient.invalidateQueries({ queryKey }),
@@ -201,6 +221,16 @@ export function TodayPage() {
       toast.error("Task update failed", error instanceof Error ? error.message : "The task could not be updated.");
     },
   });
+  const saveDailyReviewMutation = useMutation({
+    mutationFn: saveDailyReviewNote,
+    onSuccess: async () => {
+      await invalidateDailyViews();
+      toast.success("Daily review saved", "It will appear in the weekly report notes.");
+    },
+    onError: (error) => {
+      toast.error("Review save failed", error instanceof Error ? error.message : "The daily review could not be saved.");
+    },
+  });
   const startFocusMutation = useMutation({
     mutationFn: startFocusSession,
     onSuccess: async () => {
@@ -252,6 +282,8 @@ export function TodayPage() {
   const tasks = tasksQuery.data ?? [];
   const days = activityQuery.data ?? [];
   const activityItems = days.flatMap((day) => day.items);
+  const focusSessions = focusSessionsQuery.data ?? [];
+  const dailyReviewNote = (dailyReviewNotesQuery.data ?? []).find((note) => note.noteType === "daily_review") ?? null;
   const todayTasks = useMemo(
     () =>
       tasks.filter(
@@ -259,6 +291,21 @@ export function TodayPage() {
           task.status !== "completed" &&
           task.status !== "dropped" &&
           (!task.targetDate || task.targetDate <= today.date),
+      ),
+    [tasks, today.date],
+  );
+  const reviewTasks = useMemo(
+    () =>
+      tasks.filter(
+        (task) =>
+          task.completedAt === today.date ||
+          task.status === "blocked" ||
+          task.taskType === "carryover" ||
+          (
+            task.status !== "completed" &&
+            task.status !== "dropped" &&
+            (!task.targetDate || task.targetDate <= today.date)
+          ),
       ),
     [tasks, today.date],
   );
@@ -563,16 +610,21 @@ export function TodayPage() {
         onClose={() => setReviewOpen(false)}
         dateLabel={today.label}
         activityItems={activityItems}
-        openTasks={todayTasks}
+        focusSessions={focusSessions}
+        openTasks={reviewTasks}
         blockers={blockers}
+        existingNote={dailyReviewNote}
+        noteLoadWarning={dailyReviewNotesQuery.error instanceof Error ? dailyReviewNotesQuery.error.message : null}
         isSyncing={syncMutation.isPending}
         isUpdating={updateTaskMutation.isPending}
+        isSaving={saveDailyReviewMutation.isPending}
         onSync={() => syncMutation.mutate()}
         onQuickLog={() => setLogModalOpen(true)}
         onGenerateReport={() => navigate("/reports")}
         onCompleteTask={(task) => updateTaskMutation.mutate({ id: task.id, input: { status: "completed", completedAt: today.date } })}
         onCarryTask={(task) => updateTaskMutation.mutate({ id: task.id, input: { taskType: "carryover", status: task.status === "completed" ? "todo" : task.status } })}
         onIncludeTask={(task) => updateTaskMutation.mutate({ id: task.id, input: { includedInReport: true } })}
+        onSaveReview={(input) => saveDailyReviewMutation.mutate({ date: today.date, ...input, includedInReport: true })}
       />
       <StopFocusModal
         isOpen={stopFocusOpen}

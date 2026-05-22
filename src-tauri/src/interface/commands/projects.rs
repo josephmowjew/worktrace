@@ -3,6 +3,7 @@ use tauri::State;
 use crate::application::projects::{ProjectService, ProjectServiceError};
 use crate::domain::project::{CreateProjectInput, Project, UpdateProjectInput};
 use crate::infrastructure::database::repositories::ProjectRepository;
+use crate::infrastructure::git::branches::GitBranch;
 use crate::interface::dto::app_result::AppResult;
 use crate::AppState;
 
@@ -68,4 +69,24 @@ pub async fn archive_project(
 #[tauri::command]
 pub async fn validate_repo_path(path: String) -> Result<AppResult<bool>, String> {
     Ok(AppResult::ok(ProjectService::validate_repo_path(&path)))
+}
+
+#[tauri::command]
+pub async fn list_git_branches(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<AppResult<Vec<GitBranch>>, String> {
+    let repository = ProjectRepository::new(state.database.pool());
+
+    Ok(
+        match ProjectService::list_git_branches(&repository, &project_id).await {
+            Ok(branches) => AppResult::ok(branches),
+            Err(ProjectServiceError::Validation(message)) => {
+                AppResult::err("VALIDATION_ERROR", message)
+            }
+            Err(ProjectServiceError::Database(error)) => {
+                AppResult::err("DATABASE_ERROR", error.to_string())
+            }
+        },
+    )
 }

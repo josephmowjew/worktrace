@@ -2,6 +2,7 @@ import { callCommand } from "./client";
 import type {
   CategoryDistribution,
   CreateProjectInput,
+  GitBranch,
   Project,
   ProjectStats,
   RecentCommit,
@@ -29,6 +30,10 @@ export function validateRepoPath(path: string) {
   return callCommand<boolean>("validate_repo_path", { path });
 }
 
+export function listGitBranches(projectId: string) {
+  return callCommand<GitBranch[]>("list_git_branches", { projectId });
+}
+
 export function getProjectStats() {
   return callCommand<ProjectStats[]>("get_project_stats");
 }
@@ -45,3 +50,7 @@ export function getTopContributors(limit?: number) {
   return callCommand<TopContributor[]>("get_top_contributors", { limit });
 }
 
+export async function getProjectById(id: string): Promise<Project | undefined> {
+  const projects = await listProjects();
+  return projects.find((p) => p.id === id);
+}
