@@ -28,6 +28,7 @@ import { ProjectBreakdownPanel } from "../components/ui/ProjectBreakdownPanel";
 import { RecentActivityItem } from "../components/ui/RecentActivityItem";
 import { UpcomingWorkPanel } from "../components/ui/UpcomingWorkPanel";
 import { WeekRangePicker } from "../components/ui/WeekRangePicker";
+import { useSpeech } from "../components/ui/SpeechProvider";
 import { useToast } from "../components/ui/ToastProvider";
 import { getDashboardStats, getProjectBreakdown, getWeeklyActivityHours } from "../lib/api/dashboard";
 import { listActivity } from "../lib/api/activity";
@@ -35,6 +36,7 @@ import { syncCommits } from "../lib/api/gitSync";
 import { listProjects } from "../lib/api/projects";
 import { listWeeklyTasks } from "../lib/api/weeklyTasks";
 import { getSettings } from "../lib/api/settings";
+import { syncAnnouncement, syncStartedAnnouncement } from "../lib/announcements";
 import { currentWeekRange, shiftWeek } from "../lib/dates";
 
 type StatTone = "blue" | "purple" | "cyan" | "violet";
@@ -159,6 +161,7 @@ export function DashboardPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const toast = useToast();
+  const speech = useSpeech();
   const [anchorDate, setAnchorDate] = useState(new Date());
   const [searchQuery, setSearchQuery] = useState("");
   const weekRange = currentWeekRange(anchorDate);
@@ -213,6 +216,9 @@ export function DashboardPage() {
         to: null,
         authorEmail: settingsQuery.data?.gitAuthorEmail || null,
     }),
+    onMutate: () => {
+      speech.announce(syncStartedAnnouncement("dashboard activity"), { category: "sync" });
+    },
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-activity-hours"] });
@@ -225,6 +231,7 @@ export function DashboardPage() {
         "Sync complete",
         `Scanned ${result.scannedProjects} projects. Added ${result.newCommits} commits and updated ${result.updatedCommits}.`,
       );
+      speech.announce(syncAnnouncement(result), { category: "sync" });
     },
     onError: (error) => {
       toast.error("Sync failed", error instanceof Error ? error.message : "Repository sync could not be completed.");

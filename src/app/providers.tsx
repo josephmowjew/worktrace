@@ -3,6 +3,7 @@ import { BrowserRouter } from "react-router-dom";
 import type { PropsWithChildren } from "react";
 import { SpeechProvider } from "../components/ui/SpeechProvider";
 import { ToastProvider } from "../components/ui/ToastProvider";
+import { ReportsWorkspaceProvider } from "../pages/reportsWorkspace";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -19,7 +20,9 @@ export function AppProviders({ children }: PropsWithChildren) {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <SpeechProvider>
-          <ToastProvider>{children}</ToastProvider>
+          <ToastProvider>
+            <ReportsWorkspaceProvider>{children}</ReportsWorkspaceProvider>
+          </ToastProvider>
         </SpeechProvider>
       </BrowserRouter>
     </QueryClientProvider>

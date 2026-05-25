@@ -3,11 +3,15 @@ pub mod domain;
 pub mod infrastructure;
 pub mod interface;
 
+use std::collections::HashSet;
+use std::sync::Mutex;
+
 use infrastructure::database::Database;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 pub struct AppState {
     pub database: Database,
+    pub cancelled_report_ai_streams: Mutex<HashSet<String>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -19,7 +23,10 @@ pub fn run() {
             let app_handle = app.handle().clone();
             let database = tauri::async_runtime::block_on(Database::connect(&app_handle))?;
 
-            app.manage(AppState { database });
+            app.manage(AppState {
+                database,
+                cancelled_report_ai_streams: Mutex::new(HashSet::new()),
+            });
 
             WebviewWindowBuilder::new(app, "widget", WebviewUrl::App("/widget".into()))
                 .title("WorkTrace Todo")

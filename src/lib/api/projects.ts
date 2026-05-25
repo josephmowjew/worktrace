@@ -3,9 +3,13 @@ import type {
   CategoryDistribution,
   CreateProjectInput,
   GitBranch,
+  GitRef,
+  GitWorktree,
   Project,
+  ProjectGitFocus,
   ProjectStats,
   RecentCommit,
+  SaveProjectGitFocusInput,
   TopContributor,
   UpdateProjectInput,
 } from "../../types/project";
@@ -32,6 +36,22 @@ export function validateRepoPath(path: string) {
 
 export function listGitBranches(projectId: string) {
   return callCommand<GitBranch[]>("list_git_branches", { projectId });
+}
+
+export function listGitRefs(projectId: string) {
+  return callCommand<GitRef[]>("list_git_refs", { projectId });
+}
+
+export function listGitWorktrees(projectId: string) {
+  return callCommand<GitWorktree[]>("list_git_worktrees", { projectId });
+}
+
+export function getProjectGitFocus(projectId: string) {
+  return callCommand<ProjectGitFocus>("get_project_git_focus", { projectId });
+}
+
+export function saveProjectGitFocus(input: SaveProjectGitFocusInput) {
+  return callCommand<ProjectGitFocus>("save_project_git_focus", { input });
 }
 
 export function getProjectStats() {

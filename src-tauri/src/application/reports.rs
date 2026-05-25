@@ -5,7 +5,8 @@ use crate::domain::report::{
 };
 use crate::domain::weekly_task::{ListWeeklyTasksInput, WeeklyTask, WeeklyTaskType};
 use crate::infrastructure::database::repositories::{
-    ActivityRepository, ReportNoteRepository, ReportRepository, WeeklyTaskRepository,
+    ActivityRepository, GitMetadataRepository, ReportNoteRepository, ReportRepository,
+    WeeklyTaskRepository,
 };
 
 pub struct ReportService;
@@ -15,9 +16,16 @@ impl ReportService {
         activity_repository: &ActivityRepository<'_>,
         weekly_task_repository: &WeeklyTaskRepository<'_>,
         report_note_repository: &ReportNoteRepository<'_>,
+        git_metadata_repository: &GitMetadataRepository<'_>,
         input: GenerateReportInput,
     ) -> Result<GeneratedReport, ReportServiceError> {
         validate_range(&input.start_date, &input.end_date)?;
+        let (git_refs, worktree_paths) = resolve_git_focus(
+            git_metadata_repository,
+            input.project_ids.as_deref(),
+            &input,
+        )
+        .await?;
 
         let mut sections = Vec::new();
         if input.include_commits.unwrap_or(true) {
@@ -36,6 +44,8 @@ impl ReportService {
                 to: input.end_date.clone(),
                 activity_type: None,
                 project_ids: input.project_ids.clone(),
+                git_refs,
+                worktree_paths,
             })
             .await
             .map_err(ReportServiceError::Database)?;
@@ -193,6 +203,39 @@ fn validate_range(start_date: &str, end_date: &str) -> Result<(), ReportServiceE
     }
 
     Ok(())
+}
+
+async fn resolve_git_focus(
+    git_metadata_repository: &GitMetadataRepository<'_>,
+    project_ids: Option<&[String]>,
+    input: &GenerateReportInput,
+) -> Result<
+    (
+        Option<Vec<crate::domain::git_metadata::GitRefFilter>>,
+        Option<Vec<String>>,
+    ),
+    ReportServiceError,
+> {
+    if input.git_refs.is_some() || input.worktree_paths.is_some() {
+        return Ok((input.git_refs.clone(), input.worktree_paths.clone()));
+    }
+
+    if input.use_project_git_focus.unwrap_or(true) {
+        let (refs, worktree_paths) = git_metadata_repository
+            .focus_for_projects(project_ids)
+            .await
+            .map_err(ReportServiceError::Database)?;
+        return Ok((
+            if refs.is_empty() { None } else { Some(refs) },
+            if worktree_paths.is_empty() {
+                None
+            } else {
+                Some(worktree_paths)
+            },
+        ));
+    }
+
+    Ok((None, None))
 }
 
 fn render_markdown(
@@ -470,11 +513,15 @@ mod tests {
             &ActivityRepository::new(&pool),
             &WeeklyTaskRepository::new(&pool),
             &ReportNoteRepository::new(&pool),
+            &GitMetadataRepository::new(&pool),
             GenerateReportInput {
                 start_date: "2026-05-19".to_string(),
                 end_date: "2026-05-21".to_string(),
                 recipient_name: Some("Manager".to_string()),
                 project_ids: None,
+                git_refs: None,
+                worktree_paths: None,
+                use_project_git_focus: Some(false),
                 include_commits: Some(true),
                 include_manual_logs: Some(true),
                 include_weekly_tasks: Some(true),
@@ -563,11 +610,15 @@ mod tests {
             &ActivityRepository::new(&pool),
             &WeeklyTaskRepository::new(&pool),
             &repository,
+            &GitMetadataRepository::new(&pool),
             GenerateReportInput {
                 start_date: "2026-05-19".to_string(),
                 end_date: "2026-05-22".to_string(),
                 recipient_name: None,
                 project_ids: None,
+                git_refs: None,
+                worktree_paths: None,
+                use_project_git_focus: Some(false),
                 include_commits: Some(true),
                 include_manual_logs: Some(true),
                 include_weekly_tasks: Some(true),

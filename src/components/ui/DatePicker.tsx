@@ -25,6 +25,7 @@ export function DatePicker({
     () => new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1),
   );
   const containerRef = useRef<HTMLDivElement>(null);
+  const portalRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setVisibleMonth(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1));
@@ -72,7 +73,10 @@ export function DatePicker({
         containerRef.current &&
         !containerRef.current.contains(event.target as Node)
       ) {
-        setOpen(false);
+        const target = event.target as Node;
+        if (!portalRef.current || !portalRef.current.contains(target)) {
+          setOpen(false);
+        }
       }
     }
 
@@ -121,6 +125,7 @@ export function DatePicker({
       {open
         ? createPortal(
             <div
+              ref={portalRef}
               className="fixed z-[9999] rounded-2xl border border-white/10 bg-slate-950/95 p-3 shadow-2xl shadow-black/40 backdrop-blur-2xl"
               style={{
                 left: `${position.left}px`,

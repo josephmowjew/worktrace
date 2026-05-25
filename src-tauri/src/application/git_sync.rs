@@ -1,6 +1,6 @@
 use crate::domain::commit::{SyncCommitsInput, SyncCommitsResult};
 use crate::infrastructure::database::repositories::{
-    CommitRepository, CommitUpsertResult, ProjectRepository,
+    CommitRepository, CommitUpsertResult, GitMetadataRepository, ProjectRepository,
 };
 use crate::infrastructure::git::scanner::GitScanner;
 
@@ -10,6 +10,7 @@ impl GitSyncService {
     pub async fn sync(
         project_repository: &ProjectRepository<'_>,
         commit_repository: &CommitRepository<'_>,
+        git_metadata_repository: &GitMetadataRepository<'_>,
         input: SyncCommitsInput,
     ) -> Result<SyncCommitsResult, GitSyncServiceError> {
         let projects = project_repository
@@ -48,10 +49,47 @@ impl GitSyncService {
                 input.to.as_deref(),
                 input.author_email.as_deref(),
             ) {
-                Ok(commits) => {
+                Ok(scan) => {
                     result.scanned_projects += 1;
 
-                    for commit in commits {
+                    if let Err(error) = git_metadata_repository
+                        .replace_refs(&project.id, &scan.refs)
+                        .await
+                    {
+                        result.errors.push(format!(
+                            "{}: failed to save Git refs: {}",
+                            project.name, error
+                        ));
+                    }
+                    if let Err(error) = git_metadata_repository
+                        .replace_commit_refs(&project.id, &scan.commit_refs)
+                        .await
+                    {
+                        result.errors.push(format!(
+                            "{}: failed to save commit refs: {}",
+                            project.name, error
+                        ));
+                    }
+                    if let Err(error) = git_metadata_repository
+                        .replace_commit_worktree_refs(&project.id, &scan.commit_worktree_refs)
+                        .await
+                    {
+                        result.errors.push(format!(
+                            "{}: failed to save commit worktree refs: {}",
+                            project.name, error
+                        ));
+                    }
+                    if let Err(error) = git_metadata_repository
+                        .replace_worktrees(&project.id, &scan.worktrees)
+                        .await
+                    {
+                        result.errors.push(format!(
+                            "{}: failed to save Git worktrees: {}",
+                            project.name, error
+                        ));
+                    }
+
+                    for commit in scan.commits {
                         match commit_repository.upsert(&commit).await {
                             Ok(CommitUpsertResult::Inserted) => result.new_commits += 1,
                             Ok(CommitUpsertResult::Updated) => result.updated_commits += 1,
@@ -99,6 +137,7 @@ mod tests {
         let repo_path = create_git_repo_with_commit();
         let project_repository = ProjectRepository::new(&pool);
         let commit_repository = CommitRepository::new(&pool);
+        let git_metadata_repository = GitMetadataRepository::new(&pool);
         let activity_repository = ActivityRepository::new(&pool);
 
         let project = project_repository
@@ -115,6 +154,7 @@ mod tests {
         let result = GitSyncService::sync(
             &project_repository,
             &commit_repository,
+            &git_metadata_repository,
             SyncCommitsInput {
                 from: Some("2026-05-19".to_string()),
                 to: Some("2026-05-21".to_string()),
@@ -135,6 +175,8 @@ mod tests {
                 to: "2026-05-21".to_string(),
                 activity_type: Some("commit".to_string()),
                 project_ids: None,
+                git_refs: None,
+                worktree_paths: None,
             })
             .await
             .expect("list activity");

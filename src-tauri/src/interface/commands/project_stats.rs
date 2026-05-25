@@ -2,6 +2,7 @@ use chrono::Utc;
 use tauri::State;
 
 use crate::domain::project::{CategoryDistribution, ProjectStats, RecentCommit, TopContributor};
+use crate::infrastructure::database::repositories::GitMetadataRepository;
 use crate::interface::dto::app_result::AppResult;
 use crate::AppState;
 
@@ -116,6 +117,7 @@ pub async fn get_recent_commits(
     limit: Option<i64>,
 ) -> Result<AppResult<Vec<RecentCommit>>, String> {
     let pool = state.database.pool();
+    let git_metadata_repository = GitMetadataRepository::new(pool);
     let limit = limit.unwrap_or(10);
 
     let rows = sqlx::query_as::<
@@ -153,33 +155,41 @@ pub async fn get_recent_commits(
     .await
     .map_err(|e| e.to_string())?;
 
-    let commits = rows
-        .into_iter()
-        .map(
-            |(
-                project_id,
-                project_name,
-                repo_path,
-                commit_hash,
-                message,
-                author_name,
-                branch,
-                committed_at,
-            )| {
-                RecentCommit {
-                    project_id,
-                    project_name,
-                    repo_path,
-                    commit_hash,
-                    message,
-                    author_name,
-                    branch,
-                    committed_at,
-                    status: "Up to date".to_string(),
-                }
-            },
-        )
-        .collect();
+    let mut commits = Vec::with_capacity(rows.len());
+    for (
+        project_id,
+        project_name,
+        repo_path,
+        commit_hash,
+        message,
+        author_name,
+        branch,
+        committed_at,
+    ) in rows
+    {
+        let refs = git_metadata_repository
+            .refs_for_commit(&project_id, &commit_hash)
+            .await
+            .unwrap_or_default();
+        let worktree = git_metadata_repository
+            .worktree_for_commit(&project_id, &commit_hash)
+            .await
+            .ok()
+            .flatten();
+        commits.push(RecentCommit {
+            project_id,
+            project_name,
+            repo_path,
+            commit_hash,
+            message,
+            author_name,
+            branch,
+            committed_at,
+            refs,
+            worktree,
+            status: "Up to date".to_string(),
+        });
+    }
 
     Ok(AppResult::ok(commits))
 }

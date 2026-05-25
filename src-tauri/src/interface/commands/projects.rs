@@ -1,8 +1,9 @@
 use tauri::State;
 
 use crate::application::projects::{ProjectService, ProjectServiceError};
+use crate::domain::git_metadata::{GitRef, GitWorktree, ProjectGitFocus, SaveProjectGitFocusInput};
 use crate::domain::project::{CreateProjectInput, Project, UpdateProjectInput};
-use crate::infrastructure::database::repositories::ProjectRepository;
+use crate::infrastructure::database::repositories::{GitMetadataRepository, ProjectRepository};
 use crate::infrastructure::git::branches::GitBranch;
 use crate::interface::dto::app_result::AppResult;
 use crate::AppState;
@@ -77,10 +78,109 @@ pub async fn list_git_branches(
     project_id: String,
 ) -> Result<AppResult<Vec<GitBranch>>, String> {
     let repository = ProjectRepository::new(state.database.pool());
+    let git_metadata_repository = GitMetadataRepository::new(state.database.pool());
 
     Ok(
-        match ProjectService::list_git_branches(&repository, &project_id).await {
+        match ProjectService::list_git_branches(&repository, &git_metadata_repository, &project_id)
+            .await
+        {
             Ok(branches) => AppResult::ok(branches),
+            Err(ProjectServiceError::Validation(message)) => {
+                AppResult::err("VALIDATION_ERROR", message)
+            }
+            Err(ProjectServiceError::Database(error)) => {
+                AppResult::err("DATABASE_ERROR", error.to_string())
+            }
+        },
+    )
+}
+
+#[tauri::command]
+pub async fn list_git_refs(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<AppResult<Vec<GitRef>>, String> {
+    let repository = ProjectRepository::new(state.database.pool());
+    let git_metadata_repository = GitMetadataRepository::new(state.database.pool());
+
+    Ok(
+        match ProjectService::list_git_refs(&repository, &git_metadata_repository, &project_id)
+            .await
+        {
+            Ok(refs) => AppResult::ok(refs),
+            Err(ProjectServiceError::Validation(message)) => {
+                AppResult::err("VALIDATION_ERROR", message)
+            }
+            Err(ProjectServiceError::Database(error)) => {
+                AppResult::err("DATABASE_ERROR", error.to_string())
+            }
+        },
+    )
+}
+
+#[tauri::command]
+pub async fn list_git_worktrees(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<AppResult<Vec<GitWorktree>>, String> {
+    let repository = ProjectRepository::new(state.database.pool());
+    let git_metadata_repository = GitMetadataRepository::new(state.database.pool());
+
+    Ok(
+        match ProjectService::list_git_worktrees(&repository, &git_metadata_repository, &project_id)
+            .await
+        {
+            Ok(branches) => AppResult::ok(branches),
+            Err(ProjectServiceError::Validation(message)) => {
+                AppResult::err("VALIDATION_ERROR", message)
+            }
+            Err(ProjectServiceError::Database(error)) => {
+                AppResult::err("DATABASE_ERROR", error.to_string())
+            }
+        },
+    )
+}
+
+#[tauri::command]
+pub async fn get_project_git_focus(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<AppResult<ProjectGitFocus>, String> {
+    let repository = ProjectRepository::new(state.database.pool());
+    let git_metadata_repository = GitMetadataRepository::new(state.database.pool());
+
+    Ok(
+        match ProjectService::get_project_git_focus(
+            &repository,
+            &git_metadata_repository,
+            &project_id,
+        )
+        .await
+        {
+            Ok(focus) => AppResult::ok(focus),
+            Err(ProjectServiceError::Validation(message)) => {
+                AppResult::err("VALIDATION_ERROR", message)
+            }
+            Err(ProjectServiceError::Database(error)) => {
+                AppResult::err("DATABASE_ERROR", error.to_string())
+            }
+        },
+    )
+}
+
+#[tauri::command]
+pub async fn save_project_git_focus(
+    state: State<'_, AppState>,
+    input: SaveProjectGitFocusInput,
+) -> Result<AppResult<ProjectGitFocus>, String> {
+    let repository = ProjectRepository::new(state.database.pool());
+    let git_metadata_repository = GitMetadataRepository::new(state.database.pool());
+
+    Ok(
+        match ProjectService::save_project_git_focus(&repository, &git_metadata_repository, input)
+            .await
+        {
+            Ok(focus) => AppResult::ok(focus),
             Err(ProjectServiceError::Validation(message)) => {
                 AppResult::err("VALIDATION_ERROR", message)
             }

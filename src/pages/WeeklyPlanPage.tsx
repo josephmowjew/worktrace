@@ -18,6 +18,7 @@ import { RecentlyCompletedList } from "../components/ui/RecentlyCompletedList";
 import { AddItemBar } from "../components/ui/AddItemBar";
 import { AddTaskModal } from "../components/ui/AddTaskModal";
 import { Select } from "../components/ui/Select";
+import { useSpeech } from "../components/ui/SpeechProvider";
 import { useToast } from "../components/ui/ToastProvider";
 import { getWeekCapacity } from "../lib/api/calendar";
 import { listProjects } from "../lib/api/projects";
@@ -28,6 +29,7 @@ import {
   updateWeeklyTask,
 } from "../lib/api/weeklyTasks";
 import { weeklyTaskQueryRoots } from "../lib/api/queryKeys";
+import { taskAnnouncement, taskUpdateAnnouncement } from "../lib/announcements";
 import { currentWeekRange } from "../lib/dates";
 import type {
   WeeklyTask,
@@ -55,6 +57,7 @@ const statuses: Array<{ value: WeeklyTaskStatus; label: string }> = [
 export function WeeklyPlanPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
+  const speech = useSpeech();
   const weekRange = currentWeekRange();
   const [typeFilter, setTypeFilter] = useState<WeeklyTaskType | "all">("all");
   const [statusFilter, setStatusFilter] = useState<WeeklyTaskStatus | "all">("all");
@@ -144,6 +147,23 @@ export function WeeklyPlanPage() {
         .map((t) => ({ id: t.id, title: t.title, completedAt: t.completedAt! })),
     [done]
   );
+  const weekProgressPercent = useMemo(() => {
+    const visibleWork = [...planned, ...inProgress, ...done, ...carryForward];
+
+    if (!visibleWork.length) {
+      return 0;
+    }
+
+    const totalProgress = visibleWork.reduce((sum, task) => {
+      if (task.status === "completed") {
+        return sum + 100;
+      }
+
+      return sum + (task.progressPercent ?? 0);
+    }, 0);
+
+    return totalProgress / visibleWork.length;
+  }, [planned, inProgress, done, carryForward]);
 
   const saveMutation = useMutation({
     mutationFn: (values: {
@@ -191,9 +211,15 @@ export function WeeklyPlanPage() {
         estimatedMinutes: values.estimatedMinutes,
       });
     },
-    onSuccess: async () => {
+    onSuccess: async (task) => {
       await invalidateWeeklyTaskViews();
       toast.success(editingTask ? "Task updated" : "Task added");
+      speech.announce(
+        taskAnnouncement(editingTask ? "Task updated" : "Task added", task, {
+          projectName: task.projectName,
+        }),
+        { category: "task" },
+      );
       setModalOpen(false);
       setEditingTask(null);
       setPrefillData(null);
@@ -209,9 +235,12 @@ export function WeeklyPlanPage() {
         status,
         completedAt: status === "completed" || status === "dropped" ? today() : null,
       }),
-    onSuccess: async () => {
+    onSuccess: async (task, variables) => {
       await invalidateWeeklyTaskViews();
       toast.success("Task updated");
+      speech.announce(taskUpdateAnnouncement(task, { status: variables.status }, { projectName: task.projectName }), {
+        category: "task",
+      });
     },
     onError: (error) => {
       toast.error("Task update failed", error instanceof Error ? error.message : "The task could not be updated.");
@@ -220,9 +249,15 @@ export function WeeklyPlanPage() {
 
   const deleteMutation = useMutation({
     mutationFn: deleteWeeklyTask,
-    onSuccess: async () => {
+    onSuccess: async (_result, taskId) => {
       await invalidateWeeklyTaskViews();
       toast.success("Task deleted");
+      const deletedTask = tasks.find((task) => task.id === taskId);
+      if (deletedTask) {
+        speech.announce(taskAnnouncement("Task deleted", deletedTask, { projectName: deletedTask.projectName }), {
+          category: "task",
+        });
+      }
     },
     onError: (error) => {
       toast.error("Task delete failed", error instanceof Error ? error.message : "The task could not be deleted.");
@@ -236,9 +271,17 @@ export function WeeklyPlanPage() {
         taskType,
         completedAt: status === "completed" || status === "dropped" ? today() : null,
       }),
-    onSuccess: async () => {
+    onSuccess: async (task, variables) => {
       await invalidateWeeklyTaskViews();
       toast.success("Task moved");
+      speech.announce(
+        taskAnnouncement("Task moved", task, {
+          projectName: task.projectName,
+          statusOverride: variables.status,
+          taskTypeOverride: variables.taskType,
+        }),
+        { category: "task" },
+      );
     },
     onError: (error) => {
       toast.error("Task move failed", error instanceof Error ? error.message : "The task could not be moved.");
@@ -506,6 +549,7 @@ export function WeeklyPlanPage() {
               inProgress={inProgress.length}
               planned={planned.length}
               carryForward={carryForward.length}
+              progressPercent={weekProgressPercent}
             />
           </Panel>
 

@@ -1,6 +1,7 @@
 import { Check, ChevronDown, ChevronRight, Copy, GitCommit, User } from "lucide-react";
 import { useState } from "react";
 import type { ActivityItem } from "../../types/activity";
+import { GitContextBadges } from "./GitContextBadges";
 import { Panel } from "./Panel";
 
 export function CommitList({
@@ -68,7 +69,14 @@ function CommitItem({
 
   const subject = commit.summary.split("\n")[0];
   const body = commit.summary.split("\n").slice(1).join("\n").trim();
-  const hasExtraContent = body || commit.commitHash || commit.filesChanged || commit.insertions || commit.deletions;
+  const hasExtraContent =
+    body ||
+    commit.commitHash ||
+    commit.filesChanged ||
+    commit.insertions ||
+    commit.deletions ||
+    (commit.refs?.length ?? 0) > 0 ||
+    commit.worktree;
 
   const handleCopyHash = () => {
     if (commit.commitHash) {
@@ -104,11 +112,7 @@ function CommitItem({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-semibold text-slate-200">Commit</span>
-            {commit.branch && (
-              <span className="rounded-md border border-white/8 bg-white/5 px-1.5 py-0.5 text-[10px] font-medium text-slate-400">
-                {commit.branch}
-              </span>
-            )}
+            <GitContextBadges branch={commit.branch} refs={commit.refs} worktree={commit.worktree} />
           </div>
           <p className="mt-1 truncate text-sm font-medium text-slate-100">
             {subject}
@@ -165,6 +169,12 @@ function CommitItem({
                     <Copy className="h-3 w-3" />
                   )}
                 </button>
+              </div>
+            )}
+            {((commit.refs?.length ?? 0) > 0 || commit.worktree) && (
+              <div className="col-span-2 flex flex-wrap items-center gap-2">
+                <span className="text-slate-500">Refs:</span>
+                <GitContextBadges branch={commit.branch} refs={commit.refs} worktree={commit.worktree} maxRefs={6} />
               </div>
             )}
             {(commit.filesChanged !== null || commit.insertions !== null || commit.deletions !== null) && (

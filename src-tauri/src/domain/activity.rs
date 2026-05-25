@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::domain::git_metadata::{CommitRefSummary, CommitWorktreeSummary, GitRefFilter};
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListActivityInput {
@@ -7,6 +9,8 @@ pub struct ListActivityInput {
     pub to: String,
     pub activity_type: Option<String>,
     pub project_ids: Option<Vec<String>>,
+    pub git_refs: Option<Vec<GitRefFilter>>,
+    pub worktree_paths: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -49,6 +53,8 @@ pub struct ActivityItem {
     pub files_changed: Option<i64>,
     pub insertions: Option<i64>,
     pub deletions: Option<i64>,
+    pub refs: Vec<CommitRefSummary>,
+    pub worktree: Option<CommitWorktreeSummary>,
 }
 
 #[derive(Debug, Clone, Serialize)]

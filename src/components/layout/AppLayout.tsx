@@ -29,6 +29,7 @@ import { useToast } from "../ui/ToastProvider";
 import { CommandPalette, createBaseCommandActions } from "../ui/CommandPalette";
 import { useSpeech } from "../ui/SpeechProvider";
 import { normalizeVoiceTranscript } from "../../lib/voiceCommands";
+import { syncAnnouncement, syncStartedAnnouncement } from "../../lib/announcements";
 
 const navItems = [
   { label: "Today", href: "/", icon: Home },
@@ -105,19 +106,20 @@ export function AppLayout({ children }: PropsWithChildren) {
         to: null,
         authorEmail: settingsQuery.data?.gitAuthorEmail || null,
       }),
+    onMutate: () => {
+      speech.announce(syncStartedAnnouncement("activity"), { category: "sync", interrupt: true });
+    },
     onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["activity"] });
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
       await queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
       await queryClient.invalidateQueries({ queryKey: ["weeklyTasks"] });
+      await queryClient.invalidateQueries({ queryKey: ["weekly-tasks"] });
       toast.success(
         "Sync complete",
         `Added ${result.newCommits} commits and updated ${result.updatedCommits}.`,
       );
-      speech.announce(
-        `Sync complete. Added ${result.newCommits} commits and updated ${result.updatedCommits}.`,
-        { category: "sync", interrupt: true },
-      );
+      speech.announce(syncAnnouncement(result), { category: "sync", interrupt: true });
     },
     onError: (error) => {
       toast.error(

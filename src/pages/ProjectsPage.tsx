@@ -33,6 +33,7 @@ import { DonutChart, CategoryLegend } from "../components/ui/DonutChart";
 import { RepositoriesTable } from "../components/ui/RepositoriesTable";
 import { ContributorsList } from "../components/ui/ContributorsList";
 import { Pagination } from "../components/ui/Pagination";
+import { useSpeech } from "../components/ui/SpeechProvider";
 import { useToast } from "../components/ui/ToastProvider";
 import { syncCommits } from "../lib/api/gitSync";
 import {
@@ -55,6 +56,7 @@ import {
   scanWorkspace,
   unignoreWorkspaceRepository,
 } from "../lib/api/workspaces";
+import { syncAnnouncement, syncStartedAnnouncement } from "../lib/announcements";
 import type {
   Project,
   ProjectStats,
@@ -91,6 +93,7 @@ const ITEMS_PER_PAGE = 6;
 export function ProjectsPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
+  const speech = useSpeech();
   const location = useLocation();
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
@@ -141,13 +144,13 @@ export function ProjectsPage() {
   const projectsQuery = useQuery({
     queryKey: ["projects"],
     queryFn: listProjects,
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
   });
 
   const statsQuery = useQuery({
     queryKey: ["projectStats"],
     queryFn: getProjectStats,
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
   });
 
   const categoryQuery = useQuery({
@@ -158,7 +161,7 @@ export function ProjectsPage() {
   const recentCommitsQuery = useQuery({
     queryKey: ["recentCommits", recentCommitLimit],
     queryFn: () => getRecentCommits(recentCommitLimit),
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
   });
 
   const contributorsQuery = useQuery({
@@ -184,6 +187,12 @@ export function ProjectsPage() {
         authorEmail: null,
         projectIds: [projectId],
       }),
+    onMutate: (projectId) => {
+      const project = projects.find((item) => item.id === projectId);
+      speech.announce(syncStartedAnnouncement(project ? `${project.name} activity` : "project activity"), {
+        category: "sync",
+      });
+    },
     onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["activity"] });
       await queryClient.invalidateQueries({ queryKey: ["projectStats"] });
@@ -193,6 +202,7 @@ export function ProjectsPage() {
         "Project sync complete",
         `Added ${result.newCommits} commits and updated ${result.updatedCommits}.`,
       );
+      speech.announce(syncAnnouncement(result), { category: "sync" });
     },
     onError: (error) => {
       toast.error("Project sync failed", toMessage(error));
@@ -212,12 +222,19 @@ export function ProjectsPage() {
         projectIds,
       });
     },
+    onMutate: (workspaceId) => {
+      const workspace = workspacesQuery.data?.find((item) => item.id === workspaceId);
+      speech.announce(syncStartedAnnouncement(workspace ? `${workspace.name} workspace activity` : "workspace activity"), {
+        category: "sync",
+      });
+    },
     onSuccess: async (result) => {
       await invalidateProjectViews(queryClient);
       toast.success(
         "Workspace sync complete",
         `Scanned ${result.scannedProjects} imported repos. Added ${result.newCommits} commits and updated ${result.updatedCommits}.`,
       );
+      speech.announce(syncAnnouncement(result), { category: "sync" });
     },
     onError: (error) => {
       toast.error("Workspace sync failed", toMessage(error));

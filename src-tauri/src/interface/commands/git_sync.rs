@@ -2,7 +2,9 @@ use tauri::State;
 
 use crate::application::git_sync::{GitSyncService, GitSyncServiceError};
 use crate::domain::commit::{SyncCommitsInput, SyncCommitsResult};
-use crate::infrastructure::database::repositories::{CommitRepository, ProjectRepository};
+use crate::infrastructure::database::repositories::{
+    CommitRepository, GitMetadataRepository, ProjectRepository,
+};
 use crate::interface::dto::app_result::AppResult;
 use crate::AppState;
 
@@ -13,9 +15,17 @@ pub async fn sync_commits(
 ) -> Result<AppResult<SyncCommitsResult>, String> {
     let project_repository = ProjectRepository::new(state.database.pool());
     let commit_repository = CommitRepository::new(state.database.pool());
+    let git_metadata_repository = GitMetadataRepository::new(state.database.pool());
 
     Ok(
-        match GitSyncService::sync(&project_repository, &commit_repository, input).await {
+        match GitSyncService::sync(
+            &project_repository,
+            &commit_repository,
+            &git_metadata_repository,
+            input,
+        )
+        .await
+        {
             Ok(result) => AppResult::ok(result),
             Err(GitSyncServiceError::Validation(message)) => {
                 AppResult::err("VALIDATION_ERROR", message)

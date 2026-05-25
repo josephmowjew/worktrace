@@ -1,5 +1,5 @@
 import { GitBranch } from "lucide-react";
-import { Badge } from "./Badge";
+import { GitContextBadges } from "./GitContextBadges";
 import type { RecentCommit } from "../../types/project";
 
 function formatTimeAgo(dateString: string): string {
@@ -70,7 +70,7 @@ export function RepositoriesTable({
             const { short, hash } = getCommitMessagePreview(commit.message);
             return (
               <tr
-                key={commit.commitHash}
+                key={`${commit.projectId}-${commit.commitHash}`}
                 className={`border-b border-white/5 transition-colors hover:bg-white/5 ${
                   index % 2 === 0 ? "bg-slate-950/20" : ""
                 }`}
@@ -99,7 +99,7 @@ export function RepositoriesTable({
                   </div>
                 </td>
                 <td className="px-3 py-2.5">
-                  <Badge tone="blue">{commit.branch || "main"}</Badge>
+                  <GitContextBadges branch={commit.branch} refs={commit.refs} worktree={commit.worktree} />
                 </td>
                 <td className="px-3 py-2.5">
                   <div className="flex items-center gap-1.5">

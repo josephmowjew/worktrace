@@ -54,21 +54,27 @@ pub async fn transcribe_voice_command(
     };
 
     match settings.voice_transcription_provider.as_str() {
-        "groq" => return Ok(transcribe_online(
-            GROQ_TRANSCRIPTION_URL,
-            &settings.voice_groq_model,
-            "groq",
-            GROQ_KEY_USER,
-            &input,
-            settings.voice_online_allowed,
-            settings.voice_privacy_acknowledged,
-        ).await),
-        "openrouter" => return Ok(transcribe_openrouter(
-            &settings.voice_openrouter_model,
-            &input,
-            settings.voice_online_allowed,
-            settings.voice_privacy_acknowledged,
-        ).await),
+        "groq" => {
+            return Ok(transcribe_online(
+                GROQ_TRANSCRIPTION_URL,
+                &settings.voice_groq_model,
+                "groq",
+                GROQ_KEY_USER,
+                &input,
+                settings.voice_online_allowed,
+                settings.voice_privacy_acknowledged,
+            )
+            .await)
+        }
+        "openrouter" => {
+            return Ok(transcribe_openrouter(
+                &settings.voice_openrouter_model,
+                &input,
+                settings.voice_online_allowed,
+                settings.voice_privacy_acknowledged,
+            )
+            .await)
+        }
         _ => {}
     }
 
@@ -259,7 +265,7 @@ async fn transcribe_online(
 
     let api_key = match get_key(key_user) {
         Ok(value) => value,
-        Err(error) => {
+        Err(_error) => {
             return AppResult::err(
                 "VOICE_PROVIDER_KEY_MISSING",
                 format!("No API key is stored for {engine}. Connect the provider key first."),

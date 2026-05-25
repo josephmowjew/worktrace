@@ -49,6 +49,8 @@ export type RecentCommit = {
   authorName?: string | null;
   branch?: string | null;
   committedAt: string;
+  refs: CommitRefSummary[];
+  worktree?: CommitWorktreeSummary | null;
   status: string;
 };
 
@@ -63,3 +65,52 @@ export type GitBranch = {
   kind: "local" | "remote";
   isCurrent: boolean;
 };
+
+export type GitRef = {
+  projectId: string;
+  name: string;
+  fullName: string;
+  kind: "local" | "remote";
+  isCurrent: boolean;
+  isHead: boolean;
+  lastSeenCommit?: string | null;
+  lastScannedAt: string;
+};
+
+export type GitRefFilter = {
+  projectId?: string | null;
+  name: string;
+  kind: "local" | "remote";
+};
+
+export type GitWorktree = {
+  projectId: string;
+  path: string;
+  branch?: string | null;
+  headCommit?: string | null;
+  isClean?: boolean | null;
+  isPrunable: boolean;
+  isLocked: boolean;
+  lastScannedAt: string;
+};
+
+export type CommitRefSummary = {
+  name: string;
+  kind: "local" | "remote";
+  isCurrent: boolean;
+};
+
+export type CommitWorktreeSummary = {
+  path: string;
+  branch?: string | null;
+  headCommit?: string | null;
+  isClean?: boolean | null;
+};
+
+export type ProjectGitFocus = {
+  projectId: string;
+  refs: GitRefFilter[];
+  worktreePaths: string[];
+};
+
+export type SaveProjectGitFocusInput = ProjectGitFocus;

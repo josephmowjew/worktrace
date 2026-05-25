@@ -3,6 +3,7 @@ use crate::domain::commit::Commit;
 pub const GIT_FIELD_SEPARATOR: char = '\u{1f}';
 pub const GIT_RECORD_SEPARATOR: char = '\u{1e}';
 
+#[derive(Clone)]
 pub struct ParsedGitCommit {
     pub commit_hash: String,
     pub author_name: Option<String>,

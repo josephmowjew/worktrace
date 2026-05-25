@@ -46,7 +46,12 @@ export function generatePrPackage(input: PrPackageInput): PrPackage {
 }
 
 export function suggestedBaseBranch(commits: ActivityItem[]) {
-  return commits.find((commit) => commit.branch)?.branch ?? "main";
+  return (
+    commits.flatMap((commit) => commit.refs ?? []).find((ref) => ref.isCurrent)?.name ??
+    commits.flatMap((commit) => commit.refs ?? []).find((ref) => ref.kind === "local")?.name ??
+    commits.find((commit) => commit.branch)?.branch ??
+    "main"
+  );
 }
 
 export function suggestedPrTitle(commits: ActivityItem[], projectName: string) {
@@ -83,7 +88,10 @@ export function fullPrPackageText(pkg: PrPackage, title: string) {
 function createWarnings(input: PrPackageInput, selectedCommits: SelectedCommit[]) {
   const warnings: string[] = [];
   const missingHashes = input.commits.length - selectedCommits.length;
-  const branches = new Set(selectedCommits.map((commit) => commit.branch).filter(Boolean));
+  const branchSets = selectedCommits.map((commit) => containingRefNames(commit));
+  const sharedBranches = branchSets.length
+    ? branchSets.reduce((shared, refs) => new Set([...shared].filter((ref) => refs.has(ref))))
+    : new Set<string>();
 
   if (input.commits.length === 0) {
     warnings.push("Select at least one commit before building a PR package.");
@@ -94,8 +102,14 @@ function createWarnings(input: PrPackageInput, selectedCommits: SelectedCommit[]
   if (missingHashes > 0) {
     warnings.push(`${missingHashes} selected item(s) do not have commit hashes and were excluded.`);
   }
-  if (branches.size > 1) {
-    warnings.push("Selected commits appear to come from multiple branches.");
+  if (
+    input.baseBranch.trim() &&
+    selectedCommits.some((commit) => !containingRefNames(commit).has(input.baseBranch.trim()))
+  ) {
+    warnings.push("Some selected commits are not reachable from the selected base branch.");
+  }
+  if (selectedCommits.length > 1 && sharedBranches.size === 0) {
+    warnings.push("Selected commits do not share a known branch ref.");
   }
   if (!input.project.repoPath) {
     warnings.push("This project has no local repository path configured.");
@@ -105,6 +119,14 @@ function createWarnings(input: PrPackageInput, selectedCommits: SelectedCommit[]
   }
 
   return warnings;
+}
+
+function containingRefNames(commit: ActivityItem) {
+  const names = new Set((commit.refs ?? []).map((ref) => ref.name));
+  if (commit.branch) {
+    names.add(commit.branch);
+  }
+  return names;
 }
 
 function createPrBody(input: PrPackageInput, orderedCommits: SelectedCommit[]) {

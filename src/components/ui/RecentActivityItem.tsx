@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { ActivityItem } from "../../types/activity";
+import { GitContextBadges } from "./GitContextBadges";
 
 const activityIcons: Record<string, LucideIcon> = {
   commit: GitCommit,
@@ -96,11 +97,7 @@ export function RecentActivityItem({ item }: { item: ActivityItem }) {
               {item.projectName}
             </span>
           )}
-          {item.branch && (
-            <span className="shrink-0 rounded-md bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-medium text-blue-200">
-              {item.branch}
-            </span>
-          )}
+          {isCommit ? <GitContextBadges branch={item.branch} refs={item.refs} worktree={item.worktree} /> : null}
         </div>
       </div>
     </div>

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::{Datelike, NaiveDate, Utc};
@@ -20,6 +21,10 @@ use crate::domain::commit::Commit;
 use crate::domain::focus_session::{
     CreateFocusSessionInput, FocusSession, FocusSessionStatus, ListFocusSessionsInput,
     StopFocusSessionInput,
+};
+use crate::domain::git_metadata::{
+    CommitRef, CommitRefSummary, CommitWorktreeRef, CommitWorktreeSummary, GitRef, GitRefFilter,
+    GitRefKind, GitWorktree, ProjectGitFocus, SaveProjectGitFocusInput,
 };
 use crate::domain::manual_log::{
     ActivityType, CreateManualLogInput, ManualLog, UpdateManualLogInput,
@@ -693,40 +698,16 @@ impl<'a> CommitRepository<'a> {
     }
 
     pub async fn upsert(&self, commit: &Commit) -> Result<CommitUpsertResult, sqlx::Error> {
-        let exists = sqlx::query(
-            r#"
-            SELECT 1
-            FROM commits
-            WHERE project_id = ?1 AND commit_hash = ?2
-            LIMIT 1
-            "#,
-        )
-        .bind(&commit.project_id)
-        .bind(&commit.commit_hash)
-        .fetch_optional(self.pool)
-        .await?
-        .is_some();
-
         let now = current_timestamp();
 
-        sqlx::query(
+        let inserted = sqlx::query(
             r#"
-            INSERT INTO commits (
+            INSERT OR IGNORE INTO commits (
               id, project_id, commit_hash, message, author_name, author_email, branch,
               committed_at, files_changed, insertions, deletions, included_in_report,
               created_at, updated_at
             )
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
-            ON CONFLICT(project_id, commit_hash) DO UPDATE SET
-              message = excluded.message,
-              author_name = excluded.author_name,
-              author_email = excluded.author_email,
-              branch = excluded.branch,
-              committed_at = excluded.committed_at,
-              files_changed = excluded.files_changed,
-              insertions = excluded.insertions,
-              deletions = excluded.deletions,
-              updated_at = excluded.updated_at
             "#,
         )
         .bind(&commit.id)
@@ -744,13 +725,44 @@ impl<'a> CommitRepository<'a> {
         .bind(&now)
         .bind(&now)
         .execute(self.pool)
+        .await?
+        .rows_affected()
+            == 1;
+
+        if inserted {
+            return Ok(CommitUpsertResult::Inserted);
+        }
+
+        sqlx::query(
+            r#"
+            UPDATE commits
+            SET message = ?3,
+                author_name = ?4,
+                author_email = ?5,
+                branch = ?6,
+                committed_at = ?7,
+                files_changed = ?8,
+                insertions = ?9,
+                deletions = ?10,
+                updated_at = ?11
+            WHERE project_id = ?1 AND commit_hash = ?2
+            "#,
+        )
+        .bind(&commit.project_id)
+        .bind(&commit.commit_hash)
+        .bind(&commit.message)
+        .bind(&commit.author_name)
+        .bind(&commit.author_email)
+        .bind(&commit.branch)
+        .bind(&commit.committed_at)
+        .bind(commit.files_changed)
+        .bind(commit.insertions)
+        .bind(commit.deletions)
+        .bind(&now)
+        .execute(self.pool)
         .await?;
 
-        Ok(if exists {
-            CommitUpsertResult::Updated
-        } else {
-            CommitUpsertResult::Inserted
-        })
+        Ok(CommitUpsertResult::Updated)
     }
 }
 
@@ -758,6 +770,427 @@ impl<'a> CommitRepository<'a> {
 impl CommitStore for CommitRepository<'_> {
     async fn upsert(&self, commit: &Commit) -> Result<CommitUpsertResult, sqlx::Error> {
         CommitRepository::upsert(self, commit).await
+    }
+}
+
+pub struct GitMetadataRepository<'a> {
+    pool: &'a SqlitePool,
+}
+
+impl<'a> GitMetadataRepository<'a> {
+    pub fn new(pool: &'a SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn replace_refs(&self, project_id: &str, refs: &[GitRef]) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM git_refs WHERE project_id = ?1")
+            .bind(project_id)
+            .execute(&mut *tx)
+            .await?;
+
+        for git_ref in refs {
+            sqlx::query(
+                r#"
+                INSERT INTO git_refs (
+                  project_id, name, full_name, kind, is_current, is_head,
+                  last_seen_commit, last_scanned_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                "#,
+            )
+            .bind(&git_ref.project_id)
+            .bind(&git_ref.name)
+            .bind(&git_ref.full_name)
+            .bind(git_ref.kind.as_storage_value())
+            .bind(bool_to_i64(git_ref.is_current))
+            .bind(bool_to_i64(git_ref.is_head))
+            .bind(&git_ref.last_seen_commit)
+            .bind(&git_ref.last_scanned_at)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await
+    }
+
+    pub async fn replace_commit_refs(
+        &self,
+        project_id: &str,
+        refs: &[CommitRef],
+    ) -> Result<(), sqlx::Error> {
+        let now = current_timestamp();
+        let commit_hashes = refs
+            .iter()
+            .map(|commit_ref| commit_ref.commit_hash.clone())
+            .collect::<std::collections::HashSet<_>>();
+        let existing_rows = sqlx::query(
+            r#"
+            SELECT commit_hash, ref_name, ref_kind, first_seen_at
+            FROM commit_refs
+            WHERE project_id = ?1
+            "#,
+        )
+        .bind(project_id)
+        .fetch_all(self.pool)
+        .await?;
+        let existing_first_seen = existing_rows
+            .into_iter()
+            .map(|row| {
+                let key = format!(
+                    "{}\u{1f}{}\u{1f}{}",
+                    row.get::<String, _>("commit_hash"),
+                    row.get::<String, _>("ref_name"),
+                    row.get::<String, _>("ref_kind")
+                );
+                (key, row.get::<String, _>("first_seen_at"))
+            })
+            .collect::<HashMap<_, _>>();
+        let mut tx = self.pool.begin().await?;
+        for commit_hash in commit_hashes {
+            sqlx::query("DELETE FROM commit_refs WHERE project_id = ?1 AND commit_hash = ?2")
+                .bind(project_id)
+                .bind(commit_hash)
+                .execute(&mut *tx)
+                .await?;
+        }
+
+        for commit_ref in refs {
+            sqlx::query(
+                r#"
+                INSERT INTO commit_refs (
+                  project_id, commit_hash, ref_name, ref_kind, first_seen_at, last_seen_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                "#,
+            )
+            .bind(&commit_ref.project_id)
+            .bind(&commit_ref.commit_hash)
+            .bind(&commit_ref.ref_name)
+            .bind(commit_ref.ref_kind.as_storage_value())
+            .bind(
+                existing_first_seen
+                    .get(&format!(
+                        "{}\u{1f}{}\u{1f}{}",
+                        commit_ref.commit_hash,
+                        commit_ref.ref_name,
+                        commit_ref.ref_kind.as_storage_value()
+                    ))
+                    .unwrap_or(&now),
+            )
+            .bind(&now)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await
+    }
+
+    pub async fn replace_commit_worktree_refs(
+        &self,
+        project_id: &str,
+        refs: &[CommitWorktreeRef],
+    ) -> Result<(), sqlx::Error> {
+        let now = current_timestamp();
+        let commit_hashes = refs
+            .iter()
+            .map(|commit_ref| commit_ref.commit_hash.clone())
+            .collect::<std::collections::HashSet<_>>();
+        let existing_rows = sqlx::query(
+            r#"
+            SELECT commit_hash, worktree_path, first_seen_at
+            FROM commit_worktree_refs
+            WHERE project_id = ?1
+            "#,
+        )
+        .bind(project_id)
+        .fetch_all(self.pool)
+        .await?;
+        let existing_first_seen = existing_rows
+            .into_iter()
+            .map(|row| {
+                let key = format!(
+                    "{}\u{1f}{}",
+                    row.get::<String, _>("commit_hash"),
+                    row.get::<String, _>("worktree_path")
+                );
+                (key, row.get::<String, _>("first_seen_at"))
+            })
+            .collect::<HashMap<_, _>>();
+        let mut tx = self.pool.begin().await?;
+        for commit_hash in commit_hashes {
+            sqlx::query(
+                "DELETE FROM commit_worktree_refs WHERE project_id = ?1 AND commit_hash = ?2",
+            )
+            .bind(project_id)
+            .bind(commit_hash)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        for commit_ref in refs {
+            sqlx::query(
+                r#"
+                INSERT INTO commit_worktree_refs (
+                  project_id, commit_hash, worktree_path, branch, first_seen_at, last_seen_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                "#,
+            )
+            .bind(&commit_ref.project_id)
+            .bind(&commit_ref.commit_hash)
+            .bind(&commit_ref.worktree_path)
+            .bind(&commit_ref.branch)
+            .bind(
+                existing_first_seen
+                    .get(&format!(
+                        "{}\u{1f}{}",
+                        commit_ref.commit_hash, commit_ref.worktree_path
+                    ))
+                    .unwrap_or(&now),
+            )
+            .bind(&now)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await
+    }
+
+    pub async fn replace_worktrees(
+        &self,
+        project_id: &str,
+        worktrees: &[GitWorktree],
+    ) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM git_worktrees WHERE project_id = ?1")
+            .bind(project_id)
+            .execute(&mut *tx)
+            .await?;
+
+        for worktree in worktrees {
+            sqlx::query(
+                r#"
+                INSERT INTO git_worktrees (
+                  project_id, path, branch, head_commit, is_clean,
+                  is_prunable, is_locked, last_scanned_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                "#,
+            )
+            .bind(&worktree.project_id)
+            .bind(&worktree.path)
+            .bind(&worktree.branch)
+            .bind(&worktree.head_commit)
+            .bind(worktree.is_clean.map(bool_to_i64))
+            .bind(bool_to_i64(worktree.is_prunable))
+            .bind(bool_to_i64(worktree.is_locked))
+            .bind(&worktree.last_scanned_at)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await
+    }
+
+    pub async fn list_refs(&self, project_id: &str) -> Result<Vec<GitRef>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT project_id, name, full_name, kind, is_current, is_head,
+                   last_seen_commit, last_scanned_at
+            FROM git_refs
+            WHERE project_id = ?1
+            ORDER BY kind ASC, name ASC
+            "#,
+        )
+        .bind(project_id)
+        .fetch_all(self.pool)
+        .await?;
+
+        Ok(rows.into_iter().map(git_ref_from_row).collect())
+    }
+
+    pub async fn list_worktrees(&self, project_id: &str) -> Result<Vec<GitWorktree>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT project_id, path, branch, head_commit, is_clean,
+                   is_prunable, is_locked, last_scanned_at
+            FROM git_worktrees
+            WHERE project_id = ?1
+            ORDER BY branch IS NULL ASC, branch ASC, path ASC
+            "#,
+        )
+        .bind(project_id)
+        .fetch_all(self.pool)
+        .await?;
+
+        Ok(rows.into_iter().map(git_worktree_from_row).collect())
+    }
+
+    pub async fn refs_for_commit(
+        &self,
+        project_id: &str,
+        commit_hash: &str,
+    ) -> Result<Vec<CommitRefSummary>, sqlx::Error> {
+        refs_for_commit(self.pool, project_id, commit_hash).await
+    }
+
+    pub async fn worktree_for_commit(
+        &self,
+        project_id: &str,
+        commit_hash: &str,
+    ) -> Result<Option<CommitWorktreeSummary>, sqlx::Error> {
+        worktree_for_commit(self.pool, project_id, commit_hash).await
+    }
+
+    pub async fn get_project_focus(
+        &self,
+        project_id: &str,
+    ) -> Result<ProjectGitFocus, sqlx::Error> {
+        let ref_rows = sqlx::query(
+            r#"
+            SELECT ref_name, ref_kind
+            FROM project_git_focus_refs
+            WHERE project_id = ?1
+              AND enabled = 1
+            ORDER BY ref_kind ASC, ref_name ASC
+            "#,
+        )
+        .bind(project_id)
+        .fetch_all(self.pool)
+        .await?;
+        let worktree_rows = sqlx::query(
+            r#"
+            SELECT worktree_path
+            FROM project_git_focus_worktrees
+            WHERE project_id = ?1
+              AND enabled = 1
+            ORDER BY worktree_path ASC
+            "#,
+        )
+        .bind(project_id)
+        .fetch_all(self.pool)
+        .await?;
+
+        Ok(ProjectGitFocus {
+            project_id: project_id.to_string(),
+            refs: ref_rows
+                .into_iter()
+                .map(|row| {
+                    let kind: String = row.get("ref_kind");
+                    GitRefFilter {
+                        project_id: Some(project_id.to_string()),
+                        name: row.get("ref_name"),
+                        kind: GitRefKind::try_from(kind).unwrap_or(GitRefKind::Local),
+                    }
+                })
+                .collect(),
+            worktree_paths: worktree_rows
+                .into_iter()
+                .map(|row| row.get("worktree_path"))
+                .collect(),
+        })
+    }
+
+    pub async fn save_project_focus(
+        &self,
+        input: SaveProjectGitFocusInput,
+    ) -> Result<ProjectGitFocus, sqlx::Error> {
+        let now = current_timestamp();
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM project_git_focus_refs WHERE project_id = ?1")
+            .bind(&input.project_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM project_git_focus_worktrees WHERE project_id = ?1")
+            .bind(&input.project_id)
+            .execute(&mut *tx)
+            .await?;
+
+        for git_ref in &input.refs {
+            if git_ref.name.trim().is_empty() {
+                continue;
+            }
+            sqlx::query(
+                r#"
+                INSERT INTO project_git_focus_refs (
+                  project_id, ref_name, ref_kind, enabled, created_at, updated_at
+                )
+                VALUES (?1, ?2, ?3, 1, ?4, ?5)
+                "#,
+            )
+            .bind(&input.project_id)
+            .bind(git_ref.name.trim())
+            .bind(git_ref.kind.as_storage_value())
+            .bind(&now)
+            .bind(&now)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        for worktree_path in &input.worktree_paths {
+            if worktree_path.trim().is_empty() {
+                continue;
+            }
+            sqlx::query(
+                r#"
+                INSERT INTO project_git_focus_worktrees (
+                  project_id, worktree_path, enabled, created_at, updated_at
+                )
+                VALUES (?1, ?2, 1, ?3, ?4)
+                "#,
+            )
+            .bind(&input.project_id)
+            .bind(worktree_path.trim())
+            .bind(&now)
+            .bind(&now)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        self.get_project_focus(&input.project_id).await
+    }
+
+    pub async fn focus_for_projects(
+        &self,
+        project_ids: Option<&[String]>,
+    ) -> Result<(Vec<GitRefFilter>, Vec<String>), sqlx::Error> {
+        let focuses = if let Some(project_ids) = project_ids {
+            let mut focuses = Vec::new();
+            for project_id in project_ids {
+                focuses.push(self.get_project_focus(project_id).await?);
+            }
+            focuses
+        } else {
+            let rows = sqlx::query(
+                r#"
+                SELECT id
+                FROM projects
+                WHERE status = 'active'
+                ORDER BY name ASC
+                "#,
+            )
+            .fetch_all(self.pool)
+            .await?;
+            let mut focuses = Vec::new();
+            for row in rows {
+                let project_id: String = row.get("id");
+                focuses.push(self.get_project_focus(&project_id).await?);
+            }
+            focuses
+        };
+
+        Ok((
+            focuses
+                .iter()
+                .flat_map(|focus| focus.refs.iter().cloned())
+                .collect(),
+            focuses
+                .into_iter()
+                .flat_map(|focus| focus.worktree_paths.into_iter())
+                .collect(),
+        ))
     }
 }
 
@@ -817,6 +1250,21 @@ impl<'a> ActivityRepository<'a> {
                 if !project_filter_matches(&input.project_ids, &project_id) {
                     continue;
                 }
+                let commit_hash: String = row.get("commit_hash");
+                let refs = refs_for_commit(self.pool, &project_id, &commit_hash).await?;
+                let worktree = worktree_for_commit(self.pool, &project_id, &commit_hash).await?;
+                if !commit_matches_git_filters(
+                    self.pool,
+                    &input.git_refs,
+                    &input.worktree_paths,
+                    &project_id,
+                    &commit_hash,
+                    &refs,
+                )
+                .await?
+                {
+                    continue;
+                }
 
                 items.push(ActivityItem {
                     id: row.get("id"),
@@ -826,13 +1274,15 @@ impl<'a> ActivityRepository<'a> {
                     summary: row.get("message"),
                     occurred_at: row.get("committed_at"),
                     included_in_report: i64_to_bool(row.get("included_in_report")),
-                    commit_hash: row.get("commit_hash"),
+                    commit_hash: Some(commit_hash),
                     author_name: row.get("author_name"),
                     author_email: row.get("author_email"),
                     branch: row.get("branch"),
                     files_changed: row.get("files_changed"),
                     insertions: row.get("insertions"),
                     deletions: row.get("deletions"),
+                    refs,
+                    worktree,
                 });
             }
         }
@@ -893,6 +1343,8 @@ impl<'a> ActivityRepository<'a> {
                     files_changed: None,
                     insertions: None,
                     deletions: None,
+                    refs: Vec::new(),
+                    worktree: None,
                 });
             }
         }
@@ -3070,11 +3522,8 @@ impl<'a> SettingsRepository<'a> {
         .await?;
         self.upsert("voice.groq_model", &settings.voice_groq_model)
             .await?;
-        self.upsert(
-            "voice.openrouter_model",
-            &settings.voice_openrouter_model,
-        )
-        .await?;
+        self.upsert("voice.openrouter_model", &settings.voice_openrouter_model)
+            .await?;
         self.upsert(
             "report_ai.enabled",
             if settings.report_ai_enabled {
@@ -3553,6 +4002,206 @@ fn workspace_from_row(row: sqlx::sqlite::SqliteRow) -> Workspace {
     }
 }
 
+fn git_ref_from_row(row: sqlx::sqlite::SqliteRow) -> GitRef {
+    let kind: String = row.get("kind");
+    GitRef {
+        project_id: row.get("project_id"),
+        name: row.get("name"),
+        full_name: row.get("full_name"),
+        kind: GitRefKind::try_from(kind).unwrap_or(GitRefKind::Local),
+        is_current: i64_to_bool(row.get("is_current")),
+        is_head: i64_to_bool(row.get("is_head")),
+        last_seen_commit: row.get("last_seen_commit"),
+        last_scanned_at: row.get("last_scanned_at"),
+    }
+}
+
+fn git_worktree_from_row(row: sqlx::sqlite::SqliteRow) -> GitWorktree {
+    let is_clean: Option<i64> = row.get("is_clean");
+    GitWorktree {
+        project_id: row.get("project_id"),
+        path: row.get("path"),
+        branch: row.get("branch"),
+        head_commit: row.get("head_commit"),
+        is_clean: is_clean.map(i64_to_bool),
+        is_prunable: i64_to_bool(row.get("is_prunable")),
+        is_locked: i64_to_bool(row.get("is_locked")),
+        last_scanned_at: row.get("last_scanned_at"),
+    }
+}
+
+async fn refs_for_commit(
+    pool: &SqlitePool,
+    project_id: &str,
+    commit_hash: &str,
+) -> Result<Vec<CommitRefSummary>, sqlx::Error> {
+    let rows = sqlx::query(
+        r#"
+        SELECT commit_refs.ref_name,
+               commit_refs.ref_kind,
+               COALESCE(git_refs.is_current, 0) AS is_current
+        FROM commit_refs
+        LEFT JOIN git_refs
+          ON git_refs.project_id = commit_refs.project_id
+         AND git_refs.name = commit_refs.ref_name
+         AND git_refs.kind = commit_refs.ref_kind
+        WHERE commit_refs.project_id = ?1
+          AND commit_refs.commit_hash = ?2
+        ORDER BY COALESCE(git_refs.is_current, 0) DESC,
+                 commit_refs.ref_kind ASC,
+                 commit_refs.ref_name ASC
+        "#,
+    )
+    .bind(project_id)
+    .bind(commit_hash)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let kind: String = row.get("ref_kind");
+            CommitRefSummary {
+                name: row.get("ref_name"),
+                kind: GitRefKind::try_from(kind).unwrap_or(GitRefKind::Local),
+                is_current: i64_to_bool(row.get("is_current")),
+            }
+        })
+        .collect())
+}
+
+async fn commit_matches_git_filters(
+    pool: &SqlitePool,
+    git_refs: &Option<Vec<GitRefFilter>>,
+    worktree_paths: &Option<Vec<String>>,
+    project_id: &str,
+    commit_hash: &str,
+    refs: &[CommitRefSummary],
+) -> Result<bool, sqlx::Error> {
+    let has_ref_filters = git_refs
+        .as_ref()
+        .map(|filters| filters.iter().any(|filter| !filter.name.trim().is_empty()))
+        .unwrap_or(false);
+    let has_worktree_filters = worktree_paths
+        .as_ref()
+        .map(|paths| paths.iter().any(|path| !path.trim().is_empty()))
+        .unwrap_or(false);
+
+    if !has_ref_filters && !has_worktree_filters {
+        return Ok(true);
+    }
+
+    if has_ref_filters {
+        let matches_ref = git_refs
+            .as_ref()
+            .into_iter()
+            .flat_map(|filters| filters.iter())
+            .filter(|filter| {
+                filter
+                    .project_id
+                    .as_ref()
+                    .map(|filter_project_id| filter_project_id == project_id)
+                    .unwrap_or(true)
+            })
+            .any(|filter| {
+                refs.iter().any(|commit_ref| {
+                    commit_ref.name == filter.name && commit_ref.kind == filter.kind
+                })
+            });
+        if matches_ref {
+            return Ok(true);
+        }
+    }
+
+    if has_worktree_filters {
+        let paths = worktree_paths
+            .as_ref()
+            .into_iter()
+            .flat_map(|paths| paths.iter())
+            .filter(|path| !path.trim().is_empty())
+            .collect::<Vec<_>>();
+
+        for path in paths {
+            let row = sqlx::query(
+                r#"
+                SELECT 1
+                FROM commit_worktree_refs
+                WHERE project_id = ?1
+                  AND commit_hash = ?2
+                  AND worktree_path = ?3
+                LIMIT 1
+                "#,
+            )
+            .bind(project_id)
+            .bind(commit_hash)
+            .bind(path.trim())
+            .fetch_optional(pool)
+            .await?;
+            if row.is_some() {
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
+}
+
+async fn worktree_for_commit(
+    pool: &SqlitePool,
+    project_id: &str,
+    commit_hash: &str,
+) -> Result<Option<CommitWorktreeSummary>, sqlx::Error> {
+    let row = sqlx::query(
+        r#"
+        SELECT git_worktrees.path,
+               COALESCE(commit_worktree_refs.branch, git_worktrees.branch) AS branch,
+               git_worktrees.head_commit,
+               git_worktrees.is_clean
+        FROM commit_worktree_refs
+        LEFT JOIN git_worktrees
+          ON git_worktrees.project_id = commit_worktree_refs.project_id
+         AND git_worktrees.path = commit_worktree_refs.worktree_path
+        WHERE commit_worktree_refs.project_id = ?1
+          AND commit_worktree_refs.commit_hash = ?2
+        ORDER BY git_worktrees.branch IS NULL ASC, git_worktrees.path ASC
+        LIMIT 1
+        "#,
+    )
+    .bind(project_id)
+    .bind(commit_hash)
+    .fetch_optional(pool)
+    .await?;
+
+    let row = if row.is_some() {
+        row
+    } else {
+        sqlx::query(
+            r#"
+        SELECT path, branch, head_commit, is_clean
+        FROM git_worktrees
+        WHERE project_id = ?1
+          AND head_commit = ?2
+        ORDER BY branch IS NULL ASC, path ASC
+        LIMIT 1
+        "#,
+        )
+        .bind(project_id)
+        .bind(commit_hash)
+        .fetch_optional(pool)
+        .await?
+    };
+
+    Ok(row.map(|row| {
+        let is_clean: Option<i64> = row.get("is_clean");
+        CommitWorktreeSummary {
+            path: row.get("path"),
+            branch: row.get("branch"),
+            head_commit: row.get("head_commit"),
+            is_clean: is_clean.map(i64_to_bool),
+        }
+    }))
+}
+
 fn relative_path(root_path: &str, repo_path: &str) -> String {
     let root = std::path::Path::new(root_path);
     let repo = std::path::Path::new(repo_path);
@@ -3967,6 +4616,8 @@ mod tests {
                 to: "2026-05-20".to_string(),
                 activity_type: None,
                 project_ids: None,
+                git_refs: None,
+                worktree_paths: None,
             })
             .await
             .expect("list activity");
@@ -3989,6 +4640,8 @@ mod tests {
                 to: "2026-05-20".to_string(),
                 activity_type: Some("commit".to_string()),
                 project_ids: None,
+                git_refs: None,
+                worktree_paths: None,
             })
             .await
             .expect("list commit activity");
@@ -4002,6 +4655,8 @@ mod tests {
                 to: "2026-05-20".to_string(),
                 activity_type: Some("Testing".to_string()),
                 project_ids: None,
+                git_refs: None,
+                worktree_paths: None,
             })
             .await
             .expect("list testing activity");
@@ -4015,6 +4670,8 @@ mod tests {
                 to: "2026-05-20".to_string(),
                 activity_type: None,
                 project_ids: Some(vec!["missing_project".to_string()]),
+                git_refs: None,
+                worktree_paths: None,
             })
             .await
             .expect("list filtered activity");
@@ -4097,6 +4754,8 @@ mod tests {
                 to: "2026-05-20".to_string(),
                 activity_type: None,
                 project_ids: None,
+                git_refs: None,
+                worktree_paths: None,
             })
             .await
             .expect("list activity");
@@ -4104,6 +4763,118 @@ mod tests {
         assert_eq!(days.len(), 1);
         assert_eq!(days[0].items.len(), 1);
         assert_eq!(days[0].items[0].summary, "General meeting");
+    }
+
+    #[tokio::test]
+    async fn activity_commit_filters_use_normalized_git_focus_metadata() {
+        let pool = test_pool().await;
+        let project = create_project(&pool).await;
+        let commit_repository = CommitRepository::new(&pool);
+        let git_metadata_repository = GitMetadataRepository::new(&pool);
+        let activity_repository = ActivityRepository::new(&pool);
+
+        commit_repository
+            .upsert(&Commit {
+                id: "commit_focus_main".to_string(),
+                project_id: project.id.clone(),
+                commit_hash: "focus-main".to_string(),
+                message: "feat: main report work".to_string(),
+                author_name: Some("Joseph".to_string()),
+                author_email: Some("joseph@example.com".to_string()),
+                branch: Some("main".to_string()),
+                committed_at: "2026-05-19T11:00:00Z".to_string(),
+                files_changed: Some(1),
+                insertions: Some(8),
+                deletions: Some(1),
+                included_in_report: true,
+            })
+            .await
+            .expect("insert main commit");
+        commit_repository
+            .upsert(&Commit {
+                id: "commit_focus_feature".to_string(),
+                project_id: project.id.clone(),
+                commit_hash: "focus-feature".to_string(),
+                message: "feat: feature report work".to_string(),
+                author_name: Some("Joseph".to_string()),
+                author_email: Some("joseph@example.com".to_string()),
+                branch: Some("feature/report".to_string()),
+                committed_at: "2026-05-19T12:00:00Z".to_string(),
+                files_changed: Some(2),
+                insertions: Some(18),
+                deletions: Some(2),
+                included_in_report: true,
+            })
+            .await
+            .expect("insert feature commit");
+
+        git_metadata_repository
+            .replace_commit_refs(
+                &project.id,
+                &[
+                    CommitRef {
+                        project_id: project.id.clone(),
+                        commit_hash: "focus-main".to_string(),
+                        ref_name: "main".to_string(),
+                        ref_kind: GitRefKind::Local,
+                    },
+                    CommitRef {
+                        project_id: project.id.clone(),
+                        commit_hash: "focus-feature".to_string(),
+                        ref_name: "feature/report".to_string(),
+                        ref_kind: GitRefKind::Local,
+                    },
+                ],
+            )
+            .await
+            .expect("replace commit refs");
+        git_metadata_repository
+            .replace_commit_worktree_refs(
+                &project.id,
+                &[CommitWorktreeRef {
+                    project_id: project.id.clone(),
+                    commit_hash: "focus-feature".to_string(),
+                    worktree_path: "C:\\repo\\sparc-force-api-feature".to_string(),
+                    branch: Some("feature/report".to_string()),
+                }],
+            )
+            .await
+            .expect("replace commit worktree refs");
+
+        let branch_days = activity_repository
+            .list(ListActivityInput {
+                from: "2026-05-19".to_string(),
+                to: "2026-05-19".to_string(),
+                activity_type: Some("commit".to_string()),
+                project_ids: Some(vec![project.id.clone()]),
+                git_refs: Some(vec![GitRefFilter {
+                    project_id: Some(project.id.clone()),
+                    name: "main".to_string(),
+                    kind: GitRefKind::Local,
+                }]),
+                worktree_paths: None,
+            })
+            .await
+            .expect("list branch filtered activity");
+        assert_eq!(branch_days[0].items.len(), 1);
+        assert_eq!(branch_days[0].items[0].summary, "feat: main report work");
+
+        let worktree_days = activity_repository
+            .list(ListActivityInput {
+                from: "2026-05-19".to_string(),
+                to: "2026-05-19".to_string(),
+                activity_type: Some("commit".to_string()),
+                project_ids: Some(vec![project.id.clone()]),
+                git_refs: None,
+                worktree_paths: Some(vec!["C:\\repo\\sparc-force-api-feature".to_string()]),
+            })
+            .await
+            .expect("list worktree filtered activity");
+        assert_eq!(worktree_days[0].items.len(), 1);
+        assert_eq!(
+            worktree_days[0].items[0].summary,
+            "feat: feature report work"
+        );
     }
 
     #[tokio::test]

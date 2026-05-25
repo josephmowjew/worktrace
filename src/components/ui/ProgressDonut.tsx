@@ -3,14 +3,16 @@ export function ProgressDonut({
   inProgress,
   planned,
   carryForward,
+  progressPercent,
 }: {
   done: number;
   inProgress: number;
   planned: number;
   carryForward: number;
+  progressPercent: number;
 }) {
   const total = done + inProgress + planned + carryForward;
-  const percentage = total > 0 ? Math.round((done / total) * 100) : 0;
+  const percentage = Math.max(0, Math.min(100, Math.round(progressPercent)));
 
   const size = 100;
   const strokeWidth = 10;
@@ -57,7 +59,7 @@ export function ProgressDonut({
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
           <span className="text-lg font-bold text-white">{percentage}%</span>
-          <span className="text-[10px] text-slate-500">Done</span>
+          <span className="text-[10px] text-slate-500">Progress</span>
         </div>
       </div>
 

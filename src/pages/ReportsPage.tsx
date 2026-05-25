@@ -2,16 +2,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Check,
   ClipboardList,
+  CalendarDays,
   Copy,
   Download,
   FileText,
   FolderKanban,
   History,
+  X,
   Save,
   Sparkles,
-  Clock3,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -19,11 +20,12 @@ import { DatePicker } from "../components/ui/DatePicker";
 import { Panel } from "../components/ui/Panel";
 import { Select } from "../components/ui/Select";
 import { useToast } from "../components/ui/ToastProvider";
-import { listProjects } from "../lib/api/projects";
+import { getProjectGitFocus, listGitRefs, listGitWorktrees, listProjects } from "../lib/api/projects";
 import {
   generateReport,
   analyzeReportReadiness,
   connectReportAiProvider,
+  cancelReportAiStream,
   disconnectReportAiProvider,
   getReport,
   getReportAiStatus,
@@ -33,28 +35,58 @@ import {
   testReportAiProvider,
 } from "../lib/api/reports";
 import { getSettings } from "../lib/api/settings";
-import { currentWeekRange } from "../lib/dates";
-import type { GeneratedReport, ReportAiProvider, ReportReadinessAnalysis, ReportSummary } from "../types/report";
+import type { GitRef, GitRefFilter, GitWorktree } from "../types/project";
+import type { ReportAiProvider, ReportSummary } from "../types/report";
+import { useReportsWorkspace } from "./reportsWorkspace";
 
 export function ReportsPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
-  const weekRange = currentWeekRange();
-  const [startDate, setStartDate] = useState(weekRange.from);
-  const [endDate, setEndDate] = useState(weekRange.to);
-  const [recipientName, setRecipientName] = useState("");
-  const [selectedProjectId, setSelectedProjectId] = useState("all");
-  const [includeCommits, setIncludeCommits] = useState(true);
-  const [includeManualLogs, setIncludeManualLogs] = useState(true);
-  const [includeWeeklyTasks, setIncludeWeeklyTasks] = useState(true);
-  const [includeHidden, setIncludeHidden] = useState(false);
-  const [report, setReport] = useState<GeneratedReport | null>(null);
-  const [content, setContent] = useState("");
-  const [copied, setCopied] = useState(false);
-  const [reportAiProvider, setReportAiProvider] = useState<ReportAiProvider>("local_llama_cpp");
-  const [openRouterKey, setOpenRouterKey] = useState("");
-  const [groqKey, setGroqKey] = useState("");
-  const [readiness, setReadiness] = useState<ReportReadinessAnalysis | null>(null);
+  const {
+    startDate,
+    setStartDate,
+    endDate,
+    setEndDate,
+    recipientName,
+    setRecipientName,
+    selectedProjectId,
+    setSelectedProjectId,
+    selectedGitRefs,
+    setSelectedGitRefs,
+    selectedWorktreePaths,
+    setSelectedWorktreePaths,
+    useProjectGitFocus,
+    setUseProjectGitFocus,
+    includeCommits,
+    setIncludeCommits,
+    includeManualLogs,
+    setIncludeManualLogs,
+    includeWeeklyTasks,
+    setIncludeWeeklyTasks,
+    includeHidden,
+    setIncludeHidden,
+    report,
+    setReport,
+    content,
+    setContent,
+    copied,
+    setCopied,
+    reportAiProvider,
+    setReportAiProvider,
+    openRouterKey,
+    setOpenRouterKey,
+    groqKey,
+    setGroqKey,
+    readiness,
+    setReadiness,
+    polishStreamStatus,
+    activePolishStreamId,
+    polishCancelled,
+    beginPolishStream,
+    finishPolishStream,
+    markPolishStreamCancelled,
+  } = useReportsWorkspace();
+  const polishCancelledRef = useRef(false);
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -72,6 +104,21 @@ export function ReportsPage() {
     queryKey: ["reportAiStatus"],
     queryFn: getReportAiStatus,
   });
+  const gitRefsQuery = useQuery({
+    queryKey: ["gitRefs", selectedProjectId],
+    queryFn: () => listGitRefs(selectedProjectId),
+    enabled: selectedProjectId !== "all",
+  });
+  const gitWorktreesQuery = useQuery({
+    queryKey: ["gitWorktrees", selectedProjectId],
+    queryFn: () => listGitWorktrees(selectedProjectId),
+    enabled: selectedProjectId !== "all",
+  });
+  const projectGitFocusQuery = useQuery({
+    queryKey: ["projectGitFocus", selectedProjectId],
+    queryFn: () => getProjectGitFocus(selectedProjectId),
+    enabled: selectedProjectId !== "all",
+  });
 
   const activeProjects = (projectsQuery.data ?? []).filter(
     (project) => project.status === "active",
@@ -88,6 +135,23 @@ export function ReportsPage() {
   const contentStats = getContentStats(content);
 
   useEffect(() => {
+    if (selectedProjectId === "all") {
+      setSelectedGitRefs([]);
+      setSelectedWorktreePaths([]);
+      setUseProjectGitFocus(true);
+      return;
+    }
+
+    if (useProjectGitFocus && projectGitFocusQuery.data) {
+      setSelectedGitRefs(projectGitFocusQuery.data.refs);
+      setSelectedWorktreePaths(projectGitFocusQuery.data.worktreePaths);
+    }
+  }, [projectGitFocusQuery.data, selectedProjectId, setSelectedGitRefs, setSelectedWorktreePaths, setUseProjectGitFocus, useProjectGitFocus]);
+
+  const reportGitRefs = useProjectGitFocus ? null : selectedGitRefs;
+  const reportWorktreePaths = useProjectGitFocus ? null : selectedWorktreePaths;
+
+  useEffect(() => {
     if (isReportAiProvider(settingsQuery.data?.reportAiProvider ?? "")) {
       setReportAiProvider(settingsQuery.data!.reportAiProvider as ReportAiProvider);
     }
@@ -101,6 +165,9 @@ export function ReportsPage() {
         recipientName:
           recipientName.trim() || settingsQuery.data?.defaultManagerName || null,
         projectIds: selectedProjectId === "all" ? null : [selectedProjectId],
+        gitRefs: reportGitRefs,
+        worktreePaths: reportWorktreePaths,
+        useProjectGitFocus,
         includeCommits,
         includeManualLogs,
         includeWeeklyTasks,
@@ -118,18 +185,32 @@ export function ReportsPage() {
     },
   });
   const polishMutation = useMutation({
-    mutationFn: () =>
-      polishReport({
+    mutationFn: () => {
+      polishCancelledRef.current = false;
+      const streamId = beginPolishStream();
+      return polishReport({
         draft: content,
         startDate,
         endDate,
         recipientName:
           recipientName.trim() || settingsQuery.data?.defaultManagerName || null,
         projectIds: selectedProjectId === "all" ? null : [selectedProjectId],
+        gitRefs: reportGitRefs,
+        worktreePaths: reportWorktreePaths,
+        useProjectGitFocus,
         includeHidden,
         provider: reportAiProvider,
-      }),
+        streamId,
+      });
+    },
     onSuccess: (result) => {
+      if (polishCancelledRef.current || polishCancelled) {
+        finishPolishStream();
+        toast.success("AI polish cancelled", "Kept the current report draft.");
+        return;
+      }
+
+      finishPolishStream();
       setContent(result.content);
       toast.success(
         result.usedFallback ? "AI polish used fallback" : "Report polished",
@@ -137,7 +218,22 @@ export function ReportsPage() {
       );
     },
     onError: (error) => {
+      finishPolishStream();
       toast.error("AI polish failed", error instanceof Error ? error.message : "The report could not be polished.");
+    },
+  });
+  const cancelPolishMutation = useMutation({
+    mutationFn: () => {
+      if (!activePolishStreamId) {
+        return Promise.resolve();
+      }
+
+      polishCancelledRef.current = true;
+      markPolishStreamCancelled();
+      return cancelReportAiStream({ streamId: activePolishStreamId });
+    },
+    onError: (error) => {
+      toast.error("Cancel failed", error instanceof Error ? error.message : "The report polish could not be cancelled.");
     },
   });
   const readinessMutation = useMutation({
@@ -146,6 +242,9 @@ export function ReportsPage() {
         startDate,
         endDate,
         projectIds: selectedProjectId === "all" ? null : [selectedProjectId],
+        gitRefs: reportGitRefs,
+        worktreePaths: reportWorktreePaths,
+        useProjectGitFocus,
         includeHidden,
         provider: reportAiProvider,
       }),
@@ -252,23 +351,23 @@ export function ReportsPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <ReportsHero
         generatedCount={reportsQuery.data?.length ?? 0}
         reportReadyItems={content.trim() ? contentStats.lines : 0}
         lastGenerated={reportsQuery.data?.[0]}
       />
 
-      <div className="grid min-h-0 gap-4 2xl:grid-cols-[390px_minmax(0,1fr)_330px]">
-      <Panel className="relative overflow-visible p-0">
-        <div className="absolute inset-0 rounded-[inherit] bg-[radial-gradient(circle_at_12%_0%,rgba(59,130,246,0.20),transparent_32%),radial-gradient(circle_at_100%_28%,rgba(20,184,166,0.12),transparent_30%)]" />
-        <div className="relative p-5">
-          <div className="mb-5">
-            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
+      <div className="grid min-h-0 gap-3 2xl:grid-cols-[360px_minmax(0,1fr)_310px]">
+      <Panel className="relative overflow-visible rounded-xl bg-slate-950/62 p-0 shadow-xl shadow-slate-950/20">
+        <div className="absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/35 to-transparent" />
+        <div className="relative p-4">
+          <div className="mb-4">
+            <div className="mb-3 inline-flex items-center gap-2 rounded-md border border-cyan-300/20 bg-cyan-300/8 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-200">
               <Sparkles className="h-3.5 w-3.5" />
               Markdown builder
             </div>
-            <h2 className="text-lg font-semibold tracking-tight text-white">Report Builder</h2>
+            <h2 className="text-base font-semibold tracking-tight text-white">Report Builder</h2>
             <p className="mt-2 text-xs leading-5 text-slate-400">
               Configure your reporting range and choose what to include.
             </p>
@@ -305,6 +404,34 @@ export function ReportsPage() {
               />
             </Field>
 
+            <ReportGitFocusPanel
+              selectedProjectId={selectedProjectId}
+              refs={gitRefsQuery.data ?? []}
+              worktrees={gitWorktreesQuery.data ?? []}
+              selectedRefs={selectedGitRefs}
+              selectedWorktreePaths={selectedWorktreePaths}
+              useProjectGitFocus={useProjectGitFocus}
+              isLoading={
+                gitRefsQuery.isLoading ||
+                gitWorktreesQuery.isLoading ||
+                projectGitFocusQuery.isLoading
+              }
+              onUseProjectFocusChange={setUseProjectGitFocus}
+              onToggleRef={(ref) => {
+                setUseProjectGitFocus(false);
+                setSelectedGitRefs((current) => toggleRefFilter(current, ref));
+              }}
+              onToggleWorktree={(path) => {
+                setUseProjectGitFocus(false);
+                setSelectedWorktreePaths((current) => toggleString(current, path));
+              }}
+              onResetToProjectFocus={() => {
+                setUseProjectGitFocus(true);
+                setSelectedGitRefs(projectGitFocusQuery.data?.refs ?? []);
+                setSelectedWorktreePaths(projectGitFocusQuery.data?.worktreePaths ?? []);
+              }}
+            />
+
             <div className="grid gap-2">
               <Toggle label="Include commits" checked={includeCommits} onChange={setIncludeCommits} />
               <Toggle label="Include manual logs" checked={includeManualLogs} onChange={setIncludeManualLogs} />
@@ -312,7 +439,7 @@ export function ReportsPage() {
               <Toggle label="Include hidden items" checked={includeHidden} onChange={setIncludeHidden} />
             </div>
 
-            <div className="rounded-2xl border border-cyan-300/15 bg-cyan-300/5 p-3">
+            <div className="rounded-xl border border-cyan-300/15 bg-cyan-300/[0.045] p-3">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold text-white">Report AI</p>
@@ -351,7 +478,7 @@ export function ReportsPage() {
 
             <Button
               variant="primary"
-              className="w-full bg-gradient-to-r from-blue-600 to-indigo-500 py-3 shadow-blue-500/30 hover:from-blue-500 hover:to-indigo-400"
+              className="w-full rounded-lg bg-blue-600 py-3 shadow-blue-500/20 hover:bg-blue-500 active:bg-blue-700"
               onClick={() => generateMutation.mutate()}
               disabled={generateMutation.isPending}
             >
@@ -362,8 +489,8 @@ export function ReportsPage() {
         </div>
       </Panel>
 
-      <Panel className="relative min-h-[680px] overflow-hidden p-0">
-        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-blue-300/50 to-transparent" />
+      <Panel className="relative min-h-[680px] overflow-hidden rounded-xl bg-slate-950/68 p-0 shadow-xl shadow-slate-950/20">
+        <div className="absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-blue-300/45 to-transparent" />
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/8 px-5 py-4">
           <div>
             <div className="flex flex-wrap items-center gap-2">
@@ -374,7 +501,7 @@ export function ReportsPage() {
             </div>
             <p className="mt-1 text-xs text-slate-500">{title}</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Button onClick={() => readinessMutation.mutate()} disabled={readinessMutation.isPending}>
               <Sparkles className="h-4 w-4" />
               {readinessMutation.isPending ? "Analyzing..." : "Analyze"}
@@ -386,6 +513,15 @@ export function ReportsPage() {
               <Sparkles className="h-4 w-4" />
               {polishMutation.isPending ? "Polishing..." : "Polish"}
             </Button>
+            {polishMutation.isPending || activePolishStreamId ? (
+              <Button
+                onClick={() => cancelPolishMutation.mutate()}
+                disabled={!activePolishStreamId || cancelPolishMutation.isPending || polishCancelled}
+              >
+                <X className="h-4 w-4" />
+                {cancelPolishMutation.isPending || polishCancelled ? "Cancelling..." : "Cancel"}
+              </Button>
+            ) : null}
             <Button onClick={copyReport} disabled={!content.trim()}>
               {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
               {copied ? "Copied" : "Copy"}
@@ -449,12 +585,17 @@ export function ReportsPage() {
               ) : null}
             </div>
           ) : null}
+          {polishMutation.isPending && polishStreamStatus ? (
+            <div className="mb-3 rounded-xl border border-blue-300/20 bg-blue-500/10 p-3 text-xs text-blue-100">
+              {polishStreamStatus}
+            </div>
+          ) : null}
 
           <textarea
             value={content}
             onChange={(event) => setContent(event.currentTarget.value)}
-            className="min-h-[510px] w-full resize-y rounded-2xl border border-white/10 bg-slate-950/60 p-5 font-mono text-sm leading-7 text-slate-200 outline-none transition placeholder:text-slate-600 focus:border-blue-300/50 focus:ring-2 focus:ring-blue-500/15"
-            placeholder="Generate a report to preview and edit Markdown here."
+            className="min-h-[510px] w-full resize-y rounded-xl border border-white/10 bg-[#050b16]/88 p-5 font-mono text-sm leading-7 text-slate-200 shadow-inner shadow-black/25 outline-none transition placeholder:text-slate-600 focus:border-blue-300/50 focus:ring-2 focus:ring-blue-500/15"
+            placeholder="Generate a report, then edit the Markdown here."
           />
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-[11px] text-slate-500">
             <span className="inline-flex items-center gap-2 rounded-lg border border-white/8 bg-white/[0.03] px-2 py-1">
@@ -468,9 +609,9 @@ export function ReportsPage() {
         </div>
       </Panel>
 
-      <Panel className="relative h-fit overflow-hidden p-0">
-        <div className="absolute inset-0 rounded-[inherit] bg-[radial-gradient(circle_at_100%_0%,rgba(20,184,166,0.18),transparent_30%)]" />
-        <div className="relative p-5">
+      <Panel className="relative h-fit overflow-hidden rounded-xl bg-slate-950/60 p-0 shadow-xl shadow-slate-950/20">
+        <div className="absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-teal-300/35 to-transparent" />
+        <div className="relative p-4">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
               <h2 className="text-base font-semibold text-white">Saved Reports</h2>
@@ -479,7 +620,7 @@ export function ReportsPage() {
             <History className="h-4 w-4 text-cyan-300" />
           </div>
 
-          <div className="mb-4 space-y-3 rounded-2xl border border-white/10 bg-slate-950/45 p-3">
+          <div className="mb-4 space-y-3 rounded-xl border border-white/10 bg-slate-950/45 p-3">
             <h3 className="text-sm font-semibold text-white">Online AI Keys</h3>
             <ProviderKeyRow
               label="OpenRouter"
@@ -528,7 +669,7 @@ export function ReportsPage() {
               ))}
             </div>
           ) : (
-            <div className="rounded-2xl border border-dashed border-white/10 bg-slate-950/35 p-5 text-xs leading-6 text-slate-400">
+            <div className="rounded-xl border border-dashed border-white/10 bg-slate-950/35 p-5 text-xs leading-6 text-slate-400">
               Saved report history will appear here after you save generated Markdown.
             </div>
           )}
@@ -549,28 +690,28 @@ function ReportsHero({
   lastGenerated?: ReportSummary;
 }) {
   return (
-    <Panel className="relative overflow-hidden p-0">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_12%_0%,rgba(37,99,235,0.28),transparent_30%),radial-gradient(circle_at_86%_16%,rgba(20,184,166,0.16),transparent_26%),linear-gradient(135deg,rgba(15,23,42,0.2),rgba(15,23,42,0.82))]" />
-      <div className="absolute inset-y-0 right-0 hidden w-[38%] opacity-70 lg:block">
-        <div className="absolute right-16 top-10 h-28 w-20 rotate-6 rounded-2xl border border-blue-300/25 bg-blue-500/15 shadow-2xl shadow-blue-500/20" />
-        <div className="absolute right-40 top-20 h-24 w-32 -rotate-6 rounded-2xl border border-cyan-300/20 bg-cyan-500/10" />
-        <div className="absolute right-4 top-20 h-px w-72 rotate-[-18deg] bg-gradient-to-r from-transparent via-blue-300/60 to-transparent" />
-      </div>
-      <div className="relative grid gap-6 px-5 py-6 lg:grid-cols-[minmax(0,0.72fr)_minmax(480px,1fr)] lg:items-end">
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-white">Reports</h1>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
-            Generate beautiful, shareable weekly reports from synced commits, manual logs, and planned work.
-          </p>
+    <Panel className="relative overflow-hidden rounded-xl bg-slate-950/50 p-0 shadow-xl shadow-slate-950/15">
+      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-blue-300/0 via-blue-300/35 to-cyan-300/0" />
+      <div className="relative flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-blue-300/20 bg-blue-500/15 text-blue-200">
+            <FileText className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <h1 className="text-lg font-semibold tracking-tight text-white">Reports</h1>
+            <p className="truncate text-xs text-slate-400">
+              Weekly Markdown from commits, manual logs, and planned work.
+            </p>
+          </div>
         </div>
-        <div className="grid gap-3 sm:grid-cols-3">
-          <HeroStat icon={FileText} label="Saved Reports" value={generatedCount.toString()} detail="Local history" />
-          <HeroStat icon={Check} label="Report-Ready Items" value={reportReadyItems.toString()} detail="Current draft" />
+
+        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+          <HeroStat icon={ClipboardList} label="Saved" value={generatedCount.toString()} />
+          <HeroStat icon={Check} label="Draft lines" value={reportReadyItems.toString()} />
           <HeroStat
-            icon={Clock3}
-            label="Last Generated"
+            icon={CalendarDays}
+            label="Last"
             value={lastGenerated ? compactDate(lastGenerated.createdAt.slice(0, 10)) : "None"}
-            detail={lastGenerated?.title ?? "No saved report"}
           />
         </div>
       </div>
@@ -582,25 +723,18 @@ function HeroStat({
   icon: Icon,
   label,
   value,
-  detail,
 }: {
   icon: React.ElementType;
   label: string;
   value: string;
-  detail: string;
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-slate-950/35 p-4 shadow-xl shadow-black/10">
-      <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-blue-300/20 bg-blue-500/15 text-blue-200">
-        <Icon className="h-5 w-5" />
+    <div className="inline-flex h-9 items-center gap-2 rounded-lg border border-white/8 bg-white/[0.035] px-2.5">
+      <span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-blue-500/12 text-blue-200">
+        <Icon className="h-3.5 w-3.5" />
       </span>
-      <span className="min-w-0">
-        <span className="block text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-          {label}
-        </span>
-        <span className="mt-1 block text-2xl font-semibold text-white">{value}</span>
-        <span className="block truncate text-xs text-slate-400">{detail}</span>
-      </span>
+      <span className="text-slate-500">{label}</span>
+      <span className="font-semibold text-slate-100">{value}</span>
     </div>
   );
 }
@@ -717,6 +851,140 @@ function Toggle({
   );
 }
 
+function ReportGitFocusPanel({
+  selectedProjectId,
+  refs,
+  worktrees,
+  selectedRefs,
+  selectedWorktreePaths,
+  useProjectGitFocus,
+  isLoading,
+  onUseProjectFocusChange,
+  onToggleRef,
+  onToggleWorktree,
+  onResetToProjectFocus,
+}: {
+  selectedProjectId: string;
+  refs: GitRef[];
+  worktrees: GitWorktree[];
+  selectedRefs: GitRefFilter[];
+  selectedWorktreePaths: string[];
+  useProjectGitFocus: boolean;
+  isLoading: boolean;
+  onUseProjectFocusChange: (value: boolean) => void;
+  onToggleRef: (ref: GitRef) => void;
+  onToggleWorktree: (path: string) => void;
+  onResetToProjectFocus: () => void;
+}) {
+  const selectedRefKeys = new Set(selectedRefs.map((ref) => gitRefKey(ref)));
+
+  if (selectedProjectId === "all") {
+    return (
+      <div className="rounded-xl border border-white/10 bg-slate-950/45 p-3 text-xs leading-5 text-slate-400">
+        Project focus defaults are applied per project when all projects are included.
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-white/10 bg-slate-950/45 p-3">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-white">Git focus</p>
+          <p className="mt-1 text-xs text-slate-500">
+            Narrow commit evidence by branch or worktree for this report.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onResetToProjectFocus}
+          className="rounded-lg border border-white/10 px-2 py-1 text-[11px] font-semibold text-slate-300 transition hover:border-cyan-300/30 hover:text-cyan-100"
+        >
+          Defaults
+        </button>
+      </div>
+      <Toggle
+        label="Use project focus"
+        checked={useProjectGitFocus}
+        onChange={onUseProjectFocusChange}
+      />
+      {isLoading ? (
+        <div className="mt-3 h-16 animate-pulse rounded-lg bg-white/[0.03]" />
+      ) : (
+        <div className="mt-3 space-y-3">
+          <FocusOptionGroup
+            label="Branches"
+            emptyLabel="No branches synced yet."
+            items={refs.map((ref) => ({
+              key: gitRefKey(ref),
+              label: ref.name,
+              meta: ref.kind,
+              selected: selectedRefKeys.has(gitRefKey(ref)),
+              onToggle: () => onToggleRef(ref),
+            }))}
+          />
+          <FocusOptionGroup
+            label="Worktrees"
+            emptyLabel="No worktrees synced yet."
+            items={worktrees.map((worktree) => ({
+              key: worktree.path,
+              label: worktree.branch || "detached HEAD",
+              meta: worktree.path,
+              selected: selectedWorktreePaths.includes(worktree.path),
+              onToggle: () => onToggleWorktree(worktree.path),
+            }))}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FocusOptionGroup({
+  label,
+  emptyLabel,
+  items,
+}: {
+  label: string;
+  emptyLabel: string;
+  items: Array<{
+    key: string;
+    label: string;
+    meta: string;
+    selected: boolean;
+    onToggle: () => void;
+  }>;
+}) {
+  return (
+    <div>
+      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+        {label}
+      </p>
+      {items.length === 0 ? (
+        <p className="text-xs text-slate-500">{emptyLabel}</p>
+      ) : (
+        <div className="max-h-36 space-y-1 overflow-y-auto pr-1">
+          {items.map((item) => (
+            <label
+              key={item.key}
+              className="flex min-w-0 items-center gap-2 rounded-lg border border-white/8 bg-white/[0.025] px-2 py-1.5 text-xs text-slate-300"
+            >
+              <input
+                type="checkbox"
+                checked={item.selected}
+                onChange={item.onToggle}
+                className="h-4 w-4 rounded border-white/15 bg-slate-950 text-cyan-400"
+              />
+              <span className="min-w-0 flex-1 truncate font-mono">{item.label}</span>
+              <span className="truncate text-[10px] text-slate-500">{item.meta}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Field({
   label,
   children,
@@ -779,6 +1047,27 @@ function providerStatus(
 
 function isReportAiProvider(value: string): value is ReportAiProvider {
   return ["local_llama_cpp", "openrouter_free", "groq"].includes(value);
+}
+
+function gitRefKey(ref: Pick<GitRefFilter, "kind" | "name">) {
+  return `${ref.kind}:${ref.name}`;
+}
+
+function toggleRefFilter(current: GitRefFilter[], ref: GitRef) {
+  const key = gitRefKey(ref);
+  if (current.some((item) => gitRefKey(item) === key)) {
+    return current.filter((item) => gitRefKey(item) !== key);
+  }
+
+  return [...current, { projectId: ref.projectId, name: ref.name, kind: ref.kind }];
+}
+
+function toggleString(current: string[], value: string) {
+  if (current.includes(value)) {
+    return current.filter((item) => item !== value);
+  }
+
+  return [...current, value];
 }
 
 const inputClass =

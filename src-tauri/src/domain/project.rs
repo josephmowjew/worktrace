@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::domain::git_metadata::{CommitRefSummary, CommitWorktreeSummary};
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {
@@ -68,6 +70,8 @@ pub struct RecentCommit {
     pub author_name: Option<String>,
     pub branch: Option<String>,
     pub committed_at: String,
+    pub refs: Vec<CommitRefSummary>,
+    pub worktree: Option<CommitWorktreeSummary>,
     pub status: String,
 }
 

@@ -24,8 +24,10 @@ import {
   updateWeeklyTask,
 } from "../../lib/api/weeklyTasks";
 import { weeklyTaskQueryRoots } from "../../lib/api/queryKeys";
+import { todoAnnouncement, taskUpdateAnnouncement } from "../../lib/announcements";
 import { currentWeekRange } from "../../lib/dates";
 import type { WeeklyTask, WeeklyTaskStatus } from "../../types/weeklyTask";
+import { useSpeech } from "../ui/SpeechProvider";
 import { useToast } from "../ui/ToastProvider";
 
 const visibleStatuses: WeeklyTaskStatus[] = ["blocked", "in_progress", "todo", "completed"];
@@ -33,6 +35,7 @@ const visibleStatuses: WeeklyTaskStatus[] = ["blocked", "in_progress", "todo", "
 export function FloatingTodoWidget() {
   const queryClient = useQueryClient();
   const toast = useToast();
+  const speech = useSpeech();
   const weekRange = currentWeekRange();
   const [title, setTitle] = useState("");
   const [isPinned, setIsPinned] = useState(true);
@@ -91,10 +94,13 @@ export function FloatingTodoWidget() {
         priority: "normal",
         includedInReport: false,
       }),
-    onSuccess: async () => {
+    onSuccess: async (task) => {
       setTitle("");
       await invalidateTasks();
       toast.success("Todo added");
+      speech.announce(todoAnnouncement("Todo added", task, { projectName: task.projectName }), {
+        category: "task",
+      });
     },
     onError: (error) => {
       toast.error("Todo add failed", toMessage(error));
@@ -111,9 +117,16 @@ export function FloatingTodoWidget() {
             ? 0
             : task.progressPercent,
       }),
-    onSuccess: async () => {
+    onSuccess: async (task, variables) => {
       await invalidateTasks();
       toast.success("Todo updated");
+      speech.announce(
+        taskUpdateAnnouncement(task, { status: variables.status }, { projectName: task.projectName }).replace(
+          /^Task/,
+          "Todo",
+        ),
+        { category: "task" },
+      );
     },
     onError: (error) => {
       toast.error("Todo update failed", toMessage(error));
@@ -122,9 +135,15 @@ export function FloatingTodoWidget() {
 
   const deleteMutation = useMutation({
     mutationFn: deleteWeeklyTask,
-    onSuccess: async () => {
+    onSuccess: async (_result, taskId) => {
       await invalidateTasks();
       toast.success("Todo deleted");
+      const deletedTask = tasks.find((task) => task.id === taskId);
+      if (deletedTask) {
+        speech.announce(todoAnnouncement("Todo deleted", deletedTask, { projectName: deletedTask.projectName }), {
+          category: "task",
+        });
+      }
     },
     onError: (error) => {
       toast.error("Todo delete failed", toMessage(error));

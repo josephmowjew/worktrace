@@ -1,3 +1,4 @@
+import { Boxes } from "lucide-react";
 import type { HeatmapData } from "../../types/activity";
 
 interface ActivityHeatmapProps {
@@ -26,16 +27,21 @@ export function ActivityHeatmap({ data, weekLabel }: ActivityHeatmapProps) {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-slate-200">Activity Heatmap</h3>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-blue-500/10 text-blue-300">
+            <Boxes className="h-3.5 w-3.5" />
+          </span>
+          <h3 className="text-sm font-semibold text-slate-100">Activity Heatmap</h3>
+        </div>
         <span className="text-xs text-slate-500">{weekLabel}</span>
       </div>
 
-      <div className="space-y-1">
+      <div className="space-y-1.5">
         <div className="flex gap-1">
           <div className="w-10" />
           {dayLabels.map((day) => (
-            <div key={day} className="flex-1 text-center text-[10px] text-slate-500">
+            <div key={day} className="flex-1 text-center text-[10px] font-medium text-slate-500">
               {day}
             </div>
           ))}
@@ -43,7 +49,7 @@ export function ActivityHeatmap({ data, weekLabel }: ActivityHeatmapProps) {
 
         {timeLabels.map((time, timeIndex) => (
           <div key={timeIndex} className="flex gap-1">
-            <div className="w-10 text-right text-[10px] text-slate-500 tabular-nums">
+            <div className="w-10 text-right text-[10px] tabular-nums text-slate-500">
               {time} {timeSuffixes[timeIndex]}
             </div>
             {dayLabels.map((_, dayIndex) => {
@@ -56,8 +62,8 @@ export function ActivityHeatmap({ data, weekLabel }: ActivityHeatmapProps) {
               return (
                 <div
                   key={dayIndex}
-                  className={`flex-1 rounded-sm ${getColor(totalCount)} transition-colors`}
-                  style={{ minHeight: "12px" }}
+                  className={`flex-1 rounded-md ${getColor(totalCount)} shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] transition-colors duration-150`}
+                  style={{ minHeight: "16px" }}
                 />
               );
             })}
@@ -68,11 +74,11 @@ export function ActivityHeatmap({ data, weekLabel }: ActivityHeatmapProps) {
       <div className="flex items-center justify-end gap-1.5">
         <span className="text-[10px] text-slate-500">Less</span>
         <div className="flex gap-0.5">
-          <div className="h-2.5 w-2.5 rounded-sm bg-white/[0.02]" />
-          <div className="h-2.5 w-2.5 rounded-sm bg-blue-500/20" />
-          <div className="h-2.5 w-2.5 rounded-sm bg-blue-500/40" />
-          <div className="h-2.5 w-2.5 rounded-sm bg-blue-500/60" />
-          <div className="h-2.5 w-2.5 rounded-sm bg-blue-500" />
+          <div className="h-3 w-3 rounded-md bg-white/[0.02]" />
+          <div className="h-3 w-3 rounded-md bg-blue-500/20" />
+          <div className="h-3 w-3 rounded-md bg-blue-500/40" />
+          <div className="h-3 w-3 rounded-md bg-blue-500/60" />
+          <div className="h-3 w-3 rounded-md bg-blue-500" />
         </div>
         <span className="text-[10px] text-slate-500">More</span>
       </div>

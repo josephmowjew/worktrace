@@ -1,23 +1,26 @@
 use std::path::Path;
 
+use futures_util::StreamExt;
 use keyring::Entry;
 use reqwest::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::domain::activity::ListActivityInput;
 use crate::domain::report::{
     ConnectReportAiProviderInput, ReportAiModel, ReportAiModelList, ReportAiProvider,
-    ReportAiProviderStatus, ReportAiStatus,
-    ReportPolishInput, ReportPolishResult, ReportReadinessAnalysis, ReportReadinessFinding,
-    ReportReadinessInput, TestReportAiProviderInput,
+    ReportAiProviderStatus, ReportAiStatus, ReportPolishInput, ReportPolishResult,
+    ReportReadinessAnalysis, ReportReadinessFinding, ReportReadinessInput,
+    TestReportAiProviderInput,
 };
 use crate::domain::settings::Settings;
 use crate::domain::weekly_task::ListWeeklyTasksInput;
 use crate::infrastructure::database::repositories::{
-    ActivityRepository, ProjectRepository, ReportNoteRepository, SettingsRepository,
-    WeeklyTaskRepository,
+    ActivityRepository, GitMetadataRepository, ProjectRepository, ReportNoteRepository,
+    SettingsRepository, WeeklyTaskRepository,
 };
+use crate::AppState;
 
 const KEYRING_SERVICE: &str = "WorkTrace";
 const OPENROUTER_KEY_USER: &str = "report_ai_openrouter";
@@ -92,6 +95,7 @@ impl ReportAiService {
                 chat_message("user", "ok"),
             ],
             16,
+            None,
         )
         .await?;
 
@@ -103,7 +107,8 @@ impl ReportAiService {
     ) -> Result<ReportAiModelList, ReportAiError> {
         match input.provider {
             ReportAiProvider::LocalLlamaCpp => Err(ReportAiError::Validation(
-                "Local llama.cpp models are selected from disk, not a provider catalog.".to_string(),
+                "Local llama.cpp models are selected from disk, not a provider catalog."
+                    .to_string(),
             )),
             ReportAiProvider::OpenrouterFree => list_openrouter_models().await,
             ReportAiProvider::Groq => list_groq_models().await,
@@ -111,11 +116,13 @@ impl ReportAiService {
     }
 
     pub async fn polish(
+        app: Option<&AppHandle>,
         settings_repository: &SettingsRepository<'_>,
         activity_repository: &ActivityRepository<'_>,
         weekly_task_repository: &WeeklyTaskRepository<'_>,
         report_note_repository: &ReportNoteRepository<'_>,
         project_repository: &ProjectRepository<'_>,
+        git_metadata_repository: &GitMetadataRepository<'_>,
         input: ReportPolishInput,
     ) -> Result<ReportPolishResult, ReportAiError> {
         if input.draft.trim().is_empty() {
@@ -134,9 +141,13 @@ impl ReportAiService {
             weekly_task_repository,
             report_note_repository,
             project_repository,
+            git_metadata_repository,
             &input.start_date,
             &input.end_date,
             input.project_ids.clone(),
+            input.git_refs.clone(),
+            input.worktree_paths.clone(),
+            input.use_project_git_focus.unwrap_or(true),
             input.include_hidden.unwrap_or(false),
         )
         .await?;
@@ -151,21 +162,23 @@ impl ReportAiService {
             });
         }
 
-        let prompt = format!(
-            "Rewrite this weekly report into polished, manager-ready Markdown. Preserve facts, counts, dates, names, and statuses. Do not invent work. Use the context as evidence.\n\nContext JSON:\n{}\n\nDraft Markdown:\n{}",
-            context, input.draft
-        );
+        let prompt =
+            build_polish_prompt(&input.start_date, &input.end_date, &context, &input.draft);
+        let stream = app.and_then(|app| {
+            input
+                .stream_id
+                .as_deref()
+                .map(|stream_id| ReportAiStream::new(app, stream_id))
+        });
         let response = call_provider(
             &provider,
             &settings,
             &[
-                chat_message(
-                    "system",
-                    "You polish engineering status reports. Keep Markdown, preserve source facts, and avoid unsupported claims.",
-                ),
+                chat_message("system", polish_system_message()),
                 chat_message("user", &prompt),
             ],
             1600,
+            stream.as_ref(),
         )
         .await;
 
@@ -182,7 +195,8 @@ impl ReportAiService {
                 provider: response.provider,
                 model: response.model,
                 used_fallback: true,
-                message: "The provider returned an empty response; kept the deterministic draft.".to_string(),
+                message: "The provider returned an empty response; kept the deterministic draft."
+                    .to_string(),
             }),
             Err(error) => Ok(ReportPolishResult {
                 content: input.draft,
@@ -200,6 +214,7 @@ impl ReportAiService {
         weekly_task_repository: &WeeklyTaskRepository<'_>,
         report_note_repository: &ReportNoteRepository<'_>,
         project_repository: &ProjectRepository<'_>,
+        git_metadata_repository: &GitMetadataRepository<'_>,
         input: ReportReadinessInput,
     ) -> Result<ReportReadinessAnalysis, ReportAiError> {
         let settings = settings_repository
@@ -212,9 +227,13 @@ impl ReportAiService {
             weekly_task_repository,
             report_note_repository,
             project_repository,
+            git_metadata_repository,
             &input.start_date,
             &input.end_date,
             input.project_ids,
+            input.git_refs,
+            input.worktree_paths,
+            input.use_project_git_focus.unwrap_or(true),
             input.include_hidden.unwrap_or(false),
         )
         .await?;
@@ -241,6 +260,7 @@ impl ReportAiService {
                 chat_message("user", &prompt),
             ],
             700,
+            None,
         )
         .await;
 
@@ -272,9 +292,9 @@ pub enum ReportAiError {
 impl std::fmt::Display for ReportAiError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Validation(message)
-            | Self::Keyring(message)
-            | Self::Provider(message) => formatter.write_str(message),
+            Self::Validation(message) | Self::Keyring(message) | Self::Provider(message) => {
+                formatter.write_str(message)
+            }
             Self::Database(error) => write!(formatter, "{error}"),
         }
     }
@@ -285,6 +305,54 @@ struct AiResponse {
     provider: String,
     model: String,
     content: String,
+}
+
+struct ReportAiStream<'a> {
+    app: &'a AppHandle,
+    stream_id: &'a str,
+}
+
+impl<'a> ReportAiStream<'a> {
+    fn new(app: &'a AppHandle, stream_id: &'a str) -> Self {
+        Self { app, stream_id }
+    }
+
+    fn emit(&self, event_type: &str, content: &str, message: Option<String>) {
+        let _ = self.app.emit(
+            "report_ai_stream",
+            ReportAiStreamPayload {
+                stream_id: self.stream_id.to_string(),
+                event_type: event_type.to_string(),
+                content: content.to_string(),
+                message,
+            },
+        );
+    }
+
+    fn clear_cancelled(&self) {
+        let state = self.app.state::<AppState>();
+        let lock_result = state.cancelled_report_ai_streams.lock();
+        if let Ok(mut streams) = lock_result {
+            streams.remove(self.stream_id);
+        }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        let state = self.app.state::<AppState>();
+        let lock_result = state.cancelled_report_ai_streams.lock();
+        lock_result
+            .map(|streams| streams.contains(self.stream_id))
+            .unwrap_or(false)
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReportAiStreamPayload {
+    stream_id: String,
+    event_type: String,
+    content: String,
+    message: Option<String>,
 }
 
 fn effective_provider(provider: Option<ReportAiProvider>, settings: &Settings) -> ReportAiProvider {
@@ -310,7 +378,8 @@ fn local_status(settings: &Settings) -> ReportAiProviderStatus {
             settings.report_ai_local_model_path.clone()
         },
         message: if configured {
-            "Local model path is configured. llama.cpp sidecar setup can use this model.".to_string()
+            "Local model path is configured. llama.cpp sidecar setup can use this model."
+                .to_string()
         } else {
             "Choose a local GGUF model path before using offline AI polish.".to_string()
         },
@@ -386,6 +455,7 @@ async fn call_provider(
     settings: &Settings,
     messages: &[serde_json::Value],
     max_tokens: i32,
+    stream: Option<&ReportAiStream<'_>>,
 ) -> Result<AiResponse, ReportAiError> {
     match provider {
         ReportAiProvider::LocalLlamaCpp => Err(ReportAiError::Provider(
@@ -399,6 +469,7 @@ async fn call_provider(
                 provider.as_str(),
                 messages,
                 max_tokens,
+                stream,
             )
             .await
         }
@@ -410,6 +481,7 @@ async fn call_provider(
                 provider.as_str(),
                 messages,
                 max_tokens,
+                stream,
             )
             .await
         }
@@ -423,7 +495,15 @@ async fn call_openai_compatible(
     provider: &str,
     messages: &[serde_json::Value],
     max_tokens: i32,
+    stream: Option<&ReportAiStream<'_>>,
 ) -> Result<AiResponse, ReportAiError> {
+    if let Some(stream) = stream {
+        return call_openai_compatible_streaming(
+            url, api_key, model, provider, messages, max_tokens, stream,
+        )
+        .await;
+    }
+
     let response = Client::new()
         .post(url)
         .bearer_auth(api_key)
@@ -463,6 +543,127 @@ async fn call_openai_compatible(
     })
 }
 
+async fn call_openai_compatible_streaming(
+    url: &str,
+    api_key: &str,
+    model: &str,
+    provider: &str,
+    messages: &[serde_json::Value],
+    max_tokens: i32,
+    stream: &ReportAiStream<'_>,
+) -> Result<AiResponse, ReportAiError> {
+    stream.clear_cancelled();
+    stream.emit("start", "", None);
+    let response = Client::new()
+        .post(url)
+        .bearer_auth(api_key)
+        .header("Content-Type", "application/json")
+        .json(&json!({
+            "model": model,
+            "messages": messages,
+            "temperature": 0.2,
+            "max_tokens": max_tokens,
+            "stream": true,
+        }))
+        .send()
+        .await
+        .map_err(|error| ReportAiError::Provider(error.to_string()))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        stream.emit(
+            "error",
+            "",
+            Some(format!("{provider} request failed with {status}")),
+        );
+        return Err(ReportAiError::Provider(format!(
+            "{provider} request failed with {status}: {body}"
+        )));
+    }
+
+    let mut chunks = response.bytes_stream();
+    let mut buffer = String::new();
+    let mut content = String::new();
+    let mut response_model = model.to_string();
+
+    while let Some(chunk) = chunks.next().await {
+        if stream.is_cancelled() {
+            stream.emit(
+                "cancelled",
+                "",
+                Some("Report polish was cancelled.".to_string()),
+            );
+            stream.clear_cancelled();
+            return Err(ReportAiError::Provider(
+                "Report polish was cancelled.".to_string(),
+            ));
+        }
+
+        let chunk = chunk.map_err(|error| ReportAiError::Provider(error.to_string()))?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+        while let Some(index) = buffer.find('\n') {
+            let line = buffer[..index].trim_end_matches('\r').to_string();
+            buffer.drain(..=index);
+            append_stream_event(&line, stream, &mut content, &mut response_model)?;
+        }
+    }
+    append_stream_event(&buffer, stream, &mut content, &mut response_model)?;
+
+    stream.emit("done", "", None);
+    Ok(AiResponse {
+        provider: provider.to_string(),
+        model: response_model,
+        content,
+    })
+}
+
+fn append_stream_event(
+    line: &str,
+    stream: &ReportAiStream<'_>,
+    content: &mut String,
+    response_model: &mut String,
+) -> Result<(), ReportAiError> {
+    if let Some(event) = parse_stream_line(line)? {
+        if let Some(model) = event.model {
+            *response_model = model;
+        }
+
+        for choice in event.choices {
+            if let Some(delta) = choice.delta.content.filter(|value| !value.is_empty()) {
+                content.push_str(&delta);
+                stream.emit("delta", &delta, None);
+            }
+
+            let reasoning = choice
+                .delta
+                .reasoning
+                .or(choice.delta.reasoning_content)
+                .filter(|value| !value.is_empty());
+            if let Some(reasoning) = reasoning {
+                stream.emit("reasoning", &reasoning, None);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_stream_line(line: &str) -> Result<Option<ChatCompletionChunk>, ReportAiError> {
+    let Some(data) = line.strip_prefix("data:") else {
+        return Ok(None);
+    };
+    let data = data.trim();
+    if data.is_empty() || data == "[DONE]" {
+        return Ok(None);
+    }
+
+    serde_json::from_str(data)
+        .map(Some)
+        .map_err(|error| ReportAiError::Provider(error.to_string()))
+}
+
 async fn list_openrouter_models() -> Result<ReportAiModelList, ReportAiError> {
     let response = Client::new()
         .get(OPENROUTER_MODELS_URL)
@@ -492,7 +693,10 @@ async fn list_openrouter_models() -> Result<ReportAiModelList, ReportAiError> {
             provider: ReportAiProvider::OpenrouterFree.as_str().to_string(),
             context_length: model.context_length,
             description: model.description,
-            input_price: model.pricing.as_ref().and_then(|pricing| pricing.prompt.clone()),
+            input_price: model
+                .pricing
+                .as_ref()
+                .and_then(|pricing| pricing.prompt.clone()),
             output_price: model
                 .pricing
                 .as_ref()
@@ -553,17 +757,31 @@ async fn build_context(
     weekly_task_repository: &WeeklyTaskRepository<'_>,
     report_note_repository: &ReportNoteRepository<'_>,
     project_repository: &ProjectRepository<'_>,
+    git_metadata_repository: &GitMetadataRepository<'_>,
     start_date: &str,
     end_date: &str,
     project_ids: Option<Vec<String>>,
+    git_refs: Option<Vec<crate::domain::git_metadata::GitRefFilter>>,
+    worktree_paths: Option<Vec<String>>,
+    use_project_git_focus: bool,
     include_hidden: bool,
 ) -> Result<String, ReportAiError> {
+    let (git_refs, worktree_paths) = resolve_context_git_focus(
+        git_metadata_repository,
+        project_ids.as_deref(),
+        git_refs,
+        worktree_paths,
+        use_project_git_focus,
+    )
+    .await?;
     let activity = activity_repository
         .list(ListActivityInput {
             from: start_date.to_string(),
             to: end_date.to_string(),
             activity_type: None,
             project_ids: project_ids.clone(),
+            git_refs,
+            worktree_paths,
         })
         .await
         .map_err(ReportAiError::Database)?;
@@ -680,6 +898,37 @@ async fn build_context(
     .to_string())
 }
 
+async fn resolve_context_git_focus(
+    git_metadata_repository: &GitMetadataRepository<'_>,
+    project_ids: Option<&[String]>,
+    git_refs: Option<Vec<crate::domain::git_metadata::GitRefFilter>>,
+    worktree_paths: Option<Vec<String>>,
+    use_project_git_focus: bool,
+) -> Result<
+    (
+        Option<Vec<crate::domain::git_metadata::GitRefFilter>>,
+        Option<Vec<String>>,
+    ),
+    ReportAiError,
+> {
+    if git_refs.is_some() || worktree_paths.is_some() {
+        return Ok((git_refs, worktree_paths));
+    }
+
+    if use_project_git_focus {
+        let (refs, paths) = git_metadata_repository
+            .focus_for_projects(project_ids)
+            .await
+            .map_err(ReportAiError::Database)?;
+        return Ok((
+            if refs.is_empty() { None } else { Some(refs) },
+            if paths.is_empty() { None } else { Some(paths) },
+        ));
+    }
+
+    Ok((None, None))
+}
+
 fn deterministic_readiness(
     context: &str,
     provider: &ReportAiProvider,
@@ -724,7 +973,13 @@ fn deterministic_readiness(
 
     let penalty = findings
         .iter()
-        .map(|finding| if finding.severity == "warning" { 20 } else { 10 })
+        .map(|finding| {
+            if finding.severity == "warning" {
+                20
+            } else {
+                10
+            }
+        })
         .sum::<i32>();
     let score = (100 - penalty).clamp(0, 100);
 
@@ -740,6 +995,28 @@ fn deterministic_readiness(
         findings,
         used_fallback: true,
     }
+}
+
+fn polish_system_message() -> &'static str {
+    "You polish weekly work reports into concise, manager-ready Markdown. Preserve source facts, dates, names, statuses, and evidence exactly; do not invent work or unsupported outcomes."
+}
+
+fn build_polish_prompt(start_date: &str, end_date: &str, context: &str, draft: &str) -> String {
+    format!(
+        "Rewrite this weekly report into the exact email-style Markdown format below.\n\n\
+Format requirements:\n\
+- Start with exactly: Hello,\n\
+- After a blank line, write exactly: I hope you're well. Please find below my weekly report for {start_date} to {end_date}, outlining the progress made during the period.\n\
+- After another blank line, group the work by project, product area, department, or workstream.\n\
+- Use bold Markdown section headings only, for example: **Sparc Force Updates - Marketing Department**\n\
+- After each bold heading, write one concise first-person paragraph describing the work completed or attended.\n\
+- Do not use # headings, ## headings, bullet lists, numbered lists, tables, stats summaries, raw commit hashes, or internal JSON details in the final report.\n\
+- Keep the final report in Markdown.\n\
+- Preserve facts, counts, dates, names, project names, statuses, blockers, decisions, and evidence from the context and draft.\n\
+- Do not invent work, outcomes, meetings, people, departments, dates, or status changes.\n\n\
+Context JSON:\n{context}\n\n\
+Draft Markdown:\n{draft}"
+    )
 }
 
 fn finding(severity: &str, title: &str, detail: &str) -> ReportReadinessFinding {
@@ -807,6 +1084,24 @@ struct ChatMessage {
 }
 
 #[derive(Debug, Deserialize)]
+struct ChatCompletionChunk {
+    model: Option<String>,
+    choices: Vec<ChatChunkChoice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatChunkChoice {
+    delta: ChatChunkDelta,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatChunkDelta {
+    content: Option<String>,
+    reasoning: Option<String>,
+    reasoning_content: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct OpenRouterModelsResponse {
     data: Vec<OpenRouterModel>,
 }
@@ -836,4 +1131,54 @@ struct GroqModel {
     id: String,
     owned_by: Option<String>,
     context_window: Option<i64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_polish_prompt, polish_system_message};
+
+    #[test]
+    fn polish_prompt_requires_generic_email_style_report() {
+        let prompt = build_polish_prompt(
+            "2026-03-23",
+            "2026-03-27",
+            r#"{"activity":[]}"#,
+            "# Weekly Report\n- Shipped work",
+        );
+
+        assert!(prompt.contains("Start with exactly: Hello,"));
+        assert!(prompt.contains(
+            "I hope you're well. Please find below my weekly report for 2026-03-23 to 2026-03-27, outlining the progress made during the period."
+        ));
+        assert!(
+            prompt.contains("group the work by project, product area, department, or workstream")
+        );
+        assert!(prompt.contains("**Sparc Force Updates - Marketing Department**"));
+        assert!(prompt.contains("one concise first-person paragraph"));
+    }
+
+    #[test]
+    fn polish_prompt_rejects_detailed_markdown_artifacts() {
+        let prompt = build_polish_prompt("2026-03-23", "2026-03-27", "{}", "draft");
+
+        assert!(prompt.contains("Do not use # headings"));
+        assert!(prompt.contains("## headings"));
+        assert!(prompt.contains("bullet lists"));
+        assert!(prompt.contains("numbered lists"));
+        assert!(prompt.contains("tables"));
+        assert!(prompt.contains("stats summaries"));
+        assert!(prompt.contains("raw commit hashes"));
+        assert!(prompt.contains("internal JSON details"));
+    }
+
+    #[test]
+    fn polish_prompt_preserves_facts_without_invention() {
+        let system = polish_system_message();
+        let prompt = build_polish_prompt("2026-03-23", "2026-03-27", "{}", "draft");
+
+        assert!(system.contains("Preserve source facts"));
+        assert!(system.contains("do not invent work"));
+        assert!(prompt.contains("Preserve facts, counts, dates, names, project names, statuses, blockers, decisions, and evidence"));
+        assert!(prompt.contains("Do not invent work, outcomes, meetings, people, departments, dates, or status changes."));
+    }
 }

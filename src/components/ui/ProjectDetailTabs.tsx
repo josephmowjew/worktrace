@@ -1,9 +1,10 @@
-import { Activity, ClipboardEdit, GitCommit, ListChecks } from "lucide-react";
+import { Activity, ClipboardEdit, GitCommit, GitFork, ListChecks } from "lucide-react";
 
-export type ProjectDetailTab = "commits" | "tasks" | "meetings" | "all";
+export type ProjectDetailTab = "commits" | "branches" | "tasks" | "meetings" | "all";
 
 const tabs: { key: ProjectDetailTab; label: string; icon: typeof GitCommit }[] = [
   { key: "commits", label: "Commits", icon: GitCommit },
+  { key: "branches", label: "Branches", icon: GitFork },
   { key: "tasks", label: "Tasks", icon: ListChecks },
   { key: "meetings", label: "Meetings", icon: ClipboardEdit },
   { key: "all", label: "All Activity", icon: Activity },

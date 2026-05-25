@@ -1,4 +1,5 @@
-use tauri::State;
+use serde::Deserialize;
+use tauri::{AppHandle, State};
 
 use crate::application::report_ai::{ReportAiError, ReportAiService};
 use crate::application::reports::{ReportService, ReportServiceError};
@@ -9,8 +10,8 @@ use crate::domain::report::{
     SaveReportInput, TestReportAiProviderInput,
 };
 use crate::infrastructure::database::repositories::{
-    ActivityRepository, ProjectRepository, ReportNoteRepository, ReportRepository,
-    SettingsRepository, WeeklyTaskRepository,
+    ActivityRepository, GitMetadataRepository, ProjectRepository, ReportNoteRepository,
+    ReportRepository, SettingsRepository, WeeklyTaskRepository,
 };
 use crate::interface::dto::app_result::AppResult;
 use crate::AppState;
@@ -23,12 +24,14 @@ pub async fn generate_report(
     let activity_repository = ActivityRepository::new(state.database.pool());
     let weekly_task_repository = WeeklyTaskRepository::new(state.database.pool());
     let report_note_repository = ReportNoteRepository::new(state.database.pool());
+    let git_metadata_repository = GitMetadataRepository::new(state.database.pool());
 
     Ok(
         match ReportService::generate(
             &activity_repository,
             &weekly_task_repository,
             &report_note_repository,
+            &git_metadata_repository,
             input,
         )
         .await
@@ -185,6 +188,7 @@ pub async fn list_report_ai_provider_models(
 
 #[tauri::command]
 pub async fn polish_report(
+    app: AppHandle,
     state: State<'_, AppState>,
     input: ReportPolishInput,
 ) -> Result<AppResult<ReportPolishResult>, String> {
@@ -193,14 +197,17 @@ pub async fn polish_report(
     let weekly_task_repository = WeeklyTaskRepository::new(state.database.pool());
     let report_note_repository = ReportNoteRepository::new(state.database.pool());
     let project_repository = ProjectRepository::new(state.database.pool());
+    let git_metadata_repository = GitMetadataRepository::new(state.database.pool());
 
     Ok(
         match ReportAiService::polish(
+            Some(&app),
             &settings_repository,
             &activity_repository,
             &weekly_task_repository,
             &report_note_repository,
             &project_repository,
+            &git_metadata_repository,
             input,
         )
         .await
@@ -221,6 +228,7 @@ pub async fn analyze_report_readiness(
     let weekly_task_repository = WeeklyTaskRepository::new(state.database.pool());
     let report_note_repository = ReportNoteRepository::new(state.database.pool());
     let project_repository = ProjectRepository::new(state.database.pool());
+    let git_metadata_repository = GitMetadataRepository::new(state.database.pool());
 
     Ok(
         match ReportAiService::analyze_readiness(
@@ -229,6 +237,7 @@ pub async fn analyze_report_readiness(
             &weekly_task_repository,
             &report_note_repository,
             &project_repository,
+            &git_metadata_repository,
             input,
         )
         .await
@@ -237,6 +246,33 @@ pub async fn analyze_report_readiness(
             Err(error) => report_ai_error(error),
         },
     )
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelReportAiStreamInput {
+    pub stream_id: String,
+}
+
+#[tauri::command]
+pub async fn cancel_report_ai_stream(
+    state: State<'_, AppState>,
+    input: CancelReportAiStreamInput,
+) -> Result<AppResult<()>, String> {
+    if input.stream_id.trim().is_empty() {
+        return Ok(AppResult::err(
+            "VALIDATION_ERROR",
+            "Report AI stream id is required.",
+        ));
+    }
+
+    match state.cancelled_report_ai_streams.lock() {
+        Ok(mut streams) => {
+            streams.insert(input.stream_id);
+            Ok(AppResult::ok(()))
+        }
+        Err(error) => Ok(AppResult::err("REPORT_AI_CANCEL_FAILED", error.to_string())),
+    }
 }
 
 fn report_ai_error<T: serde::Serialize>(error: ReportAiError) -> AppResult<T> {

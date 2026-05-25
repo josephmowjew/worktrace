@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::domain::git_metadata::GitRefFilter;
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GeneratedReport {
@@ -17,6 +19,9 @@ pub struct GenerateReportInput {
     pub end_date: String,
     pub recipient_name: Option<String>,
     pub project_ids: Option<Vec<String>>,
+    pub git_refs: Option<Vec<GitRefFilter>>,
+    pub worktree_paths: Option<Vec<String>>,
+    pub use_project_git_focus: Option<bool>,
     pub include_commits: Option<bool>,
     pub include_manual_logs: Option<bool>,
     pub include_weekly_tasks: Option<bool>,
@@ -154,8 +159,12 @@ pub struct ReportPolishInput {
     pub end_date: String,
     pub recipient_name: Option<String>,
     pub project_ids: Option<Vec<String>>,
+    pub git_refs: Option<Vec<GitRefFilter>>,
+    pub worktree_paths: Option<Vec<String>>,
+    pub use_project_git_focus: Option<bool>,
     pub include_hidden: Option<bool>,
     pub provider: Option<ReportAiProvider>,
+    pub stream_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -174,6 +183,9 @@ pub struct ReportReadinessInput {
     pub start_date: String,
     pub end_date: String,
     pub project_ids: Option<Vec<String>>,
+    pub git_refs: Option<Vec<GitRefFilter>>,
+    pub worktree_paths: Option<Vec<String>>,
+    pub use_project_git_focus: Option<bool>,
     pub include_hidden: Option<bool>,
     pub provider: Option<ReportAiProvider>,
 }

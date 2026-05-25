@@ -104,9 +104,90 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .await?;
 
     sqlx::raw_sql(CALENDAR_SQL).execute(pool).await?;
+    sqlx::raw_sql(GIT_METADATA_SQL).execute(pool).await?;
 
     Ok(())
 }
+
+const GIT_METADATA_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS git_refs (
+  project_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  full_name TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  is_current INTEGER NOT NULL DEFAULT 0,
+  is_head INTEGER NOT NULL DEFAULT 0,
+  last_seen_commit TEXT,
+  last_scanned_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, name, kind),
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_git_refs_project ON git_refs(project_id);
+
+CREATE TABLE IF NOT EXISTS commit_refs (
+  project_id TEXT NOT NULL,
+  commit_hash TEXT NOT NULL,
+  ref_name TEXT NOT NULL,
+  ref_kind TEXT NOT NULL,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, commit_hash, ref_name, ref_kind),
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_commit_refs_commit ON commit_refs(project_id, commit_hash);
+
+CREATE TABLE IF NOT EXISTS commit_worktree_refs (
+  project_id TEXT NOT NULL,
+  commit_hash TEXT NOT NULL,
+  worktree_path TEXT NOT NULL,
+  branch TEXT,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, commit_hash, worktree_path),
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_commit_worktree_refs_commit ON commit_worktree_refs(project_id, commit_hash);
+CREATE INDEX IF NOT EXISTS idx_commit_worktree_refs_path ON commit_worktree_refs(project_id, worktree_path);
+
+CREATE TABLE IF NOT EXISTS git_worktrees (
+  project_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  branch TEXT,
+  head_commit TEXT,
+  is_clean INTEGER,
+  is_prunable INTEGER NOT NULL DEFAULT 0,
+  is_locked INTEGER NOT NULL DEFAULT 0,
+  last_scanned_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, path),
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_git_worktrees_project ON git_worktrees(project_id);
+
+CREATE TABLE IF NOT EXISTS project_git_focus_refs (
+  project_id TEXT NOT NULL,
+  ref_name TEXT NOT NULL,
+  ref_kind TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, ref_name, ref_kind),
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE TABLE IF NOT EXISTS project_git_focus_worktrees (
+  project_id TEXT NOT NULL,
+  worktree_path TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, worktree_path),
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+"#;
 
 const CALENDAR_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS calendar_sources (
@@ -214,6 +295,84 @@ CREATE TABLE IF NOT EXISTS commits (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_commits_project_hash ON commits(project_id, commit_hash);
 CREATE INDEX IF NOT EXISTS idx_commits_committed_at ON commits(committed_at);
+
+CREATE TABLE IF NOT EXISTS git_refs (
+  project_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  full_name TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  is_current INTEGER NOT NULL DEFAULT 0,
+  is_head INTEGER NOT NULL DEFAULT 0,
+  last_seen_commit TEXT,
+  last_scanned_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, name, kind),
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_git_refs_project ON git_refs(project_id);
+
+CREATE TABLE IF NOT EXISTS commit_refs (
+  project_id TEXT NOT NULL,
+  commit_hash TEXT NOT NULL,
+  ref_name TEXT NOT NULL,
+  ref_kind TEXT NOT NULL,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, commit_hash, ref_name, ref_kind),
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_commit_refs_commit ON commit_refs(project_id, commit_hash);
+
+CREATE TABLE IF NOT EXISTS commit_worktree_refs (
+  project_id TEXT NOT NULL,
+  commit_hash TEXT NOT NULL,
+  worktree_path TEXT NOT NULL,
+  branch TEXT,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, commit_hash, worktree_path),
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_commit_worktree_refs_commit ON commit_worktree_refs(project_id, commit_hash);
+CREATE INDEX IF NOT EXISTS idx_commit_worktree_refs_path ON commit_worktree_refs(project_id, worktree_path);
+
+CREATE TABLE IF NOT EXISTS git_worktrees (
+  project_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  branch TEXT,
+  head_commit TEXT,
+  is_clean INTEGER,
+  is_prunable INTEGER NOT NULL DEFAULT 0,
+  is_locked INTEGER NOT NULL DEFAULT 0,
+  last_scanned_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, path),
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_git_worktrees_project ON git_worktrees(project_id);
+
+CREATE TABLE IF NOT EXISTS project_git_focus_refs (
+  project_id TEXT NOT NULL,
+  ref_name TEXT NOT NULL,
+  ref_kind TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, ref_name, ref_kind),
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE TABLE IF NOT EXISTS project_git_focus_worktrees (
+  project_id TEXT NOT NULL,
+  worktree_path TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, worktree_path),
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
 
 CREATE TABLE IF NOT EXISTS manual_logs (
   id TEXT PRIMARY KEY,

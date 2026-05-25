@@ -3,6 +3,7 @@ pub mod calendar;
 pub mod commit;
 pub mod dashboard;
 pub mod focus_session;
+pub mod git_metadata;
 pub mod github;
 pub mod manual_log;
 pub mod nudge;

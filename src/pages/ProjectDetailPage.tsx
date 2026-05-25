@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, useNavigate } from "react-router-dom";
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import { ProjectDetailHeader } from "../components/ui/ProjectDetailHeader";
 import { ProjectDetailTabs, type ProjectDetailTab } from "../components/ui/ProjectDetailTabs";
 import { CommitList } from "../components/ui/CommitList";
@@ -10,20 +11,33 @@ import { ProjectSidebar } from "../components/ui/ProjectSidebar";
 import { PrBuilderPanel } from "../components/ui/PrBuilderPanel";
 import { Panel } from "../components/ui/Panel";
 import { Button } from "../components/ui/Button";
+import { useSpeech } from "../components/ui/SpeechProvider";
 import { useToast } from "../components/ui/ToastProvider";
 import { WeekRangePicker } from "../components/ui/WeekRangePicker";
-import { getProjectById, getProjectStats, getTopContributors, archiveProject } from "../lib/api/projects";
+import {
+  getProjectById,
+  getProjectStats,
+  getTopContributors,
+  archiveProject,
+  listGitRefs,
+  listGitWorktrees,
+  getProjectGitFocus,
+  saveProjectGitFocus,
+} from "../lib/api/projects";
 import { syncCommits } from "../lib/api/gitSync";
 import { listActivity, getWeekSummary } from "../lib/api/activity";
 import { listWeeklyTasks } from "../lib/api/weeklyTasks";
 import { listManualLogs } from "../lib/api/manualLogs";
+import { syncAnnouncement, syncStartedAnnouncement } from "../lib/announcements";
 import { currentWeekRange, shiftWeek } from "../lib/dates";
+import type { GitRef, GitRefFilter, GitWorktree, ProjectGitFocus } from "../types/project";
 
 export function ProjectDetailPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const toast = useToast();
+  const speech = useSpeech();
   const [activeTab, setActiveTab] = useState<ProjectDetailTab>("commits");
   const [weekAnchor, setWeekAnchor] = useState(() => new Date());
   const [selectedCommitIds, setSelectedCommitIds] = useState<Set<string>>(() => new Set());
@@ -77,12 +91,39 @@ export function ProjectDetailPage() {
     queryFn: () => getTopContributors(5),
   });
 
+  const gitRefsQuery = useQuery({
+    queryKey: ["gitRefs", projectId],
+    queryFn: () => listGitRefs(projectId!),
+    enabled: !!projectId,
+  });
+
+  const gitWorktreesQuery = useQuery({
+    queryKey: ["gitWorktrees", projectId],
+    queryFn: () => listGitWorktrees(projectId!),
+    enabled: !!projectId,
+  });
+
+  const gitFocusQuery = useQuery({
+    queryKey: ["projectGitFocus", projectId],
+    queryFn: () => getProjectGitFocus(projectId!),
+    enabled: !!projectId,
+  });
+
   const syncMutation = useMutation({
     mutationFn: () => syncCommits({ from: null, to: null, authorEmail: null, projectIds: [projectId!] }),
+    onMutate: () => {
+      speech.announce(syncStartedAnnouncement(project ? `${project.name} activity` : "project activity"), {
+        category: "sync",
+      });
+    },
     onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["activity"] });
       await queryClient.invalidateQueries({ queryKey: ["projectStats"] });
+      await queryClient.invalidateQueries({ queryKey: ["gitRefs", projectId] });
+      await queryClient.invalidateQueries({ queryKey: ["gitWorktrees", projectId] });
+      await queryClient.invalidateQueries({ queryKey: ["projectGitFocus", projectId] });
       toast.success("Sync complete", `Added ${result.newCommits} commits and updated ${result.updatedCommits}.`);
+      speech.announce(syncAnnouncement(result), { category: "sync" });
     },
     onError: (error) => {
       toast.error("Sync failed", error instanceof Error ? error.message : "Repository sync could not be completed.");
@@ -99,6 +140,17 @@ export function ProjectDetailPage() {
     },
     onError: (error) => {
       toast.error("Archive failed", error instanceof Error ? error.message : "Could not archive project.");
+    },
+  });
+
+  const saveFocusMutation = useMutation({
+    mutationFn: (focus: ProjectGitFocus) => saveProjectGitFocus(focus),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["projectGitFocus", projectId] });
+      toast.success("Git focus saved", "Reports will use this branch and worktree focus by default.");
+    },
+    onError: (error) => {
+      toast.error("Focus save failed", error instanceof Error ? error.message : "Git focus could not be saved.");
     },
   });
 
@@ -125,6 +177,8 @@ export function ProjectDetailPage() {
       summary: log.summary,
       occurredAt: log.date,
       includedInReport: log.includedInReport,
+      refs: [],
+      worktree: null,
     }));
     return [...activityItems, ...logs].sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime());
   }, [activityItems, logsQuery.data, project?.name]);
@@ -269,6 +323,22 @@ export function ProjectDetailPage() {
               />
             </>
           )}
+          {activeTab === "branches" && (
+            <GitRepositoryContextPanel
+              refs={gitRefsQuery.data ?? []}
+              worktrees={gitWorktreesQuery.data ?? []}
+              focus={gitFocusQuery.data}
+              isLoading={gitRefsQuery.isLoading || gitWorktreesQuery.isLoading || gitFocusQuery.isLoading}
+              isSaving={saveFocusMutation.isPending}
+              onSaveFocus={(refs, worktreePaths) =>
+                saveFocusMutation.mutate({
+                  projectId: projectId!,
+                  refs,
+                  worktreePaths,
+                })
+              }
+            />
+          )}
           {activeTab === "tasks" && (
             <TaskList tasks={tasks} isLoading={tasksQuery.isLoading} />
           )}
@@ -290,4 +360,189 @@ export function ProjectDetailPage() {
       </div>
     </div>
   );
+}
+
+function GitRepositoryContextPanel({
+  refs,
+  worktrees,
+  focus,
+  isLoading,
+  isSaving,
+  onSaveFocus,
+}: {
+  refs: GitRef[];
+  worktrees: GitWorktree[];
+  focus?: ProjectGitFocus;
+  isLoading: boolean;
+  isSaving: boolean;
+  onSaveFocus: (refs: GitRefFilter[], worktreePaths: string[]) => void;
+}) {
+  const [selectedRefs, setSelectedRefs] = useState<Set<string>>(() => new Set());
+  const [selectedWorktrees, setSelectedWorktrees] = useState<Set<string>>(() => new Set());
+
+  useEffect(() => {
+    setSelectedRefs(new Set((focus?.refs ?? []).map((ref) => gitRefKey(ref))));
+    setSelectedWorktrees(new Set(focus?.worktreePaths ?? []));
+  }, [focus]);
+
+  if (isLoading) {
+    return (
+      <Panel>
+        <div className="space-y-3">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="h-14 animate-pulse rounded-xl bg-white/[0.03]" />
+          ))}
+        </div>
+      </Panel>
+    );
+  }
+
+  const selectedRefFilters = refs
+    .filter((ref) => selectedRefs.has(gitRefKey(ref)))
+    .map((ref) => ({ projectId: ref.projectId, name: ref.name, kind: ref.kind }));
+  const selectedWorktreePaths = worktrees
+    .filter((worktree) => selectedWorktrees.has(worktree.path))
+    .map((worktree) => worktree.path);
+
+  return (
+    <div className="space-y-4">
+      <Panel className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-white">Report Focus</h2>
+          <p className="mt-1 text-xs text-slate-500">
+            Saved selections become the default Git scope for this project in weekly reports.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-lg border border-white/8 bg-white/[0.03] px-3 py-1.5 text-xs font-semibold text-slate-300">
+            {selectedRefs.size + selectedWorktrees.size} focused
+          </span>
+          <Button
+            type="button"
+            variant="primary"
+            disabled={isSaving}
+            onClick={() => onSaveFocus(selectedRefFilters, selectedWorktreePaths)}
+          >
+            {isSaving ? "Saving..." : "Save Focus"}
+          </Button>
+        </div>
+      </Panel>
+      <Panel>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-white">Branches</h2>
+            <p className="mt-1 text-xs text-slate-500">Local and remote refs captured during the latest sync.</p>
+          </div>
+          <span className="rounded-lg border border-white/8 bg-white/[0.03] px-3 py-1.5 text-xs font-semibold text-slate-300">
+            {refs.length} refs
+          </span>
+        </div>
+        <div className="mt-4 divide-y divide-white/6 overflow-hidden rounded-xl border border-white/8">
+          {refs.length === 0 ? (
+            <div className="p-4 text-xs text-slate-500">Sync this project to discover branch metadata.</div>
+          ) : (
+            refs.map((ref) => (
+              <div key={`${ref.kind}-${ref.name}`} className="grid gap-2 px-3 py-2.5 md:grid-cols-[minmax(0,1fr)_110px_110px] md:items-center">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={selectedRefs.has(gitRefKey(ref))}
+                      onChange={() => toggleSetValue(setSelectedRefs, gitRefKey(ref))}
+                      className="h-4 w-4 rounded border-white/15 bg-slate-950 text-cyan-400"
+                    />
+                    <span className="truncate font-mono text-xs font-semibold text-slate-200">{ref.name}</span>
+                    {ref.isCurrent ? (
+                      <span className="rounded-md border border-cyan-300/15 bg-cyan-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-100">
+                        current
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="mt-1 truncate text-[11px] text-slate-500">{ref.lastSeenCommit?.slice(0, 12) || "No head commit"}</p>
+                </div>
+                <span className="text-xs capitalize text-slate-400">{ref.kind}</span>
+                <span className="text-xs text-slate-500">{formatContextDate(ref.lastScannedAt)}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </Panel>
+
+      <Panel>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-white">Worktrees</h2>
+            <p className="mt-1 text-xs text-slate-500">Checkout variants tracked under this repository.</p>
+          </div>
+          <span className="rounded-lg border border-white/8 bg-white/[0.03] px-3 py-1.5 text-xs font-semibold text-slate-300">
+            {worktrees.length} paths
+          </span>
+        </div>
+        <div className="mt-4 divide-y divide-white/6 overflow-hidden rounded-xl border border-white/8">
+          {worktrees.length === 0 ? (
+            <div className="p-4 text-xs text-slate-500">No worktrees were captured on the latest sync.</div>
+          ) : (
+            worktrees.map((worktree) => (
+              <div key={worktree.path} className="grid gap-2 px-3 py-2.5 md:grid-cols-[minmax(0,1fr)_120px_110px] md:items-center">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={selectedWorktrees.has(worktree.path)}
+                      onChange={() => toggleSetValue(setSelectedWorktrees, worktree.path)}
+                      className="h-4 w-4 rounded border-white/15 bg-slate-950 text-cyan-400"
+                    />
+                    <span className="truncate font-mono text-xs font-semibold text-slate-200">{worktree.branch || "detached HEAD"}</span>
+                    <span
+                      className={[
+                        "rounded-md border px-1.5 py-0.5 text-[10px] font-semibold",
+                        worktree.isClean === false
+                          ? "border-orange-300/15 bg-orange-500/15 text-orange-200"
+                          : "border-emerald-300/15 bg-emerald-500/15 text-emerald-200",
+                      ].join(" ")}
+                    >
+                      {worktree.isClean === false ? "dirty" : "clean"}
+                    </span>
+                    {worktree.isLocked ? (
+                      <span className="rounded-md border border-white/8 bg-white/[0.03] px-1.5 py-0.5 text-[10px] font-semibold text-slate-300">
+                        locked
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="mt-1 truncate text-[11px] text-slate-500">{worktree.path}</p>
+                </div>
+                <span className="font-mono text-xs text-slate-400">{worktree.headCommit?.slice(0, 12) || "No HEAD"}</span>
+                <span className="text-xs text-slate-500">{formatContextDate(worktree.lastScannedAt)}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function gitRefKey(ref: Pick<GitRefFilter, "kind" | "name">) {
+  return `${ref.kind}:${ref.name}`;
+}
+
+function toggleSetValue(setter: Dispatch<SetStateAction<Set<string>>>, value: string) {
+  setter((current) => {
+    const next = new Set(current);
+    if (next.has(value)) {
+      next.delete(value);
+    } else {
+      next.add(value);
+    }
+    return next;
+  });
+}
+
+function formatContextDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }

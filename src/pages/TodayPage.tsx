@@ -32,6 +32,13 @@ import { listReportNotes, saveDailyReviewNote } from "../lib/api/reports";
 import { getSettings } from "../lib/api/settings";
 import { getWeekCapacity } from "../lib/api/calendar";
 import { weeklyTaskQueryRoots } from "../lib/api/queryKeys";
+import {
+  manualLogAnnouncement,
+  syncAnnouncement,
+  syncStartedAnnouncement,
+  taskAnnouncement,
+  taskUpdateAnnouncement,
+} from "../lib/announcements";
 import { createWeeklyTask, listWeeklyTasks, updateWeeklyTask } from "../lib/api/weeklyTasks";
 import { currentWeekRange, todayRange } from "../lib/dates";
 import type { CreateManualLogInput } from "../types/manualLog";
@@ -185,12 +192,16 @@ export function TodayPage() {
         to: null,
         authorEmail: settingsQuery.data?.gitAuthorEmail || null,
       }),
+    onMutate: () => {
+      speech.announce(syncStartedAnnouncement("today's activity"), { category: "sync" });
+    },
     onSuccess: async (result) => {
       await invalidateDailyViews();
       toast.success(
         "Sync complete",
         `Added ${result.newCommits} commits and updated ${result.updatedCommits}.`,
       );
+      speech.announce(syncAnnouncement(result), { category: "sync" });
       if (result.errors.length) {
         toast.error("Some repositories did not sync", result.errors.join(" "));
       }
@@ -229,11 +240,13 @@ export function TodayPage() {
         progressPercent: values.progressPercent,
         estimatedMinutes: values.estimatedMinutes,
       }),
-    onSuccess: async () => {
+    onSuccess: async (task) => {
       await invalidateDailyViews();
       setTaskModalOpen(false);
       toast.success("Task added");
-      speech.announce("Task added.", { category: "task" });
+      speech.announce(taskAnnouncement("Task added", task, { projectName: task.projectName }), {
+        category: "task",
+      });
     },
     onError: (error) => {
       toast.error("Task save failed", error instanceof Error ? error.message : "The task could not be saved.");
@@ -242,10 +255,14 @@ export function TodayPage() {
 
   const createLogMutation = useMutation({
     mutationFn: (input: CreateManualLogInput) => createManualLog(input),
-    onSuccess: async () => {
+    onSuccess: async (log, input) => {
       await invalidateDailyViews();
       setLogModalOpen(false);
       toast.success("Manual log saved");
+      speech.announce(
+        manualLogAnnouncement("Manual log saved", log, projectNameFor(input.projectId, projectsQuery.data)),
+        { category: "general" },
+      );
     },
     onError: (error) => {
       toast.error("Manual log failed", error instanceof Error ? error.message : "The log could not be saved.");
@@ -255,10 +272,12 @@ export function TodayPage() {
   const updateTaskMutation = useMutation({
     mutationFn: ({ id, input }: { id: string; input: Parameters<typeof updateWeeklyTask>[1] }) =>
       updateWeeklyTask(id, input),
-    onSuccess: async () => {
+    onSuccess: async (task, variables) => {
       await invalidateDailyViews();
       toast.success("Task updated");
-      speech.announce("Task updated.", { category: "task" });
+      speech.announce(taskUpdateAnnouncement(task, variables.input, { projectName: task.projectName }), {
+        category: "task",
+      });
     },
     onError: (error) => {
       toast.error("Task update failed", error instanceof Error ? error.message : "The task could not be updated.");
@@ -269,6 +288,9 @@ export function TodayPage() {
     onSuccess: async () => {
       await invalidateDailyViews();
       toast.success("Daily review saved", "It will appear in the weekly report notes.");
+      speech.announce("Daily review saved. It will appear in the weekly report notes.", {
+        category: "general",
+      });
     },
     onError: (error) => {
       toast.error("Review save failed", error instanceof Error ? error.message : "The daily review could not be saved.");
@@ -895,6 +917,14 @@ function formatMinutes(minutes: number) {
   if (!hours) return `${sign}${remaining}m`;
   if (!remaining) return `${sign}${hours}h`;
   return `${sign}${hours}h ${remaining}m`;
+}
+
+function projectNameFor(
+  projectId: string | null | undefined,
+  projects: Array<{ id: string; name: string }> | undefined,
+) {
+  if (!projectId) return null;
+  return projects?.find((project) => project.id === projectId)?.name ?? null;
 }
 
 function ReadinessRow({ done, label }: { done: boolean; label: string }) {

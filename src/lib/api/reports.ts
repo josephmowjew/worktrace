@@ -2,6 +2,7 @@ import { callCommand } from "./client";
 import type {
   GenerateReportInput,
   GeneratedReport,
+  CancelReportAiStreamInput,
   ConnectReportAiProviderInput,
   ListReportNotesInput,
   Report,
@@ -64,6 +65,10 @@ export function listReportAiProviderModels(input: TestReportAiProviderInput) {
 
 export function polishReport(input: ReportPolishInput) {
   return callCommand<ReportPolishResult>("polish_report", { input });
+}
+
+export function cancelReportAiStream(input: CancelReportAiStreamInput) {
+  return callCommand<void>("cancel_report_ai_stream", { input });
 }
 
 export function analyzeReportReadiness(input: ReportReadinessInput) {

@@ -1,3 +1,5 @@
+import type { CommitRefSummary, CommitWorktreeSummary, GitRefFilter } from "./project";
+
 export type ActivityItem = {
   id: string;
   projectId?: string | null;
@@ -13,6 +15,8 @@ export type ActivityItem = {
   filesChanged?: number | null;
   insertions?: number | null;
   deletions?: number | null;
+  refs: CommitRefSummary[];
+  worktree?: CommitWorktreeSummary | null;
 };
 
 export type ActivityDay = {
@@ -25,6 +29,8 @@ export type ListActivityInput = {
   to: string;
   activityType?: string | null;
   projectIds?: string[] | null;
+  gitRefs?: GitRefFilter[] | null;
+  worktreePaths?: string[] | null;
 };
 
 export type HeatmapInput = {

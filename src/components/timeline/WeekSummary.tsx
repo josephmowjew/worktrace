@@ -1,4 +1,4 @@
-import { Code, Rocket, Users, Clock } from "lucide-react";
+import { CalendarDays, Code, Rocket, Users, Clock, ChevronRight } from "lucide-react";
 import type { WeekSummary } from "../../types/activity";
 
 interface WeekSummaryProps {
@@ -8,7 +8,14 @@ interface WeekSummaryProps {
 export function WeekSummary({ summary }: WeekSummaryProps) {
   return (
     <div className="space-y-3">
-      <h3 className="text-sm font-semibold text-slate-200">This Week Summary</h3>
+      <div>
+        <div className="flex items-center gap-2">
+          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-blue-500/10 text-blue-300">
+            <CalendarDays className="h-3.5 w-3.5" />
+          </span>
+          <h3 className="text-sm font-semibold text-slate-100">This Week Summary</h3>
+        </div>
+      </div>
 
       <div className="grid grid-cols-2 gap-2">
         <StatCard
@@ -41,7 +48,7 @@ export function WeekSummary({ summary }: WeekSummaryProps) {
         />
       </div>
 
-      <div className="rounded-xl border border-white/8 bg-slate-950/45 p-3">
+      <div className="rounded-xl border border-blue-100/8 bg-slate-950/36 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-violet-500/10 text-violet-300">
@@ -49,14 +56,17 @@ export function WeekSummary({ summary }: WeekSummaryProps) {
             </div>
             <span className="text-xs text-slate-400">Top Project</span>
           </div>
-          <span className="text-xs font-semibold text-slate-200">{summary.topProject.name}</span>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-xs font-semibold text-slate-100">{summary.topProject.name}</span>
+            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+          </div>
         </div>
       </div>
 
-      <div className="rounded-xl border border-white/8 bg-slate-950/45 p-3">
+      <div className="rounded-xl border border-blue-100/8 bg-slate-950/36 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
         <div className="flex items-center justify-between">
           <span className="text-xs text-slate-400">Focus Time</span>
-          <span className="text-xs font-semibold text-slate-200">
+          <span className="text-sm font-semibold tabular-nums text-blue-300">
             {formatMinutes(summary.focusTimeMinutes)} (56%)
           </span>
         </div>
@@ -105,17 +115,17 @@ function StatCard({ icon: Icon, label, value, trend, color }: StatCardProps) {
   const isPositive = trend >= 0;
 
   return (
-    <div className="rounded-xl border border-white/8 bg-slate-950/45 p-3">
+    <div className="rounded-xl border border-blue-100/8 bg-slate-950/36 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
       <div className="flex items-center gap-2">
         <div className={`flex h-6 w-6 items-center justify-center rounded-lg ${colors.bg} ${colors.text}`}>
           <Icon className="h-3.5 w-3.5" />
         </div>
-        <span className="text-[10px] text-slate-400">{label}</span>
+        <span className="text-[10px] font-medium text-slate-400">{label}</span>
       </div>
       <div className="mt-1.5">
-        <span className="text-lg font-semibold text-slate-100">{value}</span>
+        <span className="text-lg font-semibold tabular-nums text-slate-100">{value}</span>
       </div>
-      <div className={`mt-0.5 text-[10px] ${isPositive ? colors.trendUp : colors.trendDown}`}>
+      <div className={`mt-0.5 text-[10px] tabular-nums ${isPositive ? colors.trendUp : colors.trendDown}`}>
         {isPositive ? "+" : ""}{trend.toFixed(0)}% vs last week
       </div>
     </div>

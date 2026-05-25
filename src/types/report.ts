@@ -1,3 +1,5 @@
+import type { GitRefFilter } from "./project";
+
 export type GeneratedReport = {
   title: string;
   startDate: string;
@@ -25,6 +27,9 @@ export type GenerateReportInput = {
   endDate: string;
   recipientName?: string | null;
   projectIds?: string[] | null;
+  gitRefs?: GitRefFilter[] | null;
+  worktreePaths?: string[] | null;
+  useProjectGitFocus?: boolean | null;
   includeCommits?: boolean | null;
   includeManualLogs?: boolean | null;
   includeWeeklyTasks?: boolean | null;
@@ -71,8 +76,12 @@ export type ReportPolishInput = {
   endDate: string;
   recipientName?: string | null;
   projectIds?: string[] | null;
+  gitRefs?: GitRefFilter[] | null;
+  worktreePaths?: string[] | null;
+  useProjectGitFocus?: boolean | null;
   includeHidden?: boolean | null;
   provider?: ReportAiProvider | null;
+  streamId?: string | null;
 };
 
 export type ReportPolishResult = {
@@ -83,10 +92,24 @@ export type ReportPolishResult = {
   message: string;
 };
 
+export type ReportAiStreamPayload = {
+  streamId: string;
+  eventType: "start" | "delta" | "reasoning" | "done" | "error" | "cancelled";
+  content: string;
+  message?: string | null;
+};
+
+export type CancelReportAiStreamInput = {
+  streamId: string;
+};
+
 export type ReportReadinessInput = {
   startDate: string;
   endDate: string;
   projectIds?: string[] | null;
+  gitRefs?: GitRefFilter[] | null;
+  worktreePaths?: string[] | null;
+  useProjectGitFocus?: boolean | null;
   includeHidden?: boolean | null;
   provider?: ReportAiProvider | null;
 };

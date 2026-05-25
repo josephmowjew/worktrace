@@ -33,6 +33,7 @@ import { Button } from "../components/ui/Button";
 import { DatePicker } from "../components/ui/DatePicker";
 import { Panel } from "../components/ui/Panel";
 import { SelectField } from "../components/ui/SelectField";
+import { useSpeech } from "../components/ui/SpeechProvider";
 import { useToast } from "../components/ui/ToastProvider";
 import {
   createManualLog,
@@ -41,6 +42,7 @@ import {
   updateManualLog,
 } from "../lib/api/manualLogs";
 import { listProjects } from "../lib/api/projects";
+import { manualLogAnnouncement } from "../lib/announcements";
 import { currentWeekRange } from "../lib/dates";
 import type { ActivityType, ManualLog } from "../types/manualLog";
 
@@ -95,6 +97,7 @@ type IconTone = "blue" | "cyan" | "green" | "purple" | "orange" | "amber" | "sla
 export function ManualLogPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
+  const speech = useSpeech();
   const weekRange = currentWeekRange();
   const [editingLog, setEditingLog] = useState<ManualLog | null>(null);
   const [sortDirection, setSortDirection] = useState<"desc" | "asc">("desc");
@@ -149,13 +152,21 @@ export function ManualLogPage() {
 
       return createManualLog(input);
     },
-    onSuccess: async () => {
+    onSuccess: async (log, values) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["manualLogs"] }),
         queryClient.invalidateQueries({ queryKey: ["activity"] }),
         queryClient.invalidateQueries({ queryKey: ["reports"] }),
       ]);
       toast.success(editingLog ? "Manual log updated" : "Manual log saved");
+      speech.announce(
+        manualLogAnnouncement(
+          editingLog ? "Manual log updated" : "Manual log saved",
+          log,
+          projectNameFor(values.projectId, projectNameById),
+        ),
+        { category: "general" },
+      );
       clearForm();
     },
     onError: (error) => {
@@ -165,13 +176,24 @@ export function ManualLogPage() {
 
   const deleteMutation = useMutation({
     mutationFn: deleteManualLog,
-    onSuccess: async () => {
+    onSuccess: async (_result, logId) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["manualLogs"] }),
         queryClient.invalidateQueries({ queryKey: ["activity"] }),
         queryClient.invalidateQueries({ queryKey: ["reports"] }),
       ]);
       toast.success("Manual log deleted");
+      const deletedLog = logs.find((log) => log.id === logId);
+      if (deletedLog) {
+        speech.announce(
+          manualLogAnnouncement(
+            "Manual log deleted",
+            deletedLog,
+            projectNameFor(deletedLog.projectId, projectNameById),
+          ),
+          { category: "general" },
+        );
+      }
     },
     onError: (error) => {
       toast.error("Delete failed", error instanceof Error ? error.message : "The log could not be deleted.");
@@ -720,6 +742,11 @@ function toManualLogInput(values: ManualLogFormValues) {
     followUp: values.followUp?.trim() || null,
     includedInReport: values.includedInReport,
   };
+}
+
+function projectNameFor(projectId: string | null | undefined, projectNameById: Map<string, string>) {
+  if (!projectId) return null;
+  return projectNameById.get(projectId) ?? null;
 }
 
 function formatDate(value: string) {
