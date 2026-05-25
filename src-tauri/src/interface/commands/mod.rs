@@ -1,13 +1,16 @@
 pub mod activity;
+pub mod calendar;
 pub mod dashboard;
 pub mod focus_sessions;
 pub mod git_sync;
+pub mod github;
 pub mod manual_logs;
 pub mod nudges;
 pub mod project_stats;
 pub mod projects;
 pub mod reports;
 pub mod settings;
+pub mod voice;
 pub mod weekly_tasks;
 pub mod windows;
 pub mod workspaces;
@@ -31,12 +34,23 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         activity::get_activity_heatmap,
         activity::get_week_summary,
         activity::get_key_highlights,
+        calendar::list_calendar_sources,
+        calendar::connect_google_calendar,
+        calendar::disconnect_calendar_source,
+        calendar::sync_calendar_events,
+        calendar::list_calendar_events,
+        calendar::get_week_capacity,
         focus_sessions::get_active_focus_session,
         focus_sessions::list_focus_sessions,
         focus_sessions::start_focus_session,
         focus_sessions::stop_focus_session,
         focus_sessions::cancel_focus_session,
         git_sync::sync_commits,
+        github::connect_github_pat,
+        github::get_github_integration_status,
+        github::test_github_connection,
+        github::disconnect_github,
+        github::create_github_pull_request,
         manual_logs::list_manual_logs,
         manual_logs::create_manual_log,
         manual_logs::update_manual_log,
@@ -49,9 +63,17 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         reports::get_report,
         reports::list_report_notes,
         reports::save_daily_review_note,
+        reports::get_report_ai_status,
+        reports::connect_report_ai_provider,
+        reports::test_report_ai_provider,
+        reports::disconnect_report_ai_provider,
+        reports::list_report_ai_provider_models,
+        reports::polish_report,
+        reports::analyze_report_readiness,
         settings::get_settings,
         settings::update_settings,
         settings::validate_backup_location,
+        voice::transcribe_voice_command,
         weekly_tasks::list_weekly_tasks,
         weekly_tasks::create_weekly_task,
         weekly_tasks::update_weekly_task,

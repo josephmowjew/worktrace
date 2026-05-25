@@ -461,6 +461,7 @@ mod tests {
                 priority: Some(WeeklyTaskPriority::High),
                 included_in_report: Some(true),
                 progress_percent: None,
+                estimated_minutes: None,
             })
             .await
             .expect("create weekly task");

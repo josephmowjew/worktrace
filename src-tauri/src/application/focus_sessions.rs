@@ -78,6 +78,7 @@ impl FocusSessionService {
                         priority: None,
                         included_in_report: None,
                         progress_percent: Some(25),
+                        estimated_minutes: None,
                     },
                 )
                 .await
@@ -153,6 +154,7 @@ impl FocusSessionService {
                         priority: None,
                         included_in_report: None,
                         progress_percent: input.progress_percent,
+                        estimated_minutes: None,
                     },
                 )
                 .await

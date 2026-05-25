@@ -1,8 +1,10 @@
-import { AlertTriangle, ClipboardCopy, GitPullRequest, X } from "lucide-react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { AlertTriangle, ClipboardCopy, ExternalLink, GitPullRequest, Rocket, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { ActivityItem } from "../../types/activity";
 import type { GitBranch, Project } from "../../types/project";
+import { createGitHubPullRequest, getGitHubIntegrationStatus } from "../../lib/api/github";
 import { listGitBranches } from "../../lib/api/projects";
 import {
   fullPrPackageText,
@@ -33,6 +35,12 @@ export function PrBuilderPanel({
   const [branchName, setBranchName] = useState(() => suggestedBranchName(project.name, commits));
   const [title, setTitle] = useState(() => suggestedPrTitle(commits, project.name));
   const [notes, setNotes] = useState("");
+  const [createdPrUrl, setCreatedPrUrl] = useState<string | null>(null);
+
+  const githubStatusQuery = useQuery({
+    queryKey: ["githubIntegrationStatus"],
+    queryFn: getGitHubIntegrationStatus,
+  });
 
   useEffect(() => {
     let isActive = true;
@@ -84,6 +92,23 @@ export function PrBuilderPanel({
       }),
     [baseBranch, branchName, commits, notes, project, title],
   );
+  const createPrMutation = useMutation({
+    mutationFn: () =>
+      createGitHubPullRequest({
+        projectId: project.id,
+        baseBranch,
+        newBranch: branchName,
+        title,
+        body: prPackage.prBody,
+        commitHashes: [...prPackage.selectedCommits]
+          .sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime())
+          .map((commit) => commit.commitHash),
+        draft: false,
+      }),
+    onSuccess: (result) => {
+      setCreatedPrUrl(result.url);
+    },
+  });
 
   const branchOptions = useMemo(
     () =>
@@ -104,7 +129,7 @@ export function PrBuilderPanel({
           </div>
           <h2 className="text-lg font-semibold text-white">Build PR From Commits</h2>
           <p className="mt-1 text-xs leading-5 text-slate-400">
-            Generates copy-ready Git commands and a GitHub PR body. Nothing is pushed or changed.
+            Generates copy-ready Git commands and can create a GitHub PR when connected.
           </p>
         </div>
         <button
@@ -179,6 +204,49 @@ export function PrBuilderPanel({
         </div>
       ) : null}
 
+      <div className="rounded-xl border border-white/8 bg-white/[0.03] p-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-xs font-semibold text-slate-200">
+              <Rocket className="h-4 w-4 text-cyan-200" />
+              GitHub PR creation
+            </div>
+            <p className="mt-1 text-xs leading-5 text-slate-400">
+              WorkTrace uses a temporary Git worktree, pushes the new branch with your local Git credentials, then creates the PR through GitHub.
+            </p>
+          </div>
+          {githubStatusQuery.data?.connected ? (
+            <Badge tone="green">Connected</Badge>
+          ) : (
+            <Badge tone="slate">Disconnected</Badge>
+          )}
+        </div>
+
+        {!githubStatusQuery.data?.connected ? (
+          <div className="mt-3 rounded-xl border border-orange-300/15 bg-orange-500/10 p-3 text-xs leading-5 text-orange-100/85">
+            Connect GitHub in Settings before creating PRs from WorkTrace.
+          </div>
+        ) : null}
+        {createPrMutation.isError ? (
+          <div className="mt-3 rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-xs leading-5 text-red-100">
+            {createPrMutation.error instanceof Error
+              ? createPrMutation.error.message
+              : "GitHub PR creation failed."}
+          </div>
+        ) : null}
+        {createdPrUrl ? (
+          <a
+            href={createdPrUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-3 inline-flex items-center gap-2 rounded-xl border border-emerald-300/20 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-500/15"
+          >
+            <ExternalLink className="h-4 w-4" />
+            Open created PR
+          </a>
+        ) : null}
+      </div>
+
       <div className="grid gap-3 lg:grid-cols-2">
         <OutputBlock
           title="Commands"
@@ -205,6 +273,28 @@ export function PrBuilderPanel({
         >
           <ClipboardCopy className="h-4 w-4" />
           Copy Full Package
+        </Button>
+        <Button
+          type="button"
+          variant="primary"
+          disabled={
+            !canGeneratePackage ||
+            !githubStatusQuery.data?.connected ||
+            createPrMutation.isPending ||
+            prPackage.selectedCommits.length === 0
+          }
+          onClick={() => {
+            const confirmed = window.confirm(
+              "WorkTrace will create a temporary Git worktree, cherry-pick the selected commits, push the new branch to origin, and create a GitHub PR. Continue?",
+            );
+            if (confirmed) {
+              setCreatedPrUrl(null);
+              createPrMutation.mutate();
+            }
+          }}
+        >
+          <Rocket className="h-4 w-4" />
+          {createPrMutation.isPending ? "Creating PR..." : "Push Branch & Create PR"}
         </Button>
       </div>
     </Panel>

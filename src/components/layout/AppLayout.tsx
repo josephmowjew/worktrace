@@ -27,6 +27,8 @@ import { currentWeekRange } from "../../lib/dates";
 import { TitleBar } from "./TitleBar";
 import { useToast } from "../ui/ToastProvider";
 import { CommandPalette, createBaseCommandActions } from "../ui/CommandPalette";
+import { useSpeech } from "../ui/SpeechProvider";
+import { normalizeVoiceTranscript } from "../../lib/voiceCommands";
 
 const navItems = [
   { label: "Today", href: "/", icon: Home },
@@ -44,6 +46,7 @@ const navItems = [
 export function AppLayout({ children }: PropsWithChildren) {
   const queryClient = useQueryClient();
   const toast = useToast();
+  const speech = useSpeech();
   const navigate = useNavigate();
   const weekRange = currentWeekRange();
   const [isWidgetWindow, setIsWidgetWindow] = useState(false);
@@ -111,6 +114,10 @@ export function AppLayout({ children }: PropsWithChildren) {
         "Sync complete",
         `Added ${result.newCommits} commits and updated ${result.updatedCommits}.`,
       );
+      speech.announce(
+        `Sync complete. Added ${result.newCommits} commits and updated ${result.updatedCommits}.`,
+        { category: "sync", interrupt: true },
+      );
     },
     onError: (error) => {
       toast.error(
@@ -127,6 +134,76 @@ export function AppLayout({ children }: PropsWithChildren) {
     projectsQuery.data?.some(
       (project) => project.status === "active" && Boolean(project.repoPath),
     ) ?? false;
+
+  function openProjectsWorkspaceScan() {
+    navigate("/projects", { state: { openWorkspaceScan: true } });
+  }
+
+  function runPowerCommand(query: string) {
+    const normalized = query.trim().toLowerCase();
+    if (normalized === "sync") {
+      commandSyncMutation.mutate();
+      return true;
+    }
+    if (normalized === "report") {
+      navigate("/", { state: { openReportPrep: true } });
+      return true;
+    }
+    if (
+      normalized.startsWith("task:") ||
+      normalized.startsWith("log:") ||
+      normalized.startsWith("focus:")
+    ) {
+      navigate("/", { state: { powerCommand: query.trim() } });
+      return true;
+    }
+    return false;
+  }
+
+  async function handleVoiceCommand() {
+    if (speech.status === "listening") {
+      speech.stopVoiceCommand();
+      return;
+    }
+
+    const result = await speech.startVoiceCommand();
+    if (!result) {
+      if (speech.error) {
+        toast.error("Voice command failed", speech.error);
+      }
+      return;
+    }
+
+    const command = normalizeVoiceTranscript(result.transcript);
+    if (command.kind === "unknown") {
+      toast.info("Voice command not recognized", result.transcript);
+      speech.announce("I could not match that to a WorkTrace command.", {
+        category: "general",
+        interrupt: true,
+      });
+      return;
+    }
+
+    if (
+      settings?.voiceCommandConfirmBeforeAction &&
+      command.requiresConfirmation &&
+      !window.confirm(`Run voice command?\n\n${command.label}`)
+    ) {
+      return;
+    }
+
+    if (command.kind === "navigation") {
+      navigate(command.path);
+      toast.success("Voice command", command.label);
+      speech.announce(command.label, { category: "general", interrupt: true });
+      return;
+    }
+
+    if (runPowerCommand(command.command)) {
+      toast.success("Voice command", command.label);
+      speech.announce(command.label, { category: "general", interrupt: true });
+    }
+  }
 
   useEffect(() => {
     try {
@@ -334,28 +411,18 @@ export function AppLayout({ children }: PropsWithChildren) {
           projects: projectsQuery.data ?? [],
           navigate: (path, state) => navigate(path, state === undefined ? undefined : { state }),
           onSync: () => commandSyncMutation.mutate(),
+          onScanRepos: () =>
+            commandSyncMutation.mutate(undefined, {
+              onSettled: openProjectsWorkspaceScan,
+            }),
           onToggleWidget: () => widgetMutation.mutate(),
         })}
         onPowerCommand={(query) => {
-          const normalized = query.trim().toLowerCase();
-          if (normalized === "sync") {
-            commandSyncMutation.mutate();
-            return true;
-          }
-          if (normalized === "report") {
-            navigate("/", { state: { openReportPrep: true } });
-            return true;
-          }
-          if (
-            normalized.startsWith("task:") ||
-            normalized.startsWith("log:") ||
-            normalized.startsWith("focus:")
-          ) {
-            navigate("/", { state: { powerCommand: query.trim() } });
-            return true;
-          }
-          return false;
+          return runPowerCommand(query);
         }}
+        onVoiceCommand={speech.isVoiceCommandAvailable ? handleVoiceCommand : undefined}
+        voiceStatus={speech.status}
+        voiceError={speech.error}
       />
     </div>
   );

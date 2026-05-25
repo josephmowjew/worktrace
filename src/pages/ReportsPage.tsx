@@ -11,7 +11,7 @@ import {
   Sparkles,
   Clock3,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -22,13 +22,19 @@ import { useToast } from "../components/ui/ToastProvider";
 import { listProjects } from "../lib/api/projects";
 import {
   generateReport,
+  analyzeReportReadiness,
+  connectReportAiProvider,
+  disconnectReportAiProvider,
   getReport,
+  getReportAiStatus,
   listReports,
+  polishReport,
   saveReport,
+  testReportAiProvider,
 } from "../lib/api/reports";
 import { getSettings } from "../lib/api/settings";
 import { currentWeekRange } from "../lib/dates";
-import type { GeneratedReport, ReportSummary } from "../types/report";
+import type { GeneratedReport, ReportAiProvider, ReportReadinessAnalysis, ReportSummary } from "../types/report";
 
 export function ReportsPage() {
   const queryClient = useQueryClient();
@@ -45,6 +51,10 @@ export function ReportsPage() {
   const [report, setReport] = useState<GeneratedReport | null>(null);
   const [content, setContent] = useState("");
   const [copied, setCopied] = useState(false);
+  const [reportAiProvider, setReportAiProvider] = useState<ReportAiProvider>("local_llama_cpp");
+  const [openRouterKey, setOpenRouterKey] = useState("");
+  const [groqKey, setGroqKey] = useState("");
+  const [readiness, setReadiness] = useState<ReportReadinessAnalysis | null>(null);
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -57,6 +67,10 @@ export function ReportsPage() {
   const reportsQuery = useQuery({
     queryKey: ["reports"],
     queryFn: listReports,
+  });
+  const reportAiStatusQuery = useQuery({
+    queryKey: ["reportAiStatus"],
+    queryFn: getReportAiStatus,
   });
 
   const activeProjects = (projectsQuery.data ?? []).filter(
@@ -72,6 +86,12 @@ export function ReportsPage() {
       : activeProjects.find((project) => project.id === selectedProjectId)?.name ??
         "Selected project";
   const contentStats = getContentStats(content);
+
+  useEffect(() => {
+    if (isReportAiProvider(settingsQuery.data?.reportAiProvider ?? "")) {
+      setReportAiProvider(settingsQuery.data!.reportAiProvider as ReportAiProvider);
+    }
+  }, [settingsQuery.data]);
 
   const generateMutation = useMutation({
     mutationFn: () =>
@@ -90,10 +110,83 @@ export function ReportsPage() {
       setReport(generatedReport);
       setContent(generatedReport.content);
       setCopied(false);
+      setReadiness(null);
       toast.success("Report generated", "Review and edit the Markdown before saving.");
     },
     onError: (error) => {
       toast.error("Report generation failed", error instanceof Error ? error.message : "The report could not be generated.");
+    },
+  });
+  const polishMutation = useMutation({
+    mutationFn: () =>
+      polishReport({
+        draft: content,
+        startDate,
+        endDate,
+        recipientName:
+          recipientName.trim() || settingsQuery.data?.defaultManagerName || null,
+        projectIds: selectedProjectId === "all" ? null : [selectedProjectId],
+        includeHidden,
+        provider: reportAiProvider,
+      }),
+    onSuccess: (result) => {
+      setContent(result.content);
+      toast.success(
+        result.usedFallback ? "AI polish used fallback" : "Report polished",
+        result.message,
+      );
+    },
+    onError: (error) => {
+      toast.error("AI polish failed", error instanceof Error ? error.message : "The report could not be polished.");
+    },
+  });
+  const readinessMutation = useMutation({
+    mutationFn: () =>
+      analyzeReportReadiness({
+        startDate,
+        endDate,
+        projectIds: selectedProjectId === "all" ? null : [selectedProjectId],
+        includeHidden,
+        provider: reportAiProvider,
+      }),
+    onSuccess: (result) => {
+      setReadiness(result);
+      toast.success("Readiness analyzed", `${result.score}/100 readiness score.`);
+    },
+    onError: (error) => {
+      toast.error("Readiness failed", error instanceof Error ? error.message : "The report could not be analyzed.");
+    },
+  });
+  const connectAiMutation = useMutation({
+    mutationFn: ({ provider, apiKey }: { provider: ReportAiProvider; apiKey: string }) =>
+      connectReportAiProvider({ provider, apiKey }),
+    onSuccess: async (_, variables) => {
+      if (variables.provider === "openrouter_free") setOpenRouterKey("");
+      if (variables.provider === "groq") setGroqKey("");
+      await reportAiStatusQuery.refetch();
+      toast.success("AI provider connected");
+    },
+    onError: (error) => {
+      toast.error("Provider connect failed", error instanceof Error ? error.message : "The provider key could not be stored.");
+    },
+  });
+  const testAiMutation = useMutation({
+    mutationFn: (provider: ReportAiProvider) => testReportAiProvider({ provider }),
+    onSuccess: (message) => {
+      toast.success("Provider ready", message);
+    },
+    onError: (error) => {
+      toast.error("Provider test failed", error instanceof Error ? error.message : "The provider could not be tested.");
+    },
+  });
+  const disconnectAiMutation = useMutation({
+    mutationFn: (provider: ReportAiProvider) => disconnectReportAiProvider({ provider }),
+    onSuccess: async () => {
+      await reportAiStatusQuery.refetch();
+      toast.success("AI provider disconnected");
+    },
+    onError: (error) => {
+      toast.error("Provider disconnect failed", error instanceof Error ? error.message : "The provider could not be disconnected.");
     },
   });
 
@@ -219,6 +312,35 @@ export function ReportsPage() {
               <Toggle label="Include hidden items" checked={includeHidden} onChange={setIncludeHidden} />
             </div>
 
+            <div className="rounded-2xl border border-cyan-300/15 bg-cyan-300/5 p-3">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-white">Report AI</p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    {reportAiProvider === "local_llama_cpp"
+                      ? "Local/offline"
+                      : "Online provider - selected report context is sent out"}
+                  </p>
+                </div>
+                <Badge tone={reportAiProvider === "local_llama_cpp" ? "green" : "blue"}>
+                  {reportAiProvider === "local_llama_cpp" ? "Local" : "Online"}
+                </Badge>
+              </div>
+              <Select
+                value={reportAiProvider}
+                onChange={(value) => setReportAiProvider(value as ReportAiProvider)}
+                options={[
+                  { value: "local_llama_cpp", label: "Local llama.cpp", icon: FileText },
+                  { value: "openrouter_free", label: "OpenRouter free", icon: Sparkles },
+                  { value: "groq", label: "Groq", icon: Sparkles },
+                ]}
+                size="sm"
+              />
+              <p className="mt-2 text-[11px] leading-5 text-slate-500">
+                {providerStatus(reportAiStatusQuery.data, reportAiProvider)}
+              </p>
+            </div>
+
             {generateMutation.isError ? (
               <div className="rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-xs text-red-100">
                 {generateMutation.error instanceof Error
@@ -253,6 +375,17 @@ export function ReportsPage() {
             <p className="mt-1 text-xs text-slate-500">{title}</p>
           </div>
           <div className="flex items-center gap-2">
+            <Button onClick={() => readinessMutation.mutate()} disabled={readinessMutation.isPending}>
+              <Sparkles className="h-4 w-4" />
+              {readinessMutation.isPending ? "Analyzing..." : "Analyze"}
+            </Button>
+            <Button
+              onClick={() => polishMutation.mutate()}
+              disabled={!content.trim() || polishMutation.isPending}
+            >
+              <Sparkles className="h-4 w-4" />
+              {polishMutation.isPending ? "Polishing..." : "Polish"}
+            </Button>
             <Button onClick={copyReport} disabled={!content.trim()}>
               {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
               {copied ? "Copied" : "Copy"}
@@ -291,6 +424,31 @@ export function ReportsPage() {
                 : "Report could not be saved."}
             </div>
           ) : null}
+          {readiness ? (
+            <div className="mb-3 rounded-2xl border border-cyan-300/15 bg-cyan-300/5 p-4">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-semibold text-cyan-100">
+                    Readiness score: {readiness.score}/100
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-slate-400">{readiness.summary}</p>
+                </div>
+                <Badge tone={readiness.usedFallback ? "slate" : "green"}>
+                  {readiness.usedFallback ? "Deterministic" : readiness.provider}
+                </Badge>
+              </div>
+              {readiness.findings.length > 0 ? (
+                <div className="grid gap-2 md:grid-cols-2">
+                  {readiness.findings.map((finding) => (
+                    <div key={`${finding.severity}-${finding.title}`} className="rounded-xl border border-white/10 bg-slate-950/45 p-3">
+                      <p className="text-xs font-semibold text-slate-100">{finding.title}</p>
+                      <p className="mt-1 text-[11px] leading-5 text-slate-400">{finding.detail}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
           <textarea
             value={content}
@@ -319,6 +477,34 @@ export function ReportsPage() {
               <p className="mt-1 text-xs text-slate-500">Local report history</p>
             </div>
             <History className="h-4 w-4 text-cyan-300" />
+          </div>
+
+          <div className="mb-4 space-y-3 rounded-2xl border border-white/10 bg-slate-950/45 p-3">
+            <h3 className="text-sm font-semibold text-white">Online AI Keys</h3>
+            <ProviderKeyRow
+              label="OpenRouter"
+              provider="openrouter_free"
+              value={openRouterKey}
+              status={providerStatus(reportAiStatusQuery.data, "openrouter_free")}
+              isPending={connectAiMutation.isPending || testAiMutation.isPending || disconnectAiMutation.isPending}
+              onChange={setOpenRouterKey}
+              onConnect={() =>
+                connectAiMutation.mutate({ provider: "openrouter_free", apiKey: openRouterKey })
+              }
+              onTest={() => testAiMutation.mutate("openrouter_free")}
+              onDisconnect={() => disconnectAiMutation.mutate("openrouter_free")}
+            />
+            <ProviderKeyRow
+              label="Groq"
+              provider="groq"
+              value={groqKey}
+              status={providerStatus(reportAiStatusQuery.data, "groq")}
+              isPending={connectAiMutation.isPending || testAiMutation.isPending || disconnectAiMutation.isPending}
+              onChange={setGroqKey}
+              onConnect={() => connectAiMutation.mutate({ provider: "groq", apiKey: groqKey })}
+              onTest={() => testAiMutation.mutate("groq")}
+              onDisconnect={() => disconnectAiMutation.mutate("groq")}
+            />
           </div>
 
           {reportsQuery.isLoading ? (
@@ -457,6 +643,54 @@ function SavedReportRow({
   );
 }
 
+function ProviderKeyRow({
+  label,
+  value,
+  status,
+  isPending,
+  onChange,
+  onConnect,
+  onTest,
+  onDisconnect,
+}: {
+  label: string;
+  provider: ReportAiProvider;
+  value: string;
+  status: string;
+  isPending: boolean;
+  onChange: (value: string) => void;
+  onConnect: () => void;
+  onTest: () => void;
+  onDisconnect: () => void;
+}) {
+  return (
+    <div className="rounded-xl border border-white/8 bg-white/[0.03] p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold text-slate-200">{label}</p>
+        <p className="truncate text-[10px] text-slate-500">{status}</p>
+      </div>
+      <input
+        type="password"
+        value={value}
+        onChange={(event) => onChange(event.currentTarget.value)}
+        className={inputClass}
+        placeholder={`${label} API key`}
+      />
+      <div className="mt-2 flex flex-wrap gap-2">
+        <Button type="button" variant="primary" disabled={!value.trim() || isPending} onClick={onConnect} className="h-8 px-2 text-xs">
+          Connect
+        </Button>
+        <Button type="button" disabled={isPending} onClick={onTest} className="h-8 px-2 text-xs">
+          Test
+        </Button>
+        <Button type="button" variant="ghost" disabled={isPending} onClick={onDisconnect} className="h-8 px-2 text-xs">
+          Disconnect
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function Toggle({
   label,
   checked,
@@ -534,6 +768,17 @@ function getContentStats(value: string) {
     characters: value.length,
     lines: value.split(/\r?\n/).length,
   };
+}
+
+function providerStatus(
+  status: { providers: { provider: string; message: string }[] } | undefined,
+  provider: ReportAiProvider,
+) {
+  return status?.providers.find((item) => item.provider === provider)?.message ?? "Status unavailable.";
+}
+
+function isReportAiProvider(value: string): value is ReportAiProvider {
+  return ["local_llama_cpp", "openrouter_free", "groq"].includes(value);
 }
 
 const inputClass =

@@ -81,6 +81,15 @@ fn validate_create(input: &CreateWeeklyTaskInput) -> Result<(), WeeklyTaskServic
             "Task week is required".to_string(),
         ));
     }
+    if input
+        .estimated_minutes
+        .map(|minutes| minutes < 0 || minutes > 24 * 60)
+        .unwrap_or(false)
+    {
+        return Err(WeeklyTaskServiceError::Validation(
+            "Task estimate must be between 0 and 24 hours".to_string(),
+        ));
+    }
 
     Ok(())
 }
@@ -104,6 +113,15 @@ fn validate_update(input: &UpdateWeeklyTaskInput) -> Result<(), WeeklyTaskServic
     {
         return Err(WeeklyTaskServiceError::Validation(
             "Task week is required".to_string(),
+        ));
+    }
+    if input
+        .estimated_minutes
+        .map(|minutes| minutes < 0 || minutes > 24 * 60)
+        .unwrap_or(false)
+    {
+        return Err(WeeklyTaskServiceError::Validation(
+            "Task estimate must be between 0 and 24 hours".to_string(),
         ));
     }
 

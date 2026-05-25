@@ -14,6 +14,7 @@ import { PrepareReportModal } from "../components/ui/PrepareReportModal";
 import { QuickManualLogModal } from "../components/ui/QuickManualLogModal";
 import { StopFocusModal } from "../components/ui/StopFocusModal";
 import { TodayQuickAddBar } from "../components/ui/TodayQuickAddBar";
+import { useSpeech } from "../components/ui/SpeechProvider";
 import { useToast } from "../components/ui/ToastProvider";
 import { listActivity } from "../lib/api/activity";
 import {
@@ -29,6 +30,7 @@ import { dismissNudge, listNudgeDismissals } from "../lib/api/nudges";
 import { listProjects } from "../lib/api/projects";
 import { listReportNotes, saveDailyReviewNote } from "../lib/api/reports";
 import { getSettings } from "../lib/api/settings";
+import { getWeekCapacity } from "../lib/api/calendar";
 import { weeklyTaskQueryRoots } from "../lib/api/queryKeys";
 import { createWeeklyTask, listWeeklyTasks, updateWeeklyTask } from "../lib/api/weeklyTasks";
 import { currentWeekRange, todayRange } from "../lib/dates";
@@ -36,11 +38,19 @@ import type { CreateManualLogInput } from "../types/manualLog";
 import type { StopFocusSessionInput } from "../types/focusSession";
 import type { WeeklyTask, WeeklyTaskPriority, WeeklyTaskStatus, WeeklyTaskType } from "../types/weeklyTask";
 
-type LocationState = { openReview?: boolean; openReportPrep?: boolean; powerCommand?: string } | null;
+type LocationState = {
+  openTask?: boolean;
+  openManualLog?: boolean;
+  openFocus?: boolean;
+  openReview?: boolean;
+  openReportPrep?: boolean;
+  powerCommand?: string;
+} | null;
 
 export function TodayPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
+  const speech = useSpeech();
   const navigate = useNavigate();
   const location = useLocation();
   const weekRange = currentWeekRange();
@@ -63,6 +73,14 @@ export function TodayPage() {
     queryKey: ["weeklyTasks", weekRange.from, weekRange.to, "today"],
     queryFn: () =>
       listWeeklyTasks({
+        weekStartDate: weekRange.from,
+        weekEndDate: weekRange.to,
+      }),
+  });
+  const capacityQuery = useQuery({
+    queryKey: ["weekCapacity", weekRange.from, weekRange.to, "today"],
+    queryFn: () =>
+      getWeekCapacity({
         weekStartDate: weekRange.from,
         weekEndDate: weekRange.to,
       }),
@@ -112,6 +130,26 @@ export function TodayPage() {
       navigate(location.pathname, { replace: true, state: null });
       return;
     }
+    if (state?.openTask) {
+      setTaskModalOpen(true);
+      navigate(location.pathname, { replace: true, state: null });
+      return;
+    }
+    if (state?.openManualLog) {
+      setLogModalOpen(true);
+      navigate(location.pathname, { replace: true, state: null });
+      return;
+    }
+    if (state?.openFocus) {
+      window.setTimeout(() => {
+        document.getElementById("focus-session-panel")?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      }, 100);
+      navigate(location.pathname, { replace: true, state: null });
+      return;
+    }
     if (state?.openReportPrep) {
       setReportPrepOpen(true);
       navigate(location.pathname, { replace: true, state: null });
@@ -130,6 +168,7 @@ export function TodayPage() {
       queryClient.invalidateQueries({ queryKey: ["reports"] }),
       queryClient.invalidateQueries({ queryKey: ["reportNotes"] }),
       queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] }),
+      queryClient.invalidateQueries({ queryKey: ["weekCapacity"] }),
       queryClient.invalidateQueries({ queryKey: ["focusSession"] }),
       queryClient.invalidateQueries({ queryKey: ["focusSessions"] }),
       queryClient.invalidateQueries({ queryKey: ["nudgeDismissals"] }),
@@ -174,6 +213,7 @@ export function TodayPage() {
       completedAt?: string;
       includedInReport?: boolean;
       progressPercent?: number;
+      estimatedMinutes?: number;
     }) =>
       createWeeklyTask({
         title: values.title,
@@ -187,11 +227,13 @@ export function TodayPage() {
         completedAt: values.completedAt || null,
         includedInReport: values.includedInReport ?? false,
         progressPercent: values.progressPercent,
+        estimatedMinutes: values.estimatedMinutes,
       }),
     onSuccess: async () => {
       await invalidateDailyViews();
       setTaskModalOpen(false);
       toast.success("Task added");
+      speech.announce("Task added.", { category: "task" });
     },
     onError: (error) => {
       toast.error("Task save failed", error instanceof Error ? error.message : "The task could not be saved.");
@@ -216,6 +258,7 @@ export function TodayPage() {
     onSuccess: async () => {
       await invalidateDailyViews();
       toast.success("Task updated");
+      speech.announce("Task updated.", { category: "task" });
     },
     onError: (error) => {
       toast.error("Task update failed", error instanceof Error ? error.message : "The task could not be updated.");
@@ -236,6 +279,7 @@ export function TodayPage() {
     onSuccess: async () => {
       await invalidateDailyViews();
       toast.success("Focus session started");
+      speech.announce("Focus session started.", { category: "focus", interrupt: true });
     },
     onError: (error) => {
       toast.error("Focus failed", error instanceof Error ? error.message : "Focus session could not start.");
@@ -248,6 +292,7 @@ export function TodayPage() {
       await invalidateDailyViews();
       setStopFocusOpen(false);
       toast.success("Focus session stopped");
+      speech.announce("Focus session stopped.", { category: "focus", interrupt: true });
     },
     onError: (error) => {
       toast.error("Stop focus failed", error instanceof Error ? error.message : "Focus session could not be stopped.");
@@ -258,6 +303,7 @@ export function TodayPage() {
     onSuccess: async () => {
       await invalidateDailyViews();
       toast.success("Focus session cancelled");
+      speech.announce("Focus session cancelled.", { category: "focus", interrupt: true });
     },
     onError: (error) => {
       toast.error("Cancel focus failed", error instanceof Error ? error.message : "Focus session could not be cancelled.");
@@ -422,11 +468,18 @@ export function TodayPage() {
         </div>
       </Panel>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <TodayStat icon={Target} label="Planned Today" value={planned.length.toString()} />
         <TodayStat icon={Activity} label="In Progress" value={inProgress.length.toString()} />
         <TodayStat icon={AlertTriangle} label="Blockers" value={blockers.length.toString()} />
         <TodayStat icon={FileText} label="Report Ready" value={reportReadyCount.toString()} />
+        <TodayStat
+          icon={Focus}
+          label="Capacity Today"
+          value={formatMinutes(
+            capacityQuery.data?.days.find((day) => day.date === today.date)?.remainingMinutes ?? 0,
+          )}
+        />
       </div>
 
       <TodayQuickAddBar
@@ -523,25 +576,27 @@ export function TodayPage() {
             onDismiss={(key) => dismissNudgeMutation.mutate(key)}
             isDismissing={dismissNudgeMutation.isPending}
           />
-          <FocusSessionPanel
-            activeSession={activeFocusQuery.data}
-            projects={projects}
-            onStart={(input) =>
-              startFocusMutation.mutate({
-                title: input.title,
-                projectId: input.projectId ?? null,
-                taskId: null,
-                notes: null,
-              })
-            }
-            onStop={() => setStopFocusOpen(true)}
-            onCancel={() => activeFocusQuery.data && cancelFocusMutation.mutate(activeFocusQuery.data.id)}
-            isPending={
-              startFocusMutation.isPending ||
-              stopFocusMutation.isPending ||
-              cancelFocusMutation.isPending
-            }
-          />
+          <div id="focus-session-panel">
+            <FocusSessionPanel
+              activeSession={activeFocusQuery.data}
+              projects={projects}
+              onStart={(input) =>
+                startFocusMutation.mutate({
+                  title: input.title,
+                  projectId: input.projectId ?? null,
+                  taskId: null,
+                  notes: null,
+                })
+              }
+              onStop={() => setStopFocusOpen(true)}
+              onCancel={() => activeFocusQuery.data && cancelFocusMutation.mutate(activeFocusQuery.data.id)}
+              isPending={
+                startFocusMutation.isPending ||
+                stopFocusMutation.isPending ||
+                cancelFocusMutation.isPending
+              }
+            />
+          </div>
           <Panel>
             <div className="mb-3 flex items-center justify-between gap-3">
               <h2 className="text-sm font-semibold text-white">Today's Activity</h2>
@@ -830,6 +885,16 @@ function minutesSince(timestamp: string) {
   const started = new Date(timestamp).getTime();
   if (Number.isNaN(started)) return 0;
   return Math.floor((Date.now() - started) / 60_000);
+}
+
+function formatMinutes(minutes: number) {
+  const sign = minutes < 0 ? "-" : "";
+  const absolute = Math.abs(minutes);
+  const hours = Math.floor(absolute / 60);
+  const remaining = absolute % 60;
+  if (!hours) return `${sign}${remaining}m`;
+  if (!remaining) return `${sign}${hours}h`;
+  return `${sign}${hours}h ${remaining}m`;
 }
 
 function ReadinessRow({ done, label }: { done: boolean; label: string }) {

@@ -144,6 +144,46 @@ fn validate_update(input: &UpdateSettingsInput) -> Result<(), SettingsServiceErr
         }
     }
 
+    if let Some(minutes) = input.daily_work_minutes {
+        if !(60..=960).contains(&minutes) {
+            return Err(SettingsServiceError::Validation(
+                "Daily work capacity must be between 1 and 16 hours".to_string(),
+            ));
+        }
+    }
+
+    if let Some(volume) = input.announcement_volume {
+        if !(0.0..=1.0).contains(&volume) {
+            return Err(SettingsServiceError::Validation(
+                "Announcement volume must be between 0 and 1".to_string(),
+            ));
+        }
+    }
+
+    if let Some(mode) = &input.voice_command_mode {
+        if mode != "push_to_talk" {
+            return Err(SettingsServiceError::Validation(
+                "Voice command mode must be push-to-talk".to_string(),
+            ));
+        }
+    }
+
+    if let Some(provider) = &input.voice_transcription_provider {
+        if !["local_whisper", "groq", "openrouter"].contains(&provider.as_str()) {
+            return Err(SettingsServiceError::Validation(
+                "Voice transcription provider is not supported".to_string(),
+            ));
+        }
+    }
+
+    if let Some(provider) = &input.report_ai_provider {
+        if !["local_llama_cpp", "openrouter_free", "groq"].contains(&provider.as_str()) {
+            return Err(SettingsServiceError::Validation(
+                "Report AI provider is not supported".to_string(),
+            ));
+        }
+    }
+
     Ok(())
 }
 
@@ -234,6 +274,9 @@ fn merge_settings(mut settings: Settings, input: &UpdateSettingsInput) -> Settin
     if let Some(value) = &input.working_days {
         settings.working_days = value.clone();
     }
+    if let Some(value) = input.daily_work_minutes {
+        settings.daily_work_minutes = value;
+    }
     if let Some(value) = &input.theme {
         settings.theme = value.clone();
     }
@@ -260,6 +303,81 @@ fn merge_settings(mut settings: Settings, input: &UpdateSettingsInput) -> Settin
     }
     if let Some(value) = &input.online_backup_provider {
         settings.online_backup_provider = value.clone();
+    }
+    if let Some(value) = input.github_connected {
+        settings.github_connected = value;
+    }
+    if let Some(value) = &input.github_username {
+        settings.github_username = value.clone();
+    }
+    if let Some(value) = &input.github_connected_at {
+        settings.github_connected_at = value.clone();
+    }
+    if let Some(value) = &input.github_last_validated_at {
+        settings.github_last_validated_at = value.clone();
+    }
+    if let Some(value) = input.announcements_enabled {
+        settings.announcements_enabled = value;
+    }
+    if let Some(value) = input.announcement_volume {
+        settings.announcement_volume = value;
+    }
+    if let Some(value) = &input.announcement_voice {
+        settings.announcement_voice = value.clone();
+    }
+    if let Some(value) = input.announce_focus_events {
+        settings.announce_focus_events = value;
+    }
+    if let Some(value) = input.announce_nudges {
+        settings.announce_nudges = value;
+    }
+    if let Some(value) = input.announce_sync_results {
+        settings.announce_sync_results = value;
+    }
+    if let Some(value) = input.announce_task_changes {
+        settings.announce_task_changes = value;
+    }
+    if let Some(value) = input.voice_commands_enabled {
+        settings.voice_commands_enabled = value;
+    }
+    if let Some(value) = &input.voice_command_mode {
+        settings.voice_command_mode = value.clone();
+    }
+    if let Some(value) = input.voice_command_confirm_before_action {
+        settings.voice_command_confirm_before_action = value;
+    }
+    if let Some(value) = &input.voice_transcription_provider {
+        settings.voice_transcription_provider = value.clone();
+    }
+    if let Some(value) = input.voice_online_allowed {
+        settings.voice_online_allowed = value;
+    }
+    if let Some(value) = input.voice_privacy_acknowledged {
+        settings.voice_privacy_acknowledged = value;
+    }
+    if let Some(value) = &input.voice_groq_model {
+        settings.voice_groq_model = value.clone();
+    }
+    if let Some(value) = &input.voice_openrouter_model {
+        settings.voice_openrouter_model = value.clone();
+    }
+    if let Some(value) = input.report_ai_enabled {
+        settings.report_ai_enabled = value;
+    }
+    if let Some(value) = &input.report_ai_provider {
+        settings.report_ai_provider = value.clone();
+    }
+    if let Some(value) = input.report_ai_online_allowed {
+        settings.report_ai_online_allowed = value;
+    }
+    if let Some(value) = input.report_ai_privacy_acknowledged {
+        settings.report_ai_privacy_acknowledged = value;
+    }
+    if let Some(value) = &input.report_ai_local_model_path {
+        settings.report_ai_local_model_path = value.clone();
+    }
+    if let Some(value) = &input.report_ai_groq_model {
+        settings.report_ai_groq_model = value.clone();
     }
 
     settings
@@ -344,6 +462,7 @@ mod tests {
                 git_author_email: Some("git@example.com".to_string()),
                 default_report_template: Some("project_based".to_string()),
                 working_days: Some(vec!["monday".to_string(), "friday".to_string()]),
+                daily_work_minutes: Some(420),
                 theme: Some("system".to_string()),
                 backup_enabled: Some(true),
                 backup_schedule: Some("weekly".to_string()),
@@ -353,6 +472,11 @@ mod tests {
                 backup_storage_location: Some(std::env::temp_dir().to_string_lossy().to_string()),
                 online_backup_status: Some("research".to_string()),
                 online_backup_provider: Some(String::new()),
+                github_connected: Some(true),
+                github_username: Some("octocat".to_string()),
+                github_connected_at: Some("2026-05-22T00:00:00Z".to_string()),
+                github_last_validated_at: Some("2026-05-22T00:00:00Z".to_string()),
+                ..Default::default()
             },
         )
         .await
@@ -362,6 +486,9 @@ mod tests {
         assert_eq!(updated.theme, "system");
         assert!(updated.backup_enabled);
         assert_eq!(updated.backup_schedule, "weekly");
+        assert_eq!(updated.daily_work_minutes, 420);
+        assert!(updated.github_connected);
+        assert_eq!(updated.github_username, "octocat");
 
         let reloaded = SettingsService::get(&repository)
             .await
@@ -388,6 +515,7 @@ mod tests {
                     git_author_email: None,
                     default_report_template: None,
                     working_days: None,
+                    daily_work_minutes: None,
                     theme: Some("blue".to_string()),
                     backup_enabled: None,
                     backup_schedule: None,
@@ -397,6 +525,11 @@ mod tests {
                     backup_storage_location: None,
                     online_backup_status: None,
                     online_backup_provider: None,
+                    github_connected: None,
+                    github_username: None,
+                    github_connected_at: None,
+                    github_last_validated_at: None,
+                    ..Default::default()
                 },
             )
             .await,
@@ -413,6 +546,7 @@ mod tests {
                     git_author_email: None,
                     default_report_template: None,
                     working_days: Some(vec!["someday".to_string()]),
+                    daily_work_minutes: None,
                     theme: None,
                     backup_enabled: None,
                     backup_schedule: None,
@@ -422,6 +556,11 @@ mod tests {
                     backup_storage_location: None,
                     online_backup_status: None,
                     online_backup_provider: None,
+                    github_connected: None,
+                    github_username: None,
+                    github_connected_at: None,
+                    github_last_validated_at: None,
+                    ..Default::default()
                 },
             )
             .await,
@@ -438,6 +577,7 @@ mod tests {
                     git_author_email: None,
                     default_report_template: None,
                     working_days: None,
+                    daily_work_minutes: None,
                     theme: None,
                     backup_enabled: None,
                     backup_schedule: Some("monthly".to_string()),
@@ -447,6 +587,11 @@ mod tests {
                     backup_storage_location: None,
                     online_backup_status: None,
                     online_backup_provider: None,
+                    github_connected: None,
+                    github_username: None,
+                    github_connected_at: None,
+                    github_last_validated_at: None,
+                    ..Default::default()
                 },
             )
             .await,
@@ -468,6 +613,7 @@ mod tests {
                     git_author_email: None,
                     default_report_template: None,
                     working_days: None,
+                    daily_work_minutes: None,
                     theme: None,
                     backup_enabled: Some(true),
                     backup_schedule: Some("daily".to_string()),
@@ -482,6 +628,11 @@ mod tests {
                     ),
                     online_backup_status: None,
                     online_backup_provider: None,
+                    github_connected: None,
+                    github_username: None,
+                    github_connected_at: None,
+                    github_last_validated_at: None,
+                    ..Default::default()
                 },
             )
             .await,

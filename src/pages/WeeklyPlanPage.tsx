@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertTriangle,
   Calendar,
   ListChecks,
   RotateCcw,
@@ -18,6 +19,7 @@ import { AddItemBar } from "../components/ui/AddItemBar";
 import { AddTaskModal } from "../components/ui/AddTaskModal";
 import { Select } from "../components/ui/Select";
 import { useToast } from "../components/ui/ToastProvider";
+import { getWeekCapacity } from "../lib/api/calendar";
 import { listProjects } from "../lib/api/projects";
 import {
   createWeeklyTask,
@@ -75,6 +77,7 @@ export function WeeklyPlanPage() {
       ),
       queryClient.invalidateQueries({ queryKey: ["reports"] }),
       queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] }),
+      queryClient.invalidateQueries({ queryKey: ["weekCapacity"] }),
     ]);
   }
 
@@ -99,6 +102,14 @@ export function WeeklyPlanPage() {
         taskType: typeFilter === "all" ? null : typeFilter,
         status: statusFilter === "all" ? null : statusFilter,
         projectIds: projectFilter === "all" ? null : [projectFilter],
+      }),
+  });
+  const capacityQuery = useQuery({
+    queryKey: ["weekCapacity", weekRange.from, weekRange.to],
+    queryFn: () =>
+      getWeekCapacity({
+        weekStartDate: weekRange.from,
+        weekEndDate: weekRange.to,
       }),
   });
 
@@ -147,6 +158,7 @@ export function WeeklyPlanPage() {
       completedAt?: string;
       includedInReport?: boolean;
       progressPercent?: number;
+      estimatedMinutes?: number;
     }) => {
       if (editingTask) {
         return updateWeeklyTask(editingTask.id, {
@@ -161,6 +173,7 @@ export function WeeklyPlanPage() {
           completedAt: values.completedAt || null,
           includedInReport: values.includedInReport,
           progressPercent: values.progressPercent,
+          estimatedMinutes: values.estimatedMinutes,
         });
       }
       return createWeeklyTask({
@@ -175,6 +188,7 @@ export function WeeklyPlanPage() {
         completedAt: values.completedAt || null,
         includedInReport: values.includedInReport ?? false,
         progressPercent: values.progressPercent,
+        estimatedMinutes: values.estimatedMinutes,
       });
     },
     onSuccess: async () => {
@@ -408,6 +422,11 @@ export function WeeklyPlanPage() {
         weekRange={weekRange}
       />
 
+      <WeekCapacityStrip
+        capacity={capacityQuery.data}
+        isLoading={capacityQuery.isLoading}
+      />
+
       <div className="grid gap-4 xl:grid-cols-[1fr_320px]">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <KanbanColumn
@@ -490,6 +509,23 @@ export function WeeklyPlanPage() {
             />
           </Panel>
 
+          <Panel className={capacityQuery.data && capacityQuery.data.remainingMinutes < 0 ? "border-red-300/20 bg-red-500/10" : ""}>
+            <div className="mb-3 flex items-center gap-2">
+              <AlertTriangle className={`h-3.5 w-3.5 ${capacityQuery.data && capacityQuery.data.remainingMinutes < 0 ? "text-red-300" : "text-cyan-200"}`} />
+              <h2 className="text-sm font-semibold text-white">Capacity</h2>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <CapacityMetric label="Gross" minutes={capacityQuery.data?.grossCapacityMinutes ?? 0} />
+              <CapacityMetric label="Meetings" minutes={capacityQuery.data?.meetingMinutes ?? 0} />
+              <CapacityMetric label="Planned" minutes={capacityQuery.data?.plannedTaskMinutes ?? 0} />
+              <CapacityMetric
+                label="Remaining"
+                minutes={capacityQuery.data?.remainingMinutes ?? 0}
+                emphasize={Boolean(capacityQuery.data && capacityQuery.data.remainingMinutes < 0)}
+              />
+            </div>
+          </Panel>
+
           <Panel>
             <div className="mb-3 flex items-center gap-2">
               <Sparkles className="h-3.5 w-3.5 text-amber-400" />
@@ -541,6 +577,7 @@ export function WeeklyPlanPage() {
             completedAt: values.completedAt,
             includedInReport: values.includedInReport,
             progressPercent: values.progressPercent,
+            estimatedMinutes: values.estimatedMinutes,
           });
         }}
         projects={projects}
@@ -573,6 +610,121 @@ function MiniStat({
       </div>
     </div>
   );
+}
+
+function WeekCapacityStrip({
+  capacity,
+  isLoading,
+}: {
+  capacity?: {
+    days: Array<{
+      date: string;
+      dayName: string;
+      isWorkingDay: boolean;
+      meetingMinutes: number;
+      plannedTaskMinutes: number;
+      availableMinutes: number;
+      remainingMinutes: number;
+    }>;
+  };
+  isLoading: boolean;
+}) {
+  return (
+    <Panel>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold text-white">Calendar Capacity</h2>
+        <span className="text-xs text-slate-500">
+          {isLoading ? "Loading..." : "Meetings vs planned task estimates"}
+        </span>
+      </div>
+      <div className="grid gap-2 md:grid-cols-5">
+        {(capacity?.days ?? []).map((day) => {
+          const overloaded = day.remainingMinutes < 0;
+          return (
+            <div
+              key={day.date}
+              className={`rounded-xl border p-3 ${
+                overloaded
+                  ? "border-red-300/20 bg-red-500/10"
+                  : day.isWorkingDay
+                    ? "border-white/10 bg-slate-950/45"
+                    : "border-white/5 bg-white/[0.02] opacity-70"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold uppercase text-slate-300">
+                  {day.dayName.slice(0, 3)}
+                </p>
+                <p className="text-[10px] text-slate-500">{day.date.slice(5)}</p>
+              </div>
+              <div className="mt-3 space-y-1.5 text-[11px] text-slate-400">
+                <CapacityLine label="Meetings" value={day.meetingMinutes} />
+                <CapacityLine label="Planned" value={day.plannedTaskMinutes} />
+                <CapacityLine
+                  label="Remaining"
+                  value={day.remainingMinutes}
+                  danger={overloaded}
+                />
+              </div>
+            </div>
+          );
+        })}
+        {!isLoading && !capacity?.days?.length ? (
+          <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] p-4 text-xs text-slate-400 md:col-span-5">
+            Capacity appears after the desktop data command is available.
+          </div>
+        ) : null}
+      </div>
+    </Panel>
+  );
+}
+
+function CapacityMetric({
+  label,
+  minutes,
+  emphasize,
+}: {
+  label: string;
+  minutes: number;
+  emphasize?: boolean;
+}) {
+  return (
+    <div className="rounded-lg border border-white/8 bg-slate-950/45 p-2">
+      <p className="text-[10px] uppercase text-slate-500">{label}</p>
+      <p className={`mt-1 text-sm font-semibold ${emphasize ? "text-red-200" : "text-white"}`}>
+        {formatMinutes(minutes)}
+      </p>
+    </div>
+  );
+}
+
+function CapacityLine({
+  label,
+  value,
+  danger,
+}: {
+  label: string;
+  value: number;
+  danger?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span>{label}</span>
+      <span className={danger ? "font-semibold text-red-200" : "text-slate-200"}>
+        {formatMinutes(value)}
+      </span>
+    </div>
+  );
+}
+
+function formatMinutes(minutes: number) {
+  const sign = minutes < 0 ? "-" : "";
+  const absolute = Math.abs(minutes);
+  const hours = Math.floor(absolute / 60);
+  const remaining = absolute % 60;
+  if (!hours) return `${sign}${remaining}m`;
+  if (!remaining) return `${sign}${hours}h`;
+  return `${sign}${hours}h ${remaining}m`;
 }
 
 function today() {

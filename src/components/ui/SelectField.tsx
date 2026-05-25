@@ -64,6 +64,7 @@ export function SelectField<TFieldValues extends FieldValues = FieldValues>({
   const [position, setPosition] = useState({ top: 0, left: 0, width: 0, direction: "down" as "up" | "down" });
   const [dropdownWidth, setDropdownWidth] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   const selectedOption = options.find((opt) => opt.value === field.value);
   const Icon = selectedOption?.icon;
@@ -71,7 +72,11 @@ export function SelectField<TFieldValues extends FieldValues = FieldValues>({
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+      const inTrigger = containerRef.current?.contains(target);
+      const inDropdown = dropdownRef.current?.contains(target);
+
+      if (!inTrigger && !inDropdown) {
         setIsOpen(false);
       }
     };
@@ -163,6 +168,7 @@ export function SelectField<TFieldValues extends FieldValues = FieldValues>({
 
   const dropdown = isOpen && !disabled && (
     <div
+      ref={dropdownRef}
       className={`fixed z-[9999] max-h-64 overflow-y-auto border border-white/10 bg-slate-950/90 shadow-2xl shadow-black/40 backdrop-blur-2xl ${classes.dropdown}`}
       style={{
         top: position.direction === "down" ? `${position.top}px` : undefined,

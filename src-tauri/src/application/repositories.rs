@@ -1,5 +1,8 @@
 use async_trait::async_trait;
 
+use crate::domain::calendar::{
+    CalendarEvent, CalendarSource, GetWeekCapacityInput, ListCalendarEventsInput, WeekCapacity,
+};
 use crate::domain::commit::Commit;
 use crate::domain::focus_session::{
     CreateFocusSessionInput, FocusSession, FocusSessionStatus, ListFocusSessionsInput,
@@ -85,6 +88,26 @@ pub trait ReportNoteStore: Send + Sync {
 pub trait SettingsStore: Send + Sync {
     async fn get(&self) -> Result<Settings, sqlx::Error>;
     async fn update(&self, input: UpdateSettingsInput) -> Result<Settings, sqlx::Error>;
+}
+
+#[async_trait]
+pub trait CalendarSourceStore: Send + Sync {
+    async fn list(&self) -> Result<Vec<CalendarSource>, sqlx::Error>;
+    async fn upsert_google_source(
+        &self,
+        account_email: &str,
+        account_name: Option<String>,
+        token_ref: Option<String>,
+    ) -> Result<CalendarSource, sqlx::Error>;
+    async fn disconnect(&self, source_id: &str) -> Result<bool, sqlx::Error>;
+}
+
+#[async_trait]
+pub trait CalendarEventStore: Send + Sync {
+    async fn list(&self, input: ListCalendarEventsInput)
+        -> Result<Vec<CalendarEvent>, sqlx::Error>;
+    async fn week_capacity(&self, input: GetWeekCapacityInput)
+        -> Result<WeekCapacity, sqlx::Error>;
 }
 
 #[async_trait]

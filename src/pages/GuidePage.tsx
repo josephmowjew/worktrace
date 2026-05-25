@@ -44,6 +44,11 @@ const weeklySteps = [
 
 const commands = [
   { command: "Ctrl+K", detail: "Open the command palette." },
+  { command: "Add task", detail: "Open today's full task form." },
+  { command: "Create manual log", detail: "Open today's quick manual log." },
+  { command: "Start focus session", detail: "Jump to the Today focus panel." },
+  { command: "What did I do today?", detail: "Open the guided daily review." },
+  { command: "Scan repos", detail: "Sync tracked repos, then review workspace discovery." },
   { command: "task: Fix export button", detail: "Create a planned task for this week." },
   { command: "log: Client sync 30m", detail: "Create a manual log for today." },
   { command: "focus: Report polish", detail: "Start a focus session." },

@@ -101,7 +101,7 @@ function createWarnings(input: PrPackageInput, selectedCommits: SelectedCommit[]
     warnings.push("This project has no local repository path configured.");
   }
   if (!input.project.githubUrl) {
-    warnings.push("This project has no GitHub URL configured, so the remote PR URL is unavailable.");
+    warnings.push("This project has no GitHub URL configured; GitHub PR creation will try the origin remote.");
   }
 
   return warnings;

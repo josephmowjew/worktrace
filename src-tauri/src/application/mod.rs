@@ -1,10 +1,13 @@
 pub mod activity;
+pub mod calendar;
 pub mod focus_sessions;
 pub mod git_sync;
+pub mod github;
 pub mod manual_logs;
 pub mod nudges;
 pub mod projects;
 pub mod reports;
+pub mod report_ai;
 pub mod repositories;
 pub mod settings;
 pub mod weekly_tasks;

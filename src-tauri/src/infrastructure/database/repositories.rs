@@ -1,15 +1,20 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use chrono::Utc;
+use chrono::{Datelike, NaiveDate, Utc};
 use sqlx::{Row, SqlitePool};
 
 use crate::application::repositories::{
-    CommitStore, FocusSessionStore, ManualLogStore, NudgeDismissalStore, ProjectStore,
-    ReportItemStore, ReportNoteStore, ReportStore, SettingsStore, WeeklyTaskStore, WorkspaceStore,
+    CalendarEventStore, CalendarSourceStore, CommitStore, FocusSessionStore, ManualLogStore,
+    NudgeDismissalStore, ProjectStore, ReportItemStore, ReportNoteStore, ReportStore,
+    SettingsStore, WeeklyTaskStore, WorkspaceStore,
 };
 use crate::domain::activity::{
     ActivityDay, ActivityItem, HeatmapCell, HeatmapData, HeatmapInput, KeyHighlight,
     ListActivityInput, TopProject, WeekSummary, WeekSummaryInput,
+};
+use crate::domain::calendar::{
+    CalendarEvent, CalendarSource, DayCapacity, GetWeekCapacityInput, ListCalendarEventsInput,
+    WeekCapacity,
 };
 use crate::domain::commit::Commit;
 use crate::domain::focus_session::{
@@ -1808,6 +1813,14 @@ pub struct WeeklyTaskRepository<'a> {
     pool: &'a SqlitePool,
 }
 
+pub struct CalendarSourceRepository<'a> {
+    pool: &'a SqlitePool,
+}
+
+pub struct CalendarEventRepository<'a> {
+    pool: &'a SqlitePool,
+}
+
 impl<'a> WeeklyTaskRepository<'a> {
     pub fn new(pool: &'a SqlitePool) -> Self {
         Self { pool }
@@ -1829,6 +1842,7 @@ impl<'a> WeeklyTaskRepository<'a> {
                    weekly_tasks.priority,
                    weekly_tasks.included_in_report,
                    weekly_tasks.progress_percent,
+                   weekly_tasks.estimated_minutes,
                    weekly_tasks.created_at,
                    weekly_tasks.updated_at
             FROM weekly_tasks
@@ -1914,6 +1928,7 @@ impl<'a> WeeklyTaskRepository<'a> {
             .included_in_report
             .unwrap_or_else(|| default_weekly_task_inclusion(&task_type));
         let progress_percent = input.progress_percent;
+        let estimated_minutes = input.estimated_minutes.filter(|minutes| *minutes > 0);
         let task = WeeklyTask {
             id: generate_id("weekly_task"),
             project_id: normalize_optional(input.project_id),
@@ -1928,6 +1943,7 @@ impl<'a> WeeklyTaskRepository<'a> {
             priority: input.priority.unwrap_or(WeeklyTaskPriority::Normal),
             included_in_report,
             progress_percent,
+            estimated_minutes,
             created_at: now.clone(),
             updated_at: now.clone(),
         };
@@ -1936,9 +1952,9 @@ impl<'a> WeeklyTaskRepository<'a> {
             r#"
             INSERT INTO weekly_tasks (
               id, project_id, task_type, status, title, details, week_start_date,
-              target_date, completed_at, priority, included_in_report, progress_percent, created_at, updated_at
+              target_date, completed_at, priority, included_in_report, progress_percent, estimated_minutes, created_at, updated_at
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
             "#,
         )
         .bind(&task.id)
@@ -1953,6 +1969,7 @@ impl<'a> WeeklyTaskRepository<'a> {
         .bind(task.priority.as_storage_value())
         .bind(bool_to_i64(task.included_in_report))
         .bind(task.progress_percent)
+        .bind(task.estimated_minutes)
         .bind(&task.created_at)
         .bind(&task.updated_at)
         .execute(self.pool)
@@ -2003,6 +2020,9 @@ impl<'a> WeeklyTaskRepository<'a> {
         if input.progress_percent.is_some() {
             task.progress_percent = input.progress_percent;
         }
+        if input.estimated_minutes.is_some() {
+            task.estimated_minutes = input.estimated_minutes.filter(|minutes| *minutes > 0);
+        }
         task.updated_at = current_timestamp();
 
         sqlx::query(
@@ -2019,7 +2039,8 @@ impl<'a> WeeklyTaskRepository<'a> {
                 priority = ?10,
                 included_in_report = ?11,
                 progress_percent = ?12,
-                updated_at = ?13
+                estimated_minutes = ?13,
+                updated_at = ?14
             WHERE id = ?1
             "#,
         )
@@ -2035,6 +2056,7 @@ impl<'a> WeeklyTaskRepository<'a> {
         .bind(task.priority.as_storage_value())
         .bind(bool_to_i64(task.included_in_report))
         .bind(task.progress_percent)
+        .bind(task.estimated_minutes)
         .bind(&task.updated_at)
         .execute(self.pool)
         .await?;
@@ -2067,6 +2089,7 @@ impl<'a> WeeklyTaskRepository<'a> {
                    weekly_tasks.priority,
                    weekly_tasks.included_in_report,
                    weekly_tasks.progress_percent,
+                   weekly_tasks.estimated_minutes,
                    weekly_tasks.created_at,
                    weekly_tasks.updated_at
             FROM weekly_tasks
@@ -2102,6 +2125,288 @@ impl WeeklyTaskStore for WeeklyTaskRepository<'_> {
 
     async fn delete(&self, id: &str) -> Result<bool, sqlx::Error> {
         WeeklyTaskRepository::delete(self, id).await
+    }
+}
+
+impl<'a> CalendarSourceRepository<'a> {
+    pub fn new(pool: &'a SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn list(&self) -> Result<Vec<CalendarSource>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, provider, account_email, account_name, sync_status, last_synced_at,
+                   token_ref, created_at, updated_at
+            FROM calendar_sources
+            ORDER BY updated_at DESC
+            "#,
+        )
+        .fetch_all(self.pool)
+        .await?;
+
+        Ok(rows.into_iter().map(calendar_source_from_row).collect())
+    }
+
+    pub async fn upsert_google_source(
+        &self,
+        account_email: &str,
+        account_name: Option<String>,
+        token_ref: Option<String>,
+    ) -> Result<CalendarSource, sqlx::Error> {
+        let now = current_timestamp();
+        let existing = sqlx::query(
+            r#"
+            SELECT id, provider, account_email, account_name, sync_status, last_synced_at,
+                   token_ref, created_at, updated_at
+            FROM calendar_sources
+            WHERE provider = 'google' AND account_email = ?1
+            "#,
+        )
+        .bind(account_email.trim())
+        .fetch_optional(self.pool)
+        .await?;
+
+        if let Some(row) = existing {
+            let mut source = calendar_source_from_row(row);
+            source.account_name = account_name;
+            source.token_ref = token_ref;
+            source.sync_status = "connected".to_string();
+            source.updated_at = now;
+
+            sqlx::query(
+                r#"
+                UPDATE calendar_sources
+                SET account_name = ?2,
+                    sync_status = ?3,
+                    token_ref = ?4,
+                    updated_at = ?5
+                WHERE id = ?1
+                "#,
+            )
+            .bind(&source.id)
+            .bind(&source.account_name)
+            .bind(&source.sync_status)
+            .bind(&source.token_ref)
+            .bind(&source.updated_at)
+            .execute(self.pool)
+            .await?;
+
+            return Ok(source);
+        }
+
+        let source = CalendarSource {
+            id: generate_id("calendar_source"),
+            provider: "google".to_string(),
+            account_email: account_email.trim().to_string(),
+            account_name,
+            sync_status: "connected".to_string(),
+            last_synced_at: None,
+            token_ref,
+            created_at: now.clone(),
+            updated_at: now,
+        };
+
+        sqlx::query(
+            r#"
+            INSERT INTO calendar_sources (
+              id, provider, account_email, account_name, sync_status, last_synced_at,
+              token_ref, created_at, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            "#,
+        )
+        .bind(&source.id)
+        .bind(&source.provider)
+        .bind(&source.account_email)
+        .bind(&source.account_name)
+        .bind(&source.sync_status)
+        .bind(&source.last_synced_at)
+        .bind(&source.token_ref)
+        .bind(&source.created_at)
+        .bind(&source.updated_at)
+        .execute(self.pool)
+        .await?;
+
+        Ok(source)
+    }
+
+    pub async fn disconnect(&self, source_id: &str) -> Result<bool, sqlx::Error> {
+        let now = current_timestamp();
+        let result = sqlx::query(
+            r#"
+            UPDATE calendar_sources
+            SET sync_status = 'disconnected',
+                token_ref = NULL,
+                updated_at = ?2
+            WHERE id = ?1
+            "#,
+        )
+        .bind(source_id)
+        .bind(now)
+        .execute(self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+}
+
+#[async_trait::async_trait]
+impl CalendarSourceStore for CalendarSourceRepository<'_> {
+    async fn list(&self) -> Result<Vec<CalendarSource>, sqlx::Error> {
+        CalendarSourceRepository::list(self).await
+    }
+
+    async fn upsert_google_source(
+        &self,
+        account_email: &str,
+        account_name: Option<String>,
+        token_ref: Option<String>,
+    ) -> Result<CalendarSource, sqlx::Error> {
+        CalendarSourceRepository::upsert_google_source(self, account_email, account_name, token_ref)
+            .await
+    }
+
+    async fn disconnect(&self, source_id: &str) -> Result<bool, sqlx::Error> {
+        CalendarSourceRepository::disconnect(self, source_id).await
+    }
+}
+
+impl<'a> CalendarEventRepository<'a> {
+    pub fn new(pool: &'a SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn list(
+        &self,
+        input: ListCalendarEventsInput,
+    ) -> Result<Vec<CalendarEvent>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, source_id, external_id, title, description, location, starts_at, ends_at,
+                   timezone, all_day, busy_status, is_cancelled, project_id, task_id,
+                   created_at, updated_at, imported_at
+            FROM calendar_events
+            WHERE starts_at <= ?2
+              AND ends_at >= ?1
+              AND (?3 IS NULL OR source_id = ?3)
+            ORDER BY starts_at ASC
+            "#,
+        )
+        .bind(&input.from)
+        .bind(&input.to)
+        .bind(&input.source_id)
+        .fetch_all(self.pool)
+        .await?;
+
+        Ok(rows.into_iter().map(calendar_event_from_row).collect())
+    }
+
+    pub async fn week_capacity(
+        &self,
+        input: GetWeekCapacityInput,
+    ) -> Result<WeekCapacity, sqlx::Error> {
+        let settings = SettingsRepository::new(self.pool).get().await?;
+        let tasks = WeeklyTaskRepository::new(self.pool)
+            .list(ListWeeklyTasksInput {
+                week_start_date: input.week_start_date.clone(),
+                week_end_date: input.week_end_date.clone(),
+                project_ids: None,
+                task_type: None,
+                status: None,
+                included_in_report: None,
+            })
+            .await?;
+        let events = self
+            .list(ListCalendarEventsInput {
+                from: input.week_start_date.clone(),
+                to: input.week_end_date.clone(),
+                source_id: None,
+            })
+            .await?;
+        let manual_meetings =
+            manual_meeting_minutes_by_date(self.pool, &input.week_start_date, &input.week_end_date)
+                .await?;
+        let actual_work =
+            actual_work_minutes(self.pool, &input.week_start_date, &input.week_end_date).await?;
+        let dates = dates_between(&input.week_start_date, &input.week_end_date);
+        let mut days = Vec::new();
+
+        for date in dates {
+            let day_name = day_name_for_date(&date);
+            let is_working_day = settings.working_days.iter().any(|day| day == &day_name);
+            let gross = if is_working_day {
+                settings.daily_work_minutes
+            } else {
+                0
+            };
+            let meeting_minutes = meeting_minutes_for_date(&events, &date)
+                + manual_meetings
+                    .iter()
+                    .find(|(meeting_date, _)| meeting_date == &date)
+                    .map(|(_, minutes)| *minutes)
+                    .unwrap_or(0);
+            let planned_task_minutes = tasks
+                .iter()
+                .filter(|task| {
+                    task.status != WeeklyTaskStatus::Completed
+                        && task.status != WeeklyTaskStatus::Dropped
+                })
+                .filter(|task| {
+                    task.target_date.as_deref().unwrap_or(&task.week_start_date) == date.as_str()
+                })
+                .map(|task| task.estimated_minutes.unwrap_or(0).max(0))
+                .sum::<i32>();
+            let available = (gross - meeting_minutes).max(0);
+
+            days.push(DayCapacity {
+                date,
+                day_name,
+                is_working_day,
+                gross_capacity_minutes: gross,
+                meeting_minutes,
+                planned_task_minutes,
+                available_minutes: available,
+                remaining_minutes: available - planned_task_minutes,
+            });
+        }
+
+        let gross_capacity_minutes = days
+            .iter()
+            .map(|day| day.gross_capacity_minutes)
+            .sum::<i32>();
+        let meeting_minutes = days.iter().map(|day| day.meeting_minutes).sum::<i32>();
+        let planned_task_minutes = days.iter().map(|day| day.planned_task_minutes).sum::<i32>();
+        let available_minutes = (gross_capacity_minutes - meeting_minutes).max(0);
+
+        Ok(WeekCapacity {
+            week_start_date: input.week_start_date,
+            week_end_date: input.week_end_date,
+            gross_capacity_minutes,
+            meeting_minutes,
+            planned_task_minutes,
+            available_minutes,
+            remaining_minutes: available_minutes - planned_task_minutes,
+            actual_work_minutes: actual_work,
+            days,
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl CalendarEventStore for CalendarEventRepository<'_> {
+    async fn list(
+        &self,
+        input: ListCalendarEventsInput,
+    ) -> Result<Vec<CalendarEvent>, sqlx::Error> {
+        CalendarEventRepository::list(self, input).await
+    }
+
+    async fn week_capacity(
+        &self,
+        input: GetWeekCapacityInput,
+    ) -> Result<WeekCapacity, sqlx::Error> {
+        CalendarEventRepository::week_capacity(self, input).await
     }
 }
 
@@ -2498,6 +2803,9 @@ impl<'a> SettingsRepository<'a> {
         if let Some(value) = input.working_days {
             settings.working_days = value;
         }
+        if let Some(value) = input.daily_work_minutes {
+            settings.daily_work_minutes = value;
+        }
         if let Some(value) = input.theme {
             settings.theme = value;
         }
@@ -2525,6 +2833,81 @@ impl<'a> SettingsRepository<'a> {
         if let Some(value) = input.online_backup_provider {
             settings.online_backup_provider = value;
         }
+        if let Some(value) = input.github_connected {
+            settings.github_connected = value;
+        }
+        if let Some(value) = input.github_username {
+            settings.github_username = value;
+        }
+        if let Some(value) = input.github_connected_at {
+            settings.github_connected_at = value;
+        }
+        if let Some(value) = input.github_last_validated_at {
+            settings.github_last_validated_at = value;
+        }
+        if let Some(value) = input.announcements_enabled {
+            settings.announcements_enabled = value;
+        }
+        if let Some(value) = input.announcement_volume {
+            settings.announcement_volume = value;
+        }
+        if let Some(value) = input.announcement_voice {
+            settings.announcement_voice = value;
+        }
+        if let Some(value) = input.announce_focus_events {
+            settings.announce_focus_events = value;
+        }
+        if let Some(value) = input.announce_nudges {
+            settings.announce_nudges = value;
+        }
+        if let Some(value) = input.announce_sync_results {
+            settings.announce_sync_results = value;
+        }
+        if let Some(value) = input.announce_task_changes {
+            settings.announce_task_changes = value;
+        }
+        if let Some(value) = input.voice_commands_enabled {
+            settings.voice_commands_enabled = value;
+        }
+        if let Some(value) = input.voice_command_mode {
+            settings.voice_command_mode = value;
+        }
+        if let Some(value) = input.voice_command_confirm_before_action {
+            settings.voice_command_confirm_before_action = value;
+        }
+        if let Some(value) = input.voice_transcription_provider {
+            settings.voice_transcription_provider = value;
+        }
+        if let Some(value) = input.voice_online_allowed {
+            settings.voice_online_allowed = value;
+        }
+        if let Some(value) = input.voice_privacy_acknowledged {
+            settings.voice_privacy_acknowledged = value;
+        }
+        if let Some(value) = input.voice_groq_model {
+            settings.voice_groq_model = value;
+        }
+        if let Some(value) = input.voice_openrouter_model {
+            settings.voice_openrouter_model = value;
+        }
+        if let Some(value) = input.report_ai_enabled {
+            settings.report_ai_enabled = value;
+        }
+        if let Some(value) = input.report_ai_provider {
+            settings.report_ai_provider = value;
+        }
+        if let Some(value) = input.report_ai_online_allowed {
+            settings.report_ai_online_allowed = value;
+        }
+        if let Some(value) = input.report_ai_privacy_acknowledged {
+            settings.report_ai_privacy_acknowledged = value;
+        }
+        if let Some(value) = input.report_ai_local_model_path {
+            settings.report_ai_local_model_path = value;
+        }
+        if let Some(value) = input.report_ai_groq_model {
+            settings.report_ai_groq_model = value;
+        }
 
         self.upsert("profile.name", &settings.name).await?;
         self.upsert("profile.email", &settings.email).await?;
@@ -2543,6 +2926,11 @@ impl<'a> SettingsRepository<'a> {
         self.upsert(
             "working_days",
             &serde_json::to_string(&settings.working_days).unwrap_or_else(|_| "[]".to_string()),
+        )
+        .await?;
+        self.upsert(
+            "capacity.daily_work_minutes",
+            &settings.daily_work_minutes.to_string(),
         )
         .await?;
         self.upsert("appearance.theme", &settings.theme).await?;
@@ -2566,6 +2954,162 @@ impl<'a> SettingsRepository<'a> {
         self.upsert("backup.online_status", &settings.online_backup_status)
             .await?;
         self.upsert("backup.online_provider", &settings.online_backup_provider)
+            .await?;
+        self.upsert(
+            "github.connected",
+            if settings.github_connected {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
+        self.upsert("github.username", &settings.github_username)
+            .await?;
+        self.upsert("github.connected_at", &settings.github_connected_at)
+            .await?;
+        self.upsert(
+            "github.last_validated_at",
+            &settings.github_last_validated_at,
+        )
+        .await?;
+        self.upsert(
+            "voice.announcements_enabled",
+            if settings.announcements_enabled {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
+        self.upsert(
+            "voice.announcement_volume",
+            &settings.announcement_volume.to_string(),
+        )
+        .await?;
+        self.upsert("voice.announcement_voice", &settings.announcement_voice)
+            .await?;
+        self.upsert(
+            "voice.announce_focus_events",
+            if settings.announce_focus_events {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
+        self.upsert(
+            "voice.announce_nudges",
+            if settings.announce_nudges {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
+        self.upsert(
+            "voice.announce_sync_results",
+            if settings.announce_sync_results {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
+        self.upsert(
+            "voice.announce_task_changes",
+            if settings.announce_task_changes {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
+        self.upsert(
+            "voice.commands_enabled",
+            if settings.voice_commands_enabled {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
+        self.upsert("voice.command_mode", &settings.voice_command_mode)
+            .await?;
+        self.upsert(
+            "voice.command_confirm_before_action",
+            if settings.voice_command_confirm_before_action {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
+        self.upsert(
+            "voice.transcription_provider",
+            &settings.voice_transcription_provider,
+        )
+        .await?;
+        self.upsert(
+            "voice.online_allowed",
+            if settings.voice_online_allowed {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
+        self.upsert(
+            "voice.privacy_acknowledged",
+            if settings.voice_privacy_acknowledged {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
+        self.upsert("voice.groq_model", &settings.voice_groq_model)
+            .await?;
+        self.upsert(
+            "voice.openrouter_model",
+            &settings.voice_openrouter_model,
+        )
+        .await?;
+        self.upsert(
+            "report_ai.enabled",
+            if settings.report_ai_enabled {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
+        self.upsert("report_ai.provider", &settings.report_ai_provider)
+            .await?;
+        self.upsert(
+            "report_ai.online_allowed",
+            if settings.report_ai_online_allowed {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
+        self.upsert(
+            "report_ai.privacy_acknowledged",
+            if settings.report_ai_privacy_acknowledged {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
+        self.upsert(
+            "report_ai.local_model_path",
+            &settings.report_ai_local_model_path,
+        )
+        .await?;
+        self.upsert("report_ai.groq_model", &settings.report_ai_groq_model)
             .await?;
 
         Ok(settings)
@@ -2671,6 +3215,42 @@ fn report_note_from_row(row: sqlx::sqlite::SqliteRow) -> ReportNote {
     }
 }
 
+fn calendar_source_from_row(row: sqlx::sqlite::SqliteRow) -> CalendarSource {
+    CalendarSource {
+        id: row.get("id"),
+        provider: row.get("provider"),
+        account_email: row.get("account_email"),
+        account_name: row.get("account_name"),
+        sync_status: row.get("sync_status"),
+        last_synced_at: row.get("last_synced_at"),
+        token_ref: row.get("token_ref"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    }
+}
+
+fn calendar_event_from_row(row: sqlx::sqlite::SqliteRow) -> CalendarEvent {
+    CalendarEvent {
+        id: row.get("id"),
+        source_id: row.get("source_id"),
+        external_id: row.get("external_id"),
+        title: row.get("title"),
+        description: row.get("description"),
+        location: row.get("location"),
+        starts_at: row.get("starts_at"),
+        ends_at: row.get("ends_at"),
+        timezone: row.get("timezone"),
+        all_day: i64_to_bool(row.get("all_day")),
+        busy_status: row.get("busy_status"),
+        is_cancelled: i64_to_bool(row.get("is_cancelled")),
+        project_id: row.get("project_id"),
+        task_id: row.get("task_id"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+        imported_at: row.get("imported_at"),
+    }
+}
+
 fn weekly_task_from_row(row: sqlx::sqlite::SqliteRow) -> WeeklyTask {
     let task_type: String = row.get("task_type");
     let status: String = row.get("status");
@@ -2690,6 +3270,7 @@ fn weekly_task_from_row(row: sqlx::sqlite::SqliteRow) -> WeeklyTask {
         priority: WeeklyTaskPriority::try_from(priority).unwrap_or(WeeklyTaskPriority::Normal),
         included_in_report: i64_to_bool(row.get("included_in_report")),
         progress_percent: row.get("progress_percent"),
+        estimated_minutes: row.get("estimated_minutes"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     }
@@ -2769,6 +3350,11 @@ fn apply_setting(settings: &mut Settings, key: &str, value: String) {
             settings.working_days =
                 serde_json::from_str(&value).unwrap_or_else(|_| Settings::default().working_days);
         }
+        "capacity.daily_work_minutes" => {
+            settings.daily_work_minutes = value
+                .parse()
+                .unwrap_or(Settings::default().daily_work_minutes);
+        }
         "appearance.theme" => settings.theme = value,
         "backup.enabled" => settings.backup_enabled = value == "true",
         "backup.schedule" => settings.backup_schedule = value,
@@ -2778,8 +3364,165 @@ fn apply_setting(settings: &mut Settings, key: &str, value: String) {
         "backup.storage_location" => settings.backup_storage_location = value,
         "backup.online_status" => settings.online_backup_status = value,
         "backup.online_provider" => settings.online_backup_provider = value,
+        "github.connected" => settings.github_connected = value == "true",
+        "github.username" => settings.github_username = value,
+        "github.connected_at" => settings.github_connected_at = value,
+        "github.last_validated_at" => settings.github_last_validated_at = value,
+        "voice.announcements_enabled" => settings.announcements_enabled = value == "true",
+        "voice.announcement_volume" => {
+            settings.announcement_volume = value
+                .parse()
+                .unwrap_or(Settings::default().announcement_volume);
+        }
+        "voice.announcement_voice" => settings.announcement_voice = value,
+        "voice.announce_focus_events" => settings.announce_focus_events = value == "true",
+        "voice.announce_nudges" => settings.announce_nudges = value == "true",
+        "voice.announce_sync_results" => settings.announce_sync_results = value == "true",
+        "voice.announce_task_changes" => settings.announce_task_changes = value == "true",
+        "voice.commands_enabled" => settings.voice_commands_enabled = value == "true",
+        "voice.command_mode" => settings.voice_command_mode = value,
+        "voice.command_confirm_before_action" => {
+            settings.voice_command_confirm_before_action = value == "true";
+        }
+        "voice.transcription_provider" => settings.voice_transcription_provider = value,
+        "voice.online_allowed" => settings.voice_online_allowed = value == "true",
+        "voice.privacy_acknowledged" => settings.voice_privacy_acknowledged = value == "true",
+        "voice.groq_model" => settings.voice_groq_model = value,
+        "voice.openrouter_model" => settings.voice_openrouter_model = value,
+        "report_ai.enabled" => settings.report_ai_enabled = value == "true",
+        "report_ai.provider" => settings.report_ai_provider = value,
+        "report_ai.online_allowed" => settings.report_ai_online_allowed = value == "true",
+        "report_ai.privacy_acknowledged" => {
+            settings.report_ai_privacy_acknowledged = value == "true";
+        }
+        "report_ai.local_model_path" => settings.report_ai_local_model_path = value,
+        "report_ai.groq_model" => settings.report_ai_groq_model = value,
         _ => {}
     }
+}
+
+fn dates_between(from: &str, to: &str) -> Vec<String> {
+    let Ok(mut current) = NaiveDate::parse_from_str(from, "%Y-%m-%d") else {
+        return Vec::new();
+    };
+    let Ok(end) = NaiveDate::parse_from_str(to, "%Y-%m-%d") else {
+        return Vec::new();
+    };
+    let mut dates = Vec::new();
+    while current <= end {
+        dates.push(current.format("%Y-%m-%d").to_string());
+        current = current.succ_opt().unwrap_or(current);
+        if dates.len() > 14 {
+            break;
+        }
+    }
+    dates
+}
+
+fn day_name_for_date(date: &str) -> String {
+    NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        .map(|date| match date.weekday().num_days_from_monday() {
+            0 => "monday",
+            1 => "tuesday",
+            2 => "wednesday",
+            3 => "thursday",
+            4 => "friday",
+            5 => "saturday",
+            _ => "sunday",
+        })
+        .unwrap_or("monday")
+        .to_string()
+}
+
+fn meeting_minutes_for_date(events: &[CalendarEvent], date: &str) -> i32 {
+    events
+        .iter()
+        .filter(|event| {
+            !event.is_cancelled
+                && event.busy_status == "busy"
+                && event.starts_at.get(0..10).unwrap_or("") == date
+        })
+        .map(|event| calendar_minutes_between(&event.starts_at, &event.ends_at))
+        .sum()
+}
+
+fn calendar_minutes_between(starts_at: &str, ends_at: &str) -> i32 {
+    let Ok(start) = chrono::DateTime::parse_from_rfc3339(starts_at) else {
+        return 0;
+    };
+    let Ok(end) = chrono::DateTime::parse_from_rfc3339(ends_at) else {
+        return 0;
+    };
+    ((end - start).num_minutes().max(0) as i32).min(24 * 60)
+}
+
+async fn manual_meeting_minutes_by_date(
+    pool: &SqlitePool,
+    from: &str,
+    to: &str,
+) -> Result<Vec<(String, i32)>, sqlx::Error> {
+    let rows = sqlx::query(
+        r#"
+        SELECT date, COALESCE(SUM(duration_minutes), 0) AS minutes
+        FROM manual_logs
+        LEFT JOIN projects ON projects.id = manual_logs.project_id
+        WHERE date >= ?1
+          AND date <= ?2
+          AND activity_type = 'Meeting'
+          AND (manual_logs.project_id IS NULL OR projects.status = 'active')
+        GROUP BY date
+        "#,
+    )
+    .bind(from)
+    .bind(to)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let date: String = row.get("date");
+            let minutes: i64 = row.get("minutes");
+            (date, minutes as i32)
+        })
+        .collect())
+}
+
+async fn actual_work_minutes(pool: &SqlitePool, from: &str, to: &str) -> Result<i32, sqlx::Error> {
+    let focus_row = sqlx::query(
+        r#"
+        SELECT COALESCE(SUM(duration_minutes), 0) AS minutes
+        FROM focus_sessions
+        WHERE status = 'completed'
+          AND substr(started_at, 1, 10) >= ?1
+          AND substr(started_at, 1, 10) <= ?2
+        "#,
+    )
+    .bind(from)
+    .bind(to)
+    .fetch_one(pool)
+    .await?;
+    let manual_row = sqlx::query(
+        r#"
+        SELECT COALESCE(SUM(manual_logs.duration_minutes), 0) AS minutes
+        FROM manual_logs
+        LEFT JOIN focus_sessions ON focus_sessions.manual_log_id = manual_logs.id
+        LEFT JOIN projects ON projects.id = manual_logs.project_id
+        WHERE manual_logs.date >= ?1
+          AND manual_logs.date <= ?2
+          AND manual_logs.activity_type != 'Meeting'
+          AND focus_sessions.id IS NULL
+          AND (manual_logs.project_id IS NULL OR projects.status = 'active')
+        "#,
+    )
+    .bind(from)
+    .bind(to)
+    .fetch_one(pool)
+    .await?;
+    let focus_minutes: i64 = focus_row.get("minutes");
+    let manual_minutes: i64 = manual_row.get("minutes");
+
+    Ok((focus_minutes + manual_minutes) as i32)
 }
 
 fn project_from_row(row: sqlx::sqlite::SqliteRow) -> Project {
@@ -3530,6 +4273,7 @@ mod tests {
                 priority: Some(WeeklyTaskPriority::Normal),
                 included_in_report: Some(false),
                 progress_percent: None,
+                estimated_minutes: None,
             })
             .await
             .expect("create old task");
@@ -3546,6 +4290,7 @@ mod tests {
                 priority: Some(WeeklyTaskPriority::High),
                 included_in_report: None,
                 progress_percent: None,
+                estimated_minutes: None,
             })
             .await
             .expect("create blocker");
@@ -3562,6 +4307,7 @@ mod tests {
                 priority: Some(WeeklyTaskPriority::Low),
                 included_in_report: Some(true),
                 progress_percent: None,
+                estimated_minutes: None,
             })
             .await
             .expect("create old completed task");
@@ -3598,6 +4344,7 @@ mod tests {
                     priority: None,
                     included_in_report: Some(true),
                     progress_percent: None,
+                    estimated_minutes: None,
                 },
             )
             .await
@@ -3631,6 +4378,7 @@ mod tests {
                 priority: Some(WeeklyTaskPriority::Normal),
                 included_in_report: Some(true),
                 progress_percent: None,
+                estimated_minutes: None,
             })
             .await
             .expect("create archived project task");
@@ -3648,6 +4396,7 @@ mod tests {
                 priority: Some(WeeklyTaskPriority::Normal),
                 included_in_report: Some(true),
                 progress_percent: None,
+                estimated_minutes: None,
             })
             .await
             .expect("create general task");
@@ -3714,6 +4463,7 @@ mod tests {
                     manual_log_summary: None,
                     complete_task: None,
                     progress_percent: None,
+                    estimated_minutes: None,
                 },
             )
             .await
@@ -3851,6 +4601,7 @@ mod tests {
                 git_author_email: Some("git@example.com".to_string()),
                 default_report_template: Some("project_based".to_string()),
                 working_days: Some(vec!["monday".to_string(), "tuesday".to_string()]),
+                daily_work_minutes: Some(450),
                 theme: Some("system".to_string()),
                 backup_enabled: Some(true),
                 backup_schedule: Some("weekly".to_string()),
@@ -3860,12 +4611,19 @@ mod tests {
                 backup_storage_location: Some("C:\\Backups".to_string()),
                 online_backup_status: Some("research".to_string()),
                 online_backup_provider: Some(String::new()),
+                github_connected: Some(true),
+                github_username: Some("octocat".to_string()),
+                github_connected_at: Some("2026-05-22T00:00:00Z".to_string()),
+                github_last_validated_at: Some("2026-05-22T00:00:00Z".to_string()),
+                ..Default::default()
             })
             .await
             .expect("update settings");
 
         assert_eq!(updated.name, "Joseph");
         assert!(updated.backup_enabled);
+        assert!(updated.github_connected);
+        assert_eq!(updated.github_username, "octocat");
         assert_eq!(updated.backup_time, "17:30");
         assert_eq!(
             repository.get().await.expect("get settings").theme,

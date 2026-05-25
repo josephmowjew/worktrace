@@ -22,6 +22,7 @@ import {
 import { useMemo, useState, useEffect, useRef } from "react";
 import type { InputHTMLAttributes } from "react";
 import { useForm } from "react-hook-form";
+import { useLocation, useNavigate } from "react-router-dom";
 import { z } from "zod";
 import { Button } from "../components/ui/Button";
 import { Panel } from "../components/ui/Panel";
@@ -75,6 +76,7 @@ const projectSchema = z.object({
 });
 
 type ProjectFormValues = z.infer<typeof projectSchema>;
+type ProjectsLocationState = { openWorkspaceScan?: boolean } | null;
 
 const emptyValues: ProjectFormValues = {
   name: "",
@@ -89,6 +91,8 @@ const ITEMS_PER_PAGE = 6;
 export function ProjectsPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState<"workspaces" | "projects">("workspaces");
   const [statusFilter, setStatusFilter] = useState<"active" | "archived" | "all">("active");
@@ -109,6 +113,7 @@ export function ProjectsPage() {
   const [selectedRepoPaths, setSelectedRepoPaths] = useState<Set<string>>(new Set());
 
   const projectFormRef = useRef<HTMLDivElement>(null);
+  const workspacePanelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (isFormOpen && projectFormRef.current) {
@@ -477,6 +482,39 @@ export function ProjectsPage() {
     : [];
   const workspaceActiveProjects = workspaceProjects.filter((project) => project.status === "active");
   const workspaceArchivedProjects = workspaceProjects.filter((project) => project.status === "archived");
+  const shouldOpenWorkspaceScan = Boolean((location.state as ProjectsLocationState)?.openWorkspaceScan);
+
+  useEffect(() => {
+    if (!shouldOpenWorkspaceScan || workspacesQuery.isLoading) {
+      return;
+    }
+
+    setViewMode("workspaces");
+    setWorkspaceStatusFilter("active");
+    window.setTimeout(() => {
+      workspacePanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 100);
+
+    if (selectedWorkspace?.status === "active") {
+      scanWorkspaceMutation.mutate(selectedWorkspace.id);
+    } else if (workspaces.length === 0) {
+      toast.info("Add a workspace", "Create a workspace root to discover untracked repositories.");
+      setIsWorkspaceFormOpen(true);
+    } else {
+      toast.info("Choose an active workspace", "Archived workspaces cannot be scanned.");
+    }
+
+    navigate(location.pathname, { replace: true, state: null });
+  }, [
+    location.pathname,
+    navigate,
+    selectedWorkspace?.id,
+    selectedWorkspace?.status,
+    shouldOpenWorkspaceScan,
+    toast,
+    workspaces.length,
+    workspacesQuery.isLoading,
+  ]);
 
   function openCreateForm() {
     setEditingProject(null);
@@ -817,7 +855,7 @@ export function ProjectsPage() {
       </Panel>
 
       {viewMode === "workspaces" ? (
-        <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+        <div ref={workspacePanelRef} className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
           <Panel className="p-0">
             <div className="border-b border-white/8 px-4 py-3">
               <div className="flex items-start justify-between gap-2">

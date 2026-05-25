@@ -46,6 +46,15 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .await
     .ok();
 
+    sqlx::query(
+        r#"
+        ALTER TABLE weekly_tasks ADD COLUMN estimated_minutes INTEGER;
+        "#,
+    )
+    .execute(pool)
+    .await
+    .ok();
+
     sqlx::raw_sql(
         r#"
         CREATE TABLE IF NOT EXISTS focus_sessions (
@@ -94,8 +103,56 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
 
+    sqlx::raw_sql(CALENDAR_SQL).execute(pool).await?;
+
     Ok(())
 }
+
+const CALENDAR_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS calendar_sources (
+  id TEXT PRIMARY KEY,
+  provider TEXT NOT NULL,
+  account_email TEXT NOT NULL,
+  account_name TEXT,
+  sync_status TEXT NOT NULL,
+  last_synced_at TEXT,
+  token_ref TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_calendar_sources_provider_account
+  ON calendar_sources(provider, account_email);
+
+CREATE TABLE IF NOT EXISTS calendar_events (
+  id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL,
+  external_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  location TEXT,
+  starts_at TEXT NOT NULL,
+  ends_at TEXT NOT NULL,
+  timezone TEXT,
+  all_day INTEGER NOT NULL DEFAULT 0,
+  busy_status TEXT NOT NULL DEFAULT 'busy',
+  is_cancelled INTEGER NOT NULL DEFAULT 0,
+  project_id TEXT,
+  task_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  imported_at TEXT NOT NULL,
+  FOREIGN KEY (source_id) REFERENCES calendar_sources(id),
+  FOREIGN KEY (project_id) REFERENCES projects(id),
+  FOREIGN KEY (task_id) REFERENCES weekly_tasks(id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_calendar_events_source_external
+  ON calendar_events(source_id, external_id);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_starts_at ON calendar_events(starts_at);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_ends_at ON calendar_events(ends_at);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_source ON calendar_events(source_id);
+"#;
 
 const SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS projects (
@@ -235,6 +292,7 @@ CREATE TABLE IF NOT EXISTS weekly_tasks (
   completed_at TEXT,
   priority TEXT NOT NULL DEFAULT 'normal',
   included_in_report INTEGER NOT NULL DEFAULT 0,
+  estimated_minutes INTEGER,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY (project_id) REFERENCES projects(id)

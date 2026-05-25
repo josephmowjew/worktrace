@@ -1,9 +1,9 @@
-import { Activity, BarChart3, BookOpen, ClipboardEdit, FileText, FolderKanban, Home, ListChecks, ListTodo, RefreshCw, Search, Settings, X } from "lucide-react";
+import { Activity, BarChart3, BookOpen, ClipboardEdit, FileText, Focus, FolderKanban, Home, ListChecks, ListTodo, Mic, RefreshCw, Search, Settings, Square, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Project } from "../../types/project";
 
-type PaletteGroup = "Navigation" | "Capture" | "Review" | "Reporting" | "Sync";
+type PaletteGroup = "Navigation" | "Capture" | "Focus" | "Review" | "Reporting" | "Sync" | "Projects";
 
 export type CommandPaletteAction = {
   id: string;
@@ -18,11 +18,13 @@ export function createBaseCommandActions({
   projects,
   navigate,
   onSync,
+  onScanRepos,
   onToggleWidget,
 }: {
   projects: Project[];
   navigate: (path: string, state?: unknown) => void;
   onSync: () => void;
+  onScanRepos: () => void;
   onToggleWidget: () => void;
 }): CommandPaletteAction[] {
   const navigation: CommandPaletteAction[] = [
@@ -37,20 +39,26 @@ export function createBaseCommandActions({
   ];
 
   const workflow: CommandPaletteAction[] = [
-    { id: "capture-task", label: "Add task", description: "Open Weekly Plan for task capture", group: "Capture", icon: ListChecks, onRun: () => navigate("/weekly-plan") },
-    { id: "capture-log", label: "Quick manual log", description: "Open Manual Log", group: "Capture", icon: ClipboardEdit, onRun: () => navigate("/manual-log") },
-    { id: "review-eod", label: "Start end-of-day review", description: "Open guided review on Today", group: "Review", icon: ListTodo, onRun: () => navigate("/", { openReview: true }) },
-    { id: "sync-now", label: "Sync repositories", description: "Scan active Git repositories", group: "Sync", icon: RefreshCw, onRun: onSync },
+    { id: "capture-task", label: "Add task", description: "Open the Today task form", group: "Capture", icon: ListChecks, onRun: () => navigate("/", { openTask: true }) },
+    { id: "capture-log", label: "Create manual log", description: "Open today's quick manual log", group: "Capture", icon: ClipboardEdit, onRun: () => navigate("/", { openManualLog: true }) },
+    { id: "focus-start", label: "Start focus session", description: "Jump to the Today focus panel", group: "Focus", icon: Focus, onRun: () => navigate("/", { openFocus: true }) },
+    { id: "review-today", label: "What did I do today?", description: "Open the guided daily review", group: "Review", icon: ListTodo, onRun: () => navigate("/", { openReview: true }) },
+    { id: "report-prep", label: "Prepare weekly report", description: "Open the report readiness checklist", group: "Reporting", icon: FileText, onRun: () => navigate("/", { openReportPrep: true }) },
+    { id: "sync-now", label: "Sync repositories", description: "Sync active tracked repositories", group: "Sync", icon: RefreshCw, onRun: onSync },
+    { id: "scan-repos", label: "Scan repos", description: "Sync tracked repos, then review workspace discovery", group: "Sync", icon: FolderKanban, onRun: onScanRepos },
     { id: "widget", label: "Toggle todo widget", description: "Show or hide the floating widget", group: "Capture", icon: ListTodo, onRun: onToggleWidget },
   ];
 
-  const projectActions = projects.slice(0, 12).map((project) => ({
+  const projectActions = projects
+    .filter((project) => project.status === "active")
+    .slice(0, 12)
+    .map((project) => ({
     id: `project-${project.id}`,
     label: project.name,
-    description: "Open Projects and review this tracked project",
-    group: "Navigation" as const,
+    description: `Jump to ${project.projectType ?? "project"} project`,
+    group: "Projects" as const,
     icon: FolderKanban,
-    onRun: () => navigate("/projects"),
+    onRun: () => navigate(`/projects/${project.id}`),
   }));
 
   return [...workflow, ...navigation, ...projectActions];
@@ -61,11 +69,17 @@ export function CommandPalette({
   onClose,
   actions,
   onPowerCommand,
+  onVoiceCommand,
+  voiceStatus = "idle",
+  voiceError,
 }: {
   isOpen: boolean;
   onClose: () => void;
   actions: CommandPaletteAction[];
   onPowerCommand?: (query: string) => boolean;
+  onVoiceCommand?: () => void;
+  voiceStatus?: "idle" | "listening" | "transcribing" | "error";
+  voiceError?: string | null;
 }) {
   const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -129,6 +143,36 @@ export function CommandPalette({
             <X className="h-4 w-4" />
           </button>
         </div>
+        {onVoiceCommand ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/8 px-4 py-3">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-slate-200">
+                {voiceStatus === "listening"
+                  ? "Listening..."
+                  : voiceStatus === "transcribing"
+                    ? "Transcribing locally..."
+                    : "Push-to-talk voice command"}
+              </p>
+              <p className="mt-1 truncate text-[11px] text-slate-500">
+                {voiceError || "Try: add task finish release notes, sync repositories, or start focus on API cleanup."}
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={voiceStatus === "transcribing"}
+              onClick={onVoiceCommand}
+              className={[
+                "inline-flex h-9 items-center gap-2 rounded-xl border px-3 text-xs font-semibold transition disabled:opacity-60",
+                voiceStatus === "listening"
+                  ? "border-red-300/30 bg-red-500/15 text-red-100 hover:bg-red-500/25"
+                  : "border-cyan-300/25 bg-cyan-500/12 text-cyan-100 hover:bg-cyan-500/20",
+              ].join(" ")}
+            >
+              {voiceStatus === "listening" ? <Square className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+              {voiceStatus === "listening" ? "Stop" : "Speak"}
+            </button>
+          </div>
+        ) : null}
 
         <div className="max-h-[60vh] overflow-y-auto p-2">
           {canRunPowerCommand ? (
@@ -203,7 +247,7 @@ function parsePowerCommand(query: string) {
 }
 
 function groupActions(actions: CommandPaletteAction[]) {
-  const groups: PaletteGroup[] = ["Capture", "Review", "Reporting", "Sync", "Navigation"];
+  const groups: PaletteGroup[] = ["Capture", "Focus", "Review", "Reporting", "Sync", "Projects", "Navigation"];
   return groups
     .map((group) => [group, actions.filter((action) => action.group === group)] as const)
     .filter(([, items]) => items.length > 0);

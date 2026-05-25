@@ -1,4 +1,4 @@
-import { Check, Edit3, GripVertical, Trash2 } from "lucide-react";
+import { CalendarDays, Check, Clock3, Edit3, GripVertical, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { WeeklyTask } from "../../types/weeklyTask";
 
@@ -198,6 +198,18 @@ export function TaskCard({
                 {task.projectName}
               </span>
             )}
+            {task.targetDate ? (
+              <span className="inline-flex items-center gap-1 rounded-md bg-slate-700/50 px-1.5 py-0.5 text-[10px] text-slate-400">
+                <CalendarDays className="h-3 w-3" />
+                {task.targetDate.slice(5)}
+              </span>
+            ) : null}
+            {task.estimatedMinutes ? (
+              <span className="inline-flex items-center gap-1 rounded-md bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-200">
+                <Clock3 className="h-3 w-3" />
+                {formatMinutes(task.estimatedMinutes)}
+              </span>
+            ) : null}
           </div>
 
           {isInProgress && task.progressPercent !== undefined && task.progressPercent !== null && (
@@ -249,4 +261,12 @@ export function TaskCard({
       </div>
     </div>
   );
+}
+
+function formatMinutes(minutes: number) {
+  const hours = Math.floor(minutes / 60);
+  const remaining = minutes % 60;
+  if (!hours) return `${remaining}m`;
+  if (!remaining) return `${hours}h`;
+  return `${hours}h ${remaining}m`;
 }

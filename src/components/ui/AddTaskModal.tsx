@@ -32,6 +32,7 @@ const taskSchema = z.object({
   priority: z.enum(["low", "normal", "high"]),
   includedInReport: z.boolean(),
   progressPercent: z.number().optional(),
+  estimatedMinutes: z.number().optional(),
 });
 
 type TaskFormValues = z.infer<typeof taskSchema>;
@@ -74,6 +75,7 @@ function defaultValues(weekStartDate: string): TaskFormValues {
     priority: "normal",
     includedInReport: false,
     progressPercent: undefined,
+    estimatedMinutes: undefined,
   };
 }
 
@@ -115,6 +117,7 @@ export function AddTaskModal({
         priority: editingTask.priority,
         includedInReport: editingTask.includedInReport,
         progressPercent: editingTask.progressPercent ?? undefined,
+        estimatedMinutes: editingTask.estimatedMinutes ?? undefined,
       });
     } else {
       form.reset(defaultValues(weekStartDate));
@@ -244,6 +247,16 @@ export function AddTaskModal({
                 className={inputClass}
                 placeholder="0"
                 {...form.register("progressPercent", { valueAsNumber: true })}
+              />
+            </Field>
+            <Field label="Estimate (minutes)">
+              <input
+                type="number"
+                min={0}
+                max={1440}
+                className={inputClass}
+                placeholder="60"
+                {...form.register("estimatedMinutes", { valueAsNumber: true })}
               />
             </Field>
           </div>
