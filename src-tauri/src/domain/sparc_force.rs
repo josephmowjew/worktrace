@@ -28,6 +28,7 @@ pub struct SparcForceConnection {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SparcForceIntegrationStatus {
+    pub addon_enabled: bool,
     pub connected: bool,
     pub status: String,
     pub base_url: Option<String>,

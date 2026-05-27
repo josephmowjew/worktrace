@@ -6,6 +6,8 @@ use crate::domain::settings::{
 };
 use crate::infrastructure::database::repositories::SettingsRepository;
 
+const SPARC_FORCE_ADDON_CODE: &str = "SPARC-FORCE-ADDON";
+
 pub struct SettingsService;
 
 impl SettingsService {
@@ -117,6 +119,25 @@ impl SettingsService {
             .map_err(SettingsServiceError::Database)?;
 
         Ok(SettingsImportResult { settings, warnings })
+    }
+
+    pub async fn activate_sparc_force_addon(
+        repository: &SettingsRepository<'_>,
+        code: String,
+    ) -> Result<Settings, SettingsServiceError> {
+        if code.trim() != SPARC_FORCE_ADDON_CODE {
+            return Err(SettingsServiceError::Validation(
+                "Invalid add-on activation code.".to_string(),
+            ));
+        }
+
+        repository
+            .update(UpdateSettingsInput {
+                sparc_force_addon_enabled: Some(true),
+                ..Default::default()
+            })
+            .await
+            .map_err(SettingsServiceError::Database)
     }
 }
 
@@ -263,7 +284,9 @@ fn validate_update(input: &UpdateSettingsInput) -> Result<(), SettingsServiceErr
     }
 
     if let Some(provider) = &input.report_ai_provider {
-        if !["local_llama_cpp", "openrouter_free", "groq"].contains(&provider.as_str()) {
+        if !["local_llama_cpp", "openrouter_free", "groq", "nvidia_build"]
+            .contains(&provider.as_str())
+        {
             return Err(SettingsServiceError::Validation(
                 "Report AI provider is not supported".to_string(),
             ));
@@ -359,6 +382,9 @@ fn merge_settings(mut settings: Settings, input: &UpdateSettingsInput) -> Settin
     }
     if let Some(value) = &input.email {
         settings.email = value.clone();
+    }
+    if let Some(value) = input.use_gravatar_profile_image {
+        settings.use_gravatar_profile_image = value;
     }
     if let Some(value) = &input.default_manager_name {
         settings.default_manager_name = value.clone();
@@ -477,6 +503,12 @@ fn merge_settings(mut settings: Settings, input: &UpdateSettingsInput) -> Settin
     if let Some(value) = &input.report_ai_groq_model {
         settings.report_ai_groq_model = value.clone();
     }
+    if let Some(value) = &input.report_ai_nvidia_model {
+        settings.report_ai_nvidia_model = value.clone();
+    }
+    if let Some(value) = input.sparc_force_addon_enabled {
+        settings.sparc_force_addon_enabled = value;
+    }
     if let Some(value) = input.onboarding_completed {
         settings.onboarding_completed = value;
     }
@@ -538,6 +570,7 @@ fn update_input_from_settings(settings: Settings) -> UpdateSettingsInput {
     UpdateSettingsInput {
         name: Some(settings.name),
         email: Some(settings.email),
+        use_gravatar_profile_image: Some(settings.use_gravatar_profile_image),
         default_manager_name: Some(settings.default_manager_name),
         git_author_email: Some(settings.git_author_email),
         default_report_template: Some(settings.default_report_template),
@@ -577,6 +610,8 @@ fn update_input_from_settings(settings: Settings) -> UpdateSettingsInput {
         report_ai_privacy_acknowledged: Some(settings.report_ai_privacy_acknowledged),
         report_ai_local_model_path: Some(settings.report_ai_local_model_path),
         report_ai_groq_model: Some(settings.report_ai_groq_model),
+        report_ai_nvidia_model: Some(settings.report_ai_nvidia_model),
+        sparc_force_addon_enabled: Some(settings.sparc_force_addon_enabled),
         onboarding_completed: Some(settings.onboarding_completed),
         onboarding_dismissed_welcome: Some(settings.onboarding_dismissed_welcome),
         onboarding_dismissed_checklist: Some(settings.onboarding_dismissed_checklist),

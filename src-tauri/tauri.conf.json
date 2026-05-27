@@ -26,9 +26,27 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/josephmowjew/worktrace/releases/latest/download/latest.json"
+      ],
+      "dialog": false,
+      "pubkey": "${TAURI_UPDATER_PUBLIC_KEY}",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "Joseph Mojoo",
+    "copyright": "Copyright (c) 2026 Joseph Mojoo. All rights reserved.",
+    "homepage": "https://github.com/josephmowjew/worktrace",
+    "shortDescription": "WorkTrace, developed by Joseph Mojoo.",
+    "longDescription": "WorkTrace is a local-first developer productivity and weekly reporting desktop app developed by Joseph Mojoo.",
     "resources": [
       "resources/voice/*",
       "resources/ai/*"

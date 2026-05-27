@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -14,7 +15,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type React from "react";
 import { hideTodoWidget, setTodoWidgetAlwaysOnTop } from "../../lib/api/todoWidget";
 import {
@@ -39,7 +40,53 @@ export function FloatingTodoWidget() {
   const weekRange = currentWeekRange();
   const [title, setTitle] = useState("");
   const [isPinned, setIsPinned] = useState(true);
+  const [isWidgetFocused, setIsWidgetFocused] = useState(false);
   const [view, setView] = useState<"todos" | "plan">("todos");
+
+  useEffect(() => {
+    document.documentElement.classList.add("todo-widget-window");
+    document.body.classList.add("todo-widget-window");
+
+    return () => {
+      document.documentElement.classList.remove("todo-widget-window");
+      document.body.classList.remove("todo-widget-window");
+    };
+  }, []);
+
+  useEffect(() => {
+    const appWindow = getCurrentWindow();
+    let isMounted = true;
+    let unlistenFocus: (() => void) | undefined;
+
+    appWindow
+      .isFocused()
+      .then((focused) => {
+        if (isMounted) {
+          setIsWidgetFocused(focused);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setIsWidgetFocused(false);
+        }
+      });
+
+    appWindow
+      .onFocusChanged(({ payload }) => {
+        setIsWidgetFocused(payload);
+      })
+      .then((unlisten) => {
+        unlistenFocus = unlisten;
+      })
+      .catch(() => {
+        unlistenFocus = undefined;
+      });
+
+    return () => {
+      isMounted = false;
+      unlistenFocus?.();
+    };
+  }, []);
 
   const tasksQuery = useQuery({
     queryKey: ["weeklyTasks", "widget", weekRange.from, weekRange.to],
@@ -169,7 +216,13 @@ export function FloatingTodoWidget() {
 
   return (
     <div className="group/widget min-h-screen overflow-hidden bg-transparent p-2 text-slate-100">
-      <div className="flex h-[calc(100vh-1rem)] min-h-[224px] flex-col overflow-hidden rounded-[24px] border border-white/6 bg-slate-950/28 opacity-55 shadow-lg shadow-black/10 backdrop-blur-md transition-[background-color,border-color,box-shadow,opacity,backdrop-filter] duration-200 ease-out hover:border-white/12 hover:bg-slate-950/85 hover:opacity-100 hover:shadow-2xl hover:shadow-black/40 hover:backdrop-blur-2xl focus-within:border-white/12 focus-within:bg-slate-950/85 focus-within:opacity-100 focus-within:shadow-2xl focus-within:shadow-black/40 focus-within:backdrop-blur-2xl">
+      <div
+        className={`flex h-[calc(100vh-1rem)] min-h-[224px] flex-col overflow-hidden rounded-[24px] border transition-[background-color,border-color,box-shadow,opacity,backdrop-filter] duration-200 ease-out hover:border-white/12 hover:bg-slate-950/90 hover:opacity-100 hover:shadow-2xl hover:shadow-black/40 hover:backdrop-blur-xl focus-within:border-white/12 focus-within:bg-slate-950/90 focus-within:opacity-100 focus-within:shadow-2xl focus-within:shadow-black/40 focus-within:backdrop-blur-xl ${
+          isWidgetFocused
+            ? "border-white/12 bg-slate-950/90 opacity-100 shadow-2xl shadow-black/40 backdrop-blur-xl"
+            : "border-white/[0.03] bg-slate-950/[0.03] opacity-30 shadow-none backdrop-blur-0"
+        }`}
+      >
         <header
           className="flex shrink-0 items-center justify-between gap-2 border-b border-white/8 px-3 py-2"
           data-tauri-drag-region

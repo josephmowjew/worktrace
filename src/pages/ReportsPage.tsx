@@ -77,6 +77,8 @@ export function ReportsPage() {
     setOpenRouterKey,
     groqKey,
     setGroqKey,
+    nvidiaBuildKey,
+    setNvidiaBuildKey,
     readiness,
     setReadiness,
     polishStreamStatus,
@@ -262,6 +264,7 @@ export function ReportsPage() {
     onSuccess: async (_, variables) => {
       if (variables.provider === "openrouter_free") setOpenRouterKey("");
       if (variables.provider === "groq") setGroqKey("");
+      if (variables.provider === "nvidia_build") setNvidiaBuildKey("");
       await reportAiStatusQuery.refetch();
       toast.success("AI provider connected");
     },
@@ -460,6 +463,7 @@ export function ReportsPage() {
                   { value: "local_llama_cpp", label: "Local llama.cpp", icon: FileText },
                   { value: "openrouter_free", label: "OpenRouter free", icon: Sparkles },
                   { value: "groq", label: "Groq", icon: Sparkles },
+                  { value: "nvidia_build", label: "NVIDIA Build", icon: Sparkles },
                 ]}
                 size="sm"
               />
@@ -645,6 +649,19 @@ export function ReportsPage() {
               onConnect={() => connectAiMutation.mutate({ provider: "groq", apiKey: groqKey })}
               onTest={() => testAiMutation.mutate("groq")}
               onDisconnect={() => disconnectAiMutation.mutate("groq")}
+            />
+            <ProviderKeyRow
+              label="NVIDIA Build"
+              provider="nvidia_build"
+              value={nvidiaBuildKey}
+              status={providerStatus(reportAiStatusQuery.data, "nvidia_build")}
+              isPending={connectAiMutation.isPending || testAiMutation.isPending || disconnectAiMutation.isPending}
+              onChange={setNvidiaBuildKey}
+              onConnect={() =>
+                connectAiMutation.mutate({ provider: "nvidia_build", apiKey: nvidiaBuildKey })
+              }
+              onTest={() => testAiMutation.mutate("nvidia_build")}
+              onDisconnect={() => disconnectAiMutation.mutate("nvidia_build")}
             />
           </div>
 
@@ -1046,7 +1063,7 @@ function providerStatus(
 }
 
 function isReportAiProvider(value: string): value is ReportAiProvider {
-  return ["local_llama_cpp", "openrouter_free", "groq"].includes(value);
+  return ["local_llama_cpp", "openrouter_free", "groq", "nvidia_build"].includes(value);
 }
 
 function gitRefKey(ref: Pick<GitRefFilter, "kind" | "name">) {

@@ -1,6 +1,7 @@
 import { Minus, Square, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { appSignature } from "../../lib/appSignature";
 
 export function TitleBar() {
   const [isMacOS, setIsMacOS] = useState(false);
@@ -39,11 +40,12 @@ export function TitleBar() {
       data-tauri-drag-region
     >
       <div className="flex items-center gap-2 pl-4" data-tauri-drag-region>
-        <div className="flex h-5 w-5 items-center justify-center rounded-md bg-blue-500/15 text-xs font-black text-blue-300">
-          W
-        </div>
+        <img src="/worktrace-icon.svg" alt="" className="h-5 w-5 rounded-md" draggable={false} />
         <span className="text-xs font-medium text-slate-300" data-tauri-drag-region>
           WorkTrace
+        </span>
+        <span className="hidden text-[10px] text-slate-500 sm:inline" data-tauri-drag-region>
+          {appSignature.developerCredit}
         </span>
       </div>
 

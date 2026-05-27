@@ -15,6 +15,11 @@ import {
   ListTodo,
   ArrowLeft,
   Upload,
+  ExternalLink,
+  HelpCircle,
+  RefreshCw,
+  ArrowUpCircle,
+  X,
 } from "lucide-react";
 import type { PropsWithChildren } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
@@ -28,6 +33,12 @@ import { getSparcForceIntegrationStatus, syncSparcForce } from "../../lib/api/sp
 import { listProjects } from "../../lib/api/projects";
 import { exportSettingsToFile, getSettings, importSettings } from "../../lib/api/settings";
 import { toggleTodoWidget } from "../../lib/api/todoWidget";
+import {
+  checkForAppUpdate,
+  getAppVersion,
+  getReleaseNotes,
+  installAppUpdate,
+} from "../../lib/api/appUpdates";
 import { currentWeekRange } from "../../lib/dates";
 import { TitleBar } from "./TitleBar";
 import { useToast } from "../ui/ToastProvider";
@@ -39,6 +50,8 @@ import {
   syncAnnouncement,
   syncStartedAnnouncement,
 } from "../../lib/announcements";
+import { appSignature } from "../../lib/appSignature";
+import { gravatarUrl } from "../../lib/gravatar";
 
 const navItems = [
   { label: "Today", href: "/", icon: Home },
@@ -62,9 +75,18 @@ export function AppLayout({ children }: PropsWithChildren) {
   const weekRange = currentWeekRange();
   const [isWidgetWindow, setIsWidgetWindow] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [isHelpMenuOpen, setIsHelpMenuOpen] = useState(false);
+  const [isWhatsNewOpen, setIsWhatsNewOpen] = useState(false);
   const settingsQuery = useQuery({
     queryKey: ["settings"],
     queryFn: getSettings,
+  });
+  const appVersionQuery = useQuery({ queryKey: ["appVersion"], queryFn: getAppVersion, retry: false });
+  const releaseNotesQuery = useQuery({
+    queryKey: ["releaseNotes"],
+    queryFn: getReleaseNotes,
+    retry: false,
+    enabled: isWhatsNewOpen,
   });
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -208,7 +230,18 @@ export function AppLayout({ children }: PropsWithChildren) {
       );
     },
   });
+  const checkForUpdateMutation = useMutation({ mutationFn: checkForAppUpdate });
+  const installUpdateMutation = useMutation({ mutationFn: installAppUpdate });
   const settings = settingsQuery.data;
+  const sparcForceAvailable = Boolean(
+    settings?.sparcForceAddonEnabled ||
+      sparcForceStatusQuery.data?.addonEnabled ||
+      sparcForceStatusQuery.data?.connected,
+  );
+  const profileImageUrl =
+    settings?.useGravatarProfileImage && isEmailLike(settings.email)
+      ? gravatarUrl(settings.email, 96)
+      : null;
   const activityItems = activityQuery.data?.flatMap((day) => day.items) ?? [];
   const commitCount = activityItems.filter((item) => item.activityType === "commit").length;
   const manualCount = activityItems.length - commitCount;
@@ -238,6 +271,10 @@ export function AppLayout({ children }: PropsWithChildren) {
       return true;
     }
     if (normalized === "sparc_force_sync") {
+      if (!sparcForceAvailable) {
+        toast.info("Add-on locked", "Unlock the add-on in Settings before using this command.");
+        return true;
+      }
       commandSparcForceSyncMutation.mutate();
       return true;
     }
@@ -290,6 +327,10 @@ export function AppLayout({ children }: PropsWithChildren) {
 
     if (command.kind === "navigation") {
       if (command.label === "Go to Sparc Force") {
+        if (!sparcForceAvailable) {
+          toast.info("Add-on locked", "Unlock the add-on in Settings before opening this integration.");
+          return;
+        }
         navigate(command.path, { state: { openIntegrationPanel: "sparcForce" } });
       } else {
         navigate(command.path);
@@ -389,7 +430,7 @@ export function AppLayout({ children }: PropsWithChildren) {
   }, [hasSyncableProjects, intervalSyncMutation]);
 
   useEffect(() => {
-    if (!sparcForceStatusQuery.data?.connected) {
+    if (!sparcForceAvailable || !sparcForceStatusQuery.data?.connected) {
       return;
     }
 
@@ -403,7 +444,7 @@ export function AppLayout({ children }: PropsWithChildren) {
     );
 
     return () => window.clearInterval(syncInterval);
-  }, [commandSparcForceSyncMutation, sparcForceStatusQuery.data?.connected]);
+  }, [commandSparcForceSyncMutation, sparcForceAvailable, sparcForceStatusQuery.data?.connected]);
 
   return (
     <div className="h-screen overflow-hidden bg-[#06101d] text-slate-100">
@@ -415,9 +456,12 @@ export function AppLayout({ children }: PropsWithChildren) {
           <aside className="m-2 mt-0 hidden min-h-0 w-[236px] shrink-0 flex-col rounded-lg border border-white/10 bg-slate-950/70 p-3 shadow-2xl shadow-blue-950/30 backdrop-blur-2xl lg:flex">
             <div className="mb-5 rounded-2xl border border-white/8 bg-white/[0.035] p-3">
               <div className="flex items-center gap-2.5">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-blue-300/20 bg-blue-500/20 text-xl font-black text-blue-200 shadow-lg shadow-blue-500/20">
-                  W
-                </div>
+                <img
+                  src="/worktrace-icon.svg"
+                  alt=""
+                  className="h-10 w-10 rounded-xl object-contain shadow-lg shadow-blue-500/20"
+                  draggable={false}
+                />
                 <div>
                   <p className="text-base font-semibold tracking-tight">WorkTrace</p>
                   <p className="text-[10px] text-slate-500">Track. Focus. Deliver.</p>
@@ -495,6 +539,21 @@ export function AppLayout({ children }: PropsWithChildren) {
               <ListTodo className="h-4 w-4" />
               {widgetMutation.isPending ? "Opening..." : "Todo Widget"}
             </button>
+
+            <a
+              href={appSignature.developerProfileUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-white/8 bg-white/[0.03] px-3 py-2 text-[10px] text-slate-500 transition hover:border-cyan-300/20 hover:bg-cyan-300/5 hover:text-cyan-100"
+            >
+              <span className="min-w-0">
+                <span className="block truncate font-semibold text-slate-300">
+                  {appSignature.developerCredit}
+                </span>
+                <span className="block truncate">GitHub profile</span>
+              </span>
+              <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+            </a>
           </aside>
 
           <main className="flex min-w-0 flex-1 flex-col overflow-hidden px-3 py-3 md:px-4 md:py-4">
@@ -543,6 +602,58 @@ export function AppLayout({ children }: PropsWithChildren) {
               </div>
 
               <div className="flex items-center gap-3">
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setIsHelpMenuOpen((open) => !open)}
+                    className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/50 px-3 py-2 text-xs font-semibold text-slate-200 shadow-lg shadow-black/10 backdrop-blur-xl transition hover:bg-white/10"
+                  >
+                    <HelpCircle className="h-4 w-4" />
+                    Help
+                  </button>
+                  {isHelpMenuOpen ? (
+                    <div className="absolute right-0 z-20 mt-2 w-72 rounded-xl border border-white/10 bg-slate-950/95 p-2 shadow-2xl">
+                      <p className="rounded-lg px-2 py-1.5 text-[11px] text-slate-400">
+                        Current version: <span className="font-semibold text-slate-200">{appVersionQuery.data?.version ?? "Unavailable"}</span>
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsWhatsNewOpen(true);
+                          setIsHelpMenuOpen(false);
+                        }}
+                        className="mt-1 flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs text-slate-200 transition hover:bg-white/10"
+                      >
+                        <ArrowUpCircle className="h-4 w-4 text-cyan-300" />
+                        What's New
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          checkForUpdateMutation.mutate(undefined, {
+                            onSuccess: (result) => {
+                              if (result.status === "available") {
+                                toast.success("Update available", `Version ${result.latestVersion ?? "new"} is ready.`);
+                              } else if (result.status === "up_to_date") {
+                                toast.info("Up to date", `You are on ${result.currentVersion}.`);
+                              } else {
+                                toast.error("Update check failed", result.body ?? "Could not check for updates.");
+                              }
+                            },
+                            onError: (error) => {
+                              toast.error("Update check failed", error instanceof Error ? error.message : "Could not check for updates.");
+                            },
+                          })
+                        }
+                        disabled={checkForUpdateMutation.isPending}
+                        className="mt-1 flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs text-slate-200 transition hover:bg-white/10 disabled:opacity-60"
+                      >
+                        <RefreshCw className="h-4 w-4 text-blue-300" />
+                        Check for updates
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
                 <button
                   type="button"
                   onClick={() => widgetMutation.mutate()}
@@ -552,11 +663,18 @@ export function AppLayout({ children }: PropsWithChildren) {
                   <ListTodo className="h-4 w-4" />
                   Widget
                 </button>
-                <div className="rounded-xl border border-white/10 bg-slate-950/50 px-3 py-2 shadow-lg shadow-black/10 backdrop-blur-xl">
-                  <p className="text-xs font-medium">{settings?.name ?? "John Developer"}</p>
-                  <p className="text-[10px] text-slate-500">
-                    {settings?.email ?? "johndev@worktrace.app"}
-                  </p>
+                <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/50 px-3 py-2 shadow-lg shadow-black/10 backdrop-blur-xl">
+                  <ProfileAvatar
+                    imageUrl={profileImageUrl}
+                    name={settings?.name ?? "John Developer"}
+                    email={settings?.email ?? "johndev@worktrace.app"}
+                  />
+                  <div className="min-w-0">
+                    <p className="truncate text-xs font-medium">{settings?.name ?? "John Developer"}</p>
+                    <p className="truncate text-[10px] text-slate-500">
+                      {settings?.email ?? "johndev@worktrace.app"}
+                    </p>
+                  </div>
                 </div>
               </div>
             </header>
@@ -587,6 +705,126 @@ export function AppLayout({ children }: PropsWithChildren) {
           void importSelectedSettingsFile(event.currentTarget.files?.[0]);
         }}
       />
+      {isWhatsNewOpen ? (
+        <div className="fixed inset-0 z-[10001] flex items-center justify-center bg-slate-950/75 p-4">
+          <div className="w-full max-w-2xl rounded-xl border border-white/10 bg-slate-950 p-4 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-white">What's New</h2>
+              <button type="button" onClick={() => setIsWhatsNewOpen(false)} className="rounded-lg p-1 text-slate-400 hover:bg-white/10 hover:text-white">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
+              {releaseNotesQuery.isLoading ? <p className="text-xs text-slate-400">Loading release notes...</p> : null}
+              {(releaseNotesQuery.data?.releases ?? []).map((release) => (
+                <article key={`${release.version}-${release.publishedAt ?? "na"}`} className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <p className="text-xs font-semibold text-cyan-200">{release.version}</p>
+                    <p className="text-[10px] text-slate-500">{release.publishedAt ? new Date(release.publishedAt).toLocaleDateString() : "Unknown date"}</p>
+                  </div>
+                  <pre className="whitespace-pre-wrap text-xs text-slate-300">{release.notes || "No notes."}</pre>
+                </article>
+              ))}
+            </div>
+            <div className="mt-3 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  checkForUpdateMutation.mutate(undefined, {
+                    onSuccess: (result) => {
+                      if (result.status === "available") {
+                        toast.success("Update available", `Version ${result.latestVersion ?? "new"} is ready.`);
+                      } else if (result.status === "up_to_date") {
+                        toast.info("Up to date", `You are on ${result.currentVersion}.`);
+                      } else {
+                        toast.error("Update check failed", result.body ?? "Could not check for updates.");
+                      }
+                    },
+                  })
+                }
+                className="rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-200 hover:bg-white/10"
+              >
+                Check for updates
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  installUpdateMutation.mutate(undefined, {
+                    onSuccess: (installed) => {
+                      if (!installed) {
+                        toast.info("No update available");
+                      }
+                    },
+                    onError: (error) => {
+                      toast.error("Update install failed", error instanceof Error ? error.message : "Could not install update.");
+                    },
+                  })
+                }
+                className="rounded-lg border border-blue-300/30 bg-blue-500/20 px-3 py-2 text-xs text-blue-100 hover:bg-blue-500/30"
+              >
+                Install update
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+function ProfileAvatar({
+  imageUrl,
+  name,
+  email,
+}: {
+  imageUrl: string | null;
+  name: string;
+  email: string;
+}) {
+  const [imageFailed, setImageFailed] = useState(false);
+  const initials = initialsForName(name || email);
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [imageUrl]);
+
+  return (
+    <div className="grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-full border border-cyan-300/20 bg-gradient-to-br from-cyan-400/25 via-blue-500/15 to-slate-900 text-[11px] font-semibold text-cyan-100">
+      {imageUrl && !imageFailed ? (
+        <img
+          src={imageUrl}
+          alt=""
+          className="h-full w-full object-cover"
+          onError={() => setImageFailed(true)}
+        />
+      ) : (
+        initials
+      )}
+    </div>
+  );
+}
+
+function initialsForName(value: string) {
+  const parts = value
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const initials = parts
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+
+  return initials || "WT";
+}
+
+function isEmailLike(value: string) {
+  const [localPart, domain, extra] = value.trim().split("@");
+  return Boolean(
+    localPart &&
+      domain &&
+      !extra &&
+      domain.includes(".") &&
+      !domain.startsWith(".") &&
+      !domain.endsWith("."),
   );
 }

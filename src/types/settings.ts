@@ -1,6 +1,7 @@
 export type Settings = {
   name: string;
   email: string;
+  useGravatarProfileImage: boolean;
   defaultManagerName: string;
   gitAuthorEmail: string;
   defaultReportTemplate: string;
@@ -40,6 +41,8 @@ export type Settings = {
   reportAiPrivacyAcknowledged: boolean;
   reportAiLocalModelPath: string;
   reportAiGroqModel: string;
+  reportAiNvidiaModel: string;
+  sparcForceAddonEnabled: boolean;
   onboardingCompleted: boolean;
   onboardingDismissedWelcome: boolean;
   onboardingDismissedChecklist: boolean;

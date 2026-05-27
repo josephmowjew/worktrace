@@ -2274,11 +2274,6 @@ pub struct SparcForceConnectionRepository<'a> {
     pool: &'a SqlitePool,
 }
 
-pub struct SparcForceCachedCaseDetail {
-    pub updated_at_remote: Option<String>,
-    pub raw_json: String,
-}
-
 impl<'a> SparcForceConnectionRepository<'a> {
     pub fn new(pool: &'a SqlitePool) -> Self {
         Self { pool }
@@ -2442,40 +2437,6 @@ impl<'a> SparcForceConnectionRepository<'a> {
         .await?;
 
         Ok(())
-    }
-
-    pub async fn cached_case_details(
-        &self,
-        connection_id: &str,
-        external_ids: &[String],
-    ) -> Result<HashMap<String, SparcForceCachedCaseDetail>, sqlx::Error> {
-        let mut output = HashMap::new();
-        for external_id in external_ids {
-            let row = sqlx::query(
-                r#"
-                SELECT external_id, updated_at_remote, raw_json
-                FROM sparc_force_cases
-                WHERE connection_id = ?1 AND external_id = ?2
-                LIMIT 1
-                "#,
-            )
-            .bind(connection_id)
-            .bind(external_id)
-            .fetch_optional(self.pool)
-            .await?;
-
-            if let Some(row) = row {
-                output.insert(
-                    row.get("external_id"),
-                    SparcForceCachedCaseDetail {
-                        updated_at_remote: row.get("updated_at_remote"),
-                        raw_json: row.get("raw_json"),
-                    },
-                );
-            }
-        }
-
-        Ok(output)
     }
 
     pub async fn find_case_record(
@@ -4173,6 +4134,9 @@ impl<'a> SettingsRepository<'a> {
         if let Some(value) = input.email {
             settings.email = value;
         }
+        if let Some(value) = input.use_gravatar_profile_image {
+            settings.use_gravatar_profile_image = value;
+        }
         if let Some(value) = input.default_manager_name {
             settings.default_manager_name = value;
         }
@@ -4290,6 +4254,12 @@ impl<'a> SettingsRepository<'a> {
         if let Some(value) = input.report_ai_groq_model {
             settings.report_ai_groq_model = value;
         }
+        if let Some(value) = input.report_ai_nvidia_model {
+            settings.report_ai_nvidia_model = value;
+        }
+        if let Some(value) = input.sparc_force_addon_enabled {
+            settings.sparc_force_addon_enabled = value;
+        }
         if let Some(value) = input.onboarding_completed {
             settings.onboarding_completed = value;
         }
@@ -4308,6 +4278,15 @@ impl<'a> SettingsRepository<'a> {
 
         self.upsert("profile.name", &settings.name).await?;
         self.upsert("profile.email", &settings.email).await?;
+        self.upsert(
+            "profile.use_gravatar_profile_image",
+            if settings.use_gravatar_profile_image {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
         self.upsert(
             "profile.default_manager_name",
             &settings.default_manager_name,
@@ -4505,6 +4484,17 @@ impl<'a> SettingsRepository<'a> {
         .await?;
         self.upsert("report_ai.groq_model", &settings.report_ai_groq_model)
             .await?;
+        self.upsert("report_ai.nvidia_model", &settings.report_ai_nvidia_model)
+            .await?;
+        self.upsert(
+            "sparc_force.addon_enabled",
+            if settings.sparc_force_addon_enabled {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
         self.upsert(
             "onboarding.completed",
             if settings.onboarding_completed {
@@ -5373,6 +5363,7 @@ fn apply_setting(settings: &mut Settings, key: &str, value: String) {
     match key {
         "profile.name" => settings.name = value,
         "profile.email" => settings.email = value,
+        "profile.use_gravatar_profile_image" => settings.use_gravatar_profile_image = value == "true",
         "profile.default_manager_name" => settings.default_manager_name = value,
         "git.author_email" => settings.git_author_email = value,
         "reports.default_template" => settings.default_report_template = value,
@@ -5427,6 +5418,8 @@ fn apply_setting(settings: &mut Settings, key: &str, value: String) {
         }
         "report_ai.local_model_path" => settings.report_ai_local_model_path = value,
         "report_ai.groq_model" => settings.report_ai_groq_model = value,
+        "report_ai.nvidia_model" => settings.report_ai_nvidia_model = value,
+        "sparc_force.addon_enabled" => settings.sparc_force_addon_enabled = value == "true",
         "onboarding.completed" => settings.onboarding_completed = value == "true",
         "onboarding.dismissed_welcome" => settings.onboarding_dismissed_welcome = value == "true",
         "onboarding.dismissed_checklist" => {

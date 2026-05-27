@@ -139,6 +139,7 @@ pub enum ReportAiProvider {
     LocalLlamaCpp,
     OpenrouterFree,
     Groq,
+    NvidiaBuild,
 }
 
 impl ReportAiProvider {
@@ -147,6 +148,7 @@ impl ReportAiProvider {
             Self::LocalLlamaCpp => "local_llama_cpp",
             Self::OpenrouterFree => "openrouter_free",
             Self::Groq => "groq",
+            Self::NvidiaBuild => "nvidia_build",
         }
     }
 }

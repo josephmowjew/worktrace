@@ -1,4 +1,5 @@
 pub mod activity;
+pub mod app_updates;
 pub mod calendar;
 pub mod daily_plan;
 pub mod dashboard;
@@ -42,6 +43,10 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         daily_plan::update_daily_plan_item,
         daily_plan::get_today_command_center,
         activity::list_activity,
+        app_updates::get_app_version,
+        app_updates::get_release_notes,
+        app_updates::check_for_app_update,
+        app_updates::install_app_update,
         activity::get_activity_heatmap,
         activity::get_week_summary,
         activity::get_key_highlights,
@@ -84,6 +89,7 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         reports::analyze_report_readiness,
         settings::get_settings,
         settings::update_settings,
+        settings::activate_sparc_force_addon,
         settings::validate_backup_location,
         settings::export_settings,
         settings::export_settings_to_file,

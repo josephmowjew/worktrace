@@ -45,6 +45,8 @@ type ReportsWorkspaceState = {
   setOpenRouterKey: (value: string) => void;
   groqKey: string;
   setGroqKey: (value: string) => void;
+  nvidiaBuildKey: string;
+  setNvidiaBuildKey: (value: string) => void;
   readiness: ReportReadinessAnalysis | null;
   setReadiness: (value: ReportReadinessAnalysis | null) => void;
   polishStreamStatus: string | null;
@@ -78,6 +80,7 @@ export function ReportsWorkspaceProvider({ children }: PropsWithChildren) {
     useState<ReportAiProvider>("local_llama_cpp");
   const [openRouterKey, setOpenRouterKey] = useState("");
   const [groqKey, setGroqKey] = useState("");
+  const [nvidiaBuildKey, setNvidiaBuildKey] = useState("");
   const [readiness, setReadiness] = useState<ReportReadinessAnalysis | null>(null);
   const [polishStreamStatus, setPolishStreamStatus] = useState<string | null>(null);
   const [activePolishStreamId, setActivePolishStreamId] = useState<string | null>(null);
@@ -171,6 +174,8 @@ export function ReportsWorkspaceProvider({ children }: PropsWithChildren) {
       setOpenRouterKey,
       groqKey,
       setGroqKey,
+      nvidiaBuildKey,
+      setNvidiaBuildKey,
       readiness,
       setReadiness,
       polishStreamStatus,
@@ -208,6 +213,7 @@ export function ReportsWorkspaceProvider({ children }: PropsWithChildren) {
       openRouterKey,
       polishStreamStatus,
       polishCancelled,
+      nvidiaBuildKey,
       readiness,
       recipientName,
       report,

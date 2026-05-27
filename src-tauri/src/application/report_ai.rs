@@ -25,11 +25,14 @@ use crate::AppState;
 const KEYRING_SERVICE: &str = "WorkTrace";
 const OPENROUTER_KEY_USER: &str = "report_ai_openrouter";
 const GROQ_KEY_USER: &str = "report_ai_groq";
+const NVIDIA_BUILD_KEY_USER: &str = "report_ai_nvidia_build";
 const OPENROUTER_MODEL: &str = "openrouter/free";
 const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 const OPENROUTER_MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
 const GROQ_URL: &str = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_MODELS_URL: &str = "https://api.groq.com/openai/v1/models";
+const NVIDIA_BUILD_URL: &str = "https://integrate.api.nvidia.com/v1/chat/completions";
+const NVIDIA_BUILD_MODELS_URL: &str = "https://integrate.api.nvidia.com/v1/models";
 
 pub struct ReportAiService;
 
@@ -58,6 +61,12 @@ impl ReportAiService {
                     has_key(GROQ_KEY_USER),
                     settings.report_ai_online_allowed && settings.report_ai_privacy_acknowledged,
                     &settings.report_ai_groq_model,
+                ),
+                online_status(
+                    ReportAiProvider::NvidiaBuild,
+                    has_key(NVIDIA_BUILD_KEY_USER),
+                    settings.report_ai_online_allowed && settings.report_ai_privacy_acknowledged,
+                    &settings.report_ai_nvidia_model,
                 ),
             ],
         })
@@ -112,6 +121,7 @@ impl ReportAiService {
             )),
             ReportAiProvider::OpenrouterFree => list_openrouter_models().await,
             ReportAiProvider::Groq => list_groq_models().await,
+            ReportAiProvider::NvidiaBuild => list_nvidia_models().await,
         }
     }
 
@@ -195,8 +205,10 @@ impl ReportAiService {
                 provider: response.provider,
                 model: response.model,
                 used_fallback: true,
-                message: "The provider returned an empty response; kept the deterministic draft."
-                    .to_string(),
+                message: response.diagnostics.unwrap_or_else(|| {
+                    "The provider returned an empty response; kept the deterministic draft."
+                        .to_string()
+                }),
             }),
             Err(error) => Ok(ReportPolishResult {
                 content: input.draft,
@@ -305,6 +317,7 @@ struct AiResponse {
     provider: String,
     model: String,
     content: String,
+    diagnostics: Option<String>,
 }
 
 struct ReportAiStream<'a> {
@@ -359,6 +372,7 @@ fn effective_provider(provider: Option<ReportAiProvider>, settings: &Settings) -
     provider.unwrap_or_else(|| match settings.report_ai_provider.as_str() {
         "openrouter_free" => ReportAiProvider::OpenrouterFree,
         "groq" => ReportAiProvider::Groq,
+        "nvidia_build" => ReportAiProvider::NvidiaBuild,
         _ => ReportAiProvider::LocalLlamaCpp,
     })
 }
@@ -424,6 +438,11 @@ fn provider_unavailable(provider: &ReportAiProvider, settings: &Settings) -> boo
                 || !settings.report_ai_privacy_acknowledged
                 || !has_key(GROQ_KEY_USER)
         }
+        ReportAiProvider::NvidiaBuild => {
+            !settings.report_ai_online_allowed
+                || !settings.report_ai_privacy_acknowledged
+                || !has_key(NVIDIA_BUILD_KEY_USER)
+        }
     }
 }
 
@@ -432,7 +451,9 @@ fn unavailable_message(provider: &ReportAiProvider, settings: &Settings) -> Stri
         ReportAiProvider::LocalLlamaCpp => {
             "Local report AI is not configured yet. Choose a GGUF model path; the deterministic draft was kept.".to_string()
         }
-        ReportAiProvider::OpenrouterFree | ReportAiProvider::Groq => {
+        ReportAiProvider::OpenrouterFree
+        | ReportAiProvider::Groq
+        | ReportAiProvider::NvidiaBuild => {
             if !settings.report_ai_online_allowed || !settings.report_ai_privacy_acknowledged {
                 "Online AI is disabled until privacy acknowledgement is enabled; the deterministic draft was kept.".to_string()
             } else {
@@ -447,6 +468,7 @@ fn model_for_provider(provider: &ReportAiProvider, settings: &Settings) -> Strin
         ReportAiProvider::LocalLlamaCpp => settings.report_ai_local_model_path.clone(),
         ReportAiProvider::OpenrouterFree => OPENROUTER_MODEL.to_string(),
         ReportAiProvider::Groq => settings.report_ai_groq_model.clone(),
+        ReportAiProvider::NvidiaBuild => settings.report_ai_nvidia_model.clone(),
     }
 }
 
@@ -485,6 +507,18 @@ async fn call_provider(
             )
             .await
         }
+        ReportAiProvider::NvidiaBuild => {
+            call_openai_compatible(
+                NVIDIA_BUILD_URL,
+                &get_key(NVIDIA_BUILD_KEY_USER)?,
+                &settings.report_ai_nvidia_model,
+                provider.as_str(),
+                messages,
+                max_tokens,
+                stream,
+            )
+            .await
+        }
     }
 }
 
@@ -498,15 +532,43 @@ async fn call_openai_compatible(
     stream: Option<&ReportAiStream<'_>>,
 ) -> Result<AiResponse, ReportAiError> {
     if let Some(stream) = stream {
-        return call_openai_compatible_streaming(
+        let streamed = call_openai_compatible_streaming(
             url, api_key, model, provider, messages, max_tokens, stream,
         )
-        .await;
+        .await?;
+        if provider == ReportAiProvider::NvidiaBuild.as_str()
+            && streamed.content.trim().is_empty()
+        {
+            // Some NVIDIA routes return stream frames without assistant content.
+            // Retry once without streaming before falling back to deterministic draft.
+            return call_openai_compatible_non_stream(
+                url,
+                api_key,
+                model,
+                provider,
+                messages,
+                max_tokens,
+            )
+            .await;
+        }
+        return Ok(streamed);
     }
 
+    call_openai_compatible_non_stream(url, api_key, model, provider, messages, max_tokens).await
+}
+
+async fn call_openai_compatible_non_stream(
+    url: &str,
+    api_key: &str,
+    model: &str,
+    provider: &str,
+    messages: &[serde_json::Value],
+    max_tokens: i32,
+) -> Result<AiResponse, ReportAiError> {
     let response = Client::new()
         .post(url)
         .bearer_auth(api_key)
+        .header("Accept", "application/json")
         .header("Content-Type", "application/json")
         .json(&json!({
             "model": model,
@@ -530,16 +592,28 @@ async fn call_openai_compatible(
         .json()
         .await
         .map_err(|error| ReportAiError::Provider(error.to_string()))?;
-    let content = body
-        .choices
-        .first()
+    let first_choice = body.choices.first();
+    let content = first_choice
         .and_then(|choice| choice.message.content.clone())
         .unwrap_or_default();
+    let diagnostics = if content.trim().is_empty() {
+        Some(format!(
+            "{provider} returned empty non-stream output (model={} choices={} finish_reason={}).",
+            body.model.clone().unwrap_or_else(|| model.to_string()),
+            body.choices.len(),
+            first_choice
+                .and_then(|choice| choice.finish_reason.clone())
+                .unwrap_or_else(|| "missing".to_string())
+        ))
+    } else {
+        None
+    };
 
     Ok(AiResponse {
         provider: provider.to_string(),
         model: body.model.unwrap_or_else(|| model.to_string()),
         content,
+        diagnostics,
     })
 }
 
@@ -557,6 +631,7 @@ async fn call_openai_compatible_streaming(
     let response = Client::new()
         .post(url)
         .bearer_auth(api_key)
+        .header("Accept", "text/event-stream")
         .header("Content-Type", "application/json")
         .json(&json!({
             "model": model,
@@ -586,6 +661,10 @@ async fn call_openai_compatible_streaming(
     let mut buffer = String::new();
     let mut content = String::new();
     let mut response_model = model.to_string();
+    let mut saw_chunk_event = false;
+    let mut content_delta_count = 0usize;
+    let mut reasoning_delta_count = 0usize;
+    let mut finish_reasons: Vec<String> = Vec::new();
 
     while let Some(chunk) = chunks.next().await {
         if stream.is_cancelled() {
@@ -606,16 +685,47 @@ async fn call_openai_compatible_streaming(
         while let Some(index) = buffer.find('\n') {
             let line = buffer[..index].trim_end_matches('\r').to_string();
             buffer.drain(..=index);
-            append_stream_event(&line, stream, &mut content, &mut response_model)?;
+            append_stream_event(
+                &line,
+                stream,
+                &mut content,
+                &mut response_model,
+                &mut saw_chunk_event,
+                &mut content_delta_count,
+                &mut reasoning_delta_count,
+                &mut finish_reasons,
+            )?;
         }
     }
-    append_stream_event(&buffer, stream, &mut content, &mut response_model)?;
+    append_stream_event(
+        &buffer,
+        stream,
+        &mut content,
+        &mut response_model,
+        &mut saw_chunk_event,
+        &mut content_delta_count,
+        &mut reasoning_delta_count,
+        &mut finish_reasons,
+    )?;
 
     stream.emit("done", "", None);
+    let diagnostics = if content.trim().is_empty() {
+        Some(format!(
+            "{provider} returned empty streamed output (model={} saw_events={} content_deltas={} reasoning_deltas={} finish_reasons=[{}]).",
+            response_model,
+            saw_chunk_event,
+            content_delta_count,
+            reasoning_delta_count,
+            finish_reasons.join(",")
+        ))
+    } else {
+        None
+    };
     Ok(AiResponse {
         provider: provider.to_string(),
         model: response_model,
         content,
+        diagnostics,
     })
 }
 
@@ -624,15 +734,24 @@ fn append_stream_event(
     stream: &ReportAiStream<'_>,
     content: &mut String,
     response_model: &mut String,
+    saw_chunk_event: &mut bool,
+    content_delta_count: &mut usize,
+    reasoning_delta_count: &mut usize,
+    finish_reasons: &mut Vec<String>,
 ) -> Result<(), ReportAiError> {
     if let Some(event) = parse_stream_line(line)? {
+        *saw_chunk_event = true;
         if let Some(model) = event.model {
             *response_model = model;
         }
 
         for choice in event.choices {
+            if let Some(reason) = choice.finish_reason.clone().filter(|value| !value.is_empty()) {
+                finish_reasons.push(reason);
+            }
             if let Some(delta) = choice.delta.content.filter(|value| !value.is_empty()) {
                 content.push_str(&delta);
+                *content_delta_count += 1;
                 stream.emit("delta", &delta, None);
             }
 
@@ -642,6 +761,7 @@ fn append_stream_event(
                 .or(choice.delta.reasoning_content)
                 .filter(|value| !value.is_empty());
             if let Some(reasoning) = reasoning {
+                *reasoning_delta_count += 1;
                 stream.emit("reasoning", &reasoning, None);
             }
         }
@@ -748,6 +868,47 @@ async fn list_groq_models() -> Result<ReportAiModelList, ReportAiError> {
 
     Ok(ReportAiModelList {
         provider: ReportAiProvider::Groq.as_str().to_string(),
+        models,
+    })
+}
+
+async fn list_nvidia_models() -> Result<ReportAiModelList, ReportAiError> {
+    let response = Client::new()
+        .get(NVIDIA_BUILD_MODELS_URL)
+        .bearer_auth(get_key(NVIDIA_BUILD_KEY_USER)?)
+        .send()
+        .await
+        .map_err(|error| ReportAiError::Provider(error.to_string()))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(ReportAiError::Provider(format!(
+            "nvidia build models request failed with {status}: {body}"
+        )));
+    }
+
+    let body: GroqModelsResponse = response
+        .json()
+        .await
+        .map_err(|error| ReportAiError::Provider(error.to_string()))?;
+    let mut models = body
+        .data
+        .into_iter()
+        .map(|model| ReportAiModel {
+            id: model.id.clone(),
+            name: model.id,
+            provider: ReportAiProvider::NvidiaBuild.as_str().to_string(),
+            context_length: model.context_window,
+            description: model.owned_by.map(|owner| format!("Owned by {owner}")),
+            input_price: None,
+            output_price: None,
+        })
+        .collect::<Vec<_>>();
+    models.sort_by(|left, right| left.name.cmp(&right.name));
+
+    Ok(ReportAiModelList {
+        provider: ReportAiProvider::NvidiaBuild.as_str().to_string(),
         models,
     })
 }
@@ -1035,6 +1196,7 @@ fn key_user(provider: &ReportAiProvider) -> Result<&'static str, ReportAiError> 
     match provider {
         ReportAiProvider::OpenrouterFree => Ok(OPENROUTER_KEY_USER),
         ReportAiProvider::Groq => Ok(GROQ_KEY_USER),
+        ReportAiProvider::NvidiaBuild => Ok(NVIDIA_BUILD_KEY_USER),
         ReportAiProvider::LocalLlamaCpp => Err(ReportAiError::Validation(
             "Local report AI does not use an online API key.".to_string(),
         )),
@@ -1076,6 +1238,7 @@ struct ChatCompletionResponse {
 #[derive(Debug, Deserialize)]
 struct ChatChoice {
     message: ChatMessage,
+    finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1092,6 +1255,7 @@ struct ChatCompletionChunk {
 #[derive(Debug, Deserialize)]
 struct ChatChunkChoice {
     delta: ChatChunkDelta,
+    finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

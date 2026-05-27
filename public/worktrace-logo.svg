@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 982 394" role="img" aria-labelledby="title desc">
+  <title id="title">WorkTrace logo</title>
+  <desc id="desc">WorkTrace wordmark with a blue and cyan trace icon.</desc>
+  <defs>
+    <linearGradient id="ring" x1="156" y1="36" x2="420" y2="360" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2563eb"/>
+      <stop offset="0.48" stop-color="#0284c7"/>
+      <stop offset="1" stop-color="#14e0bd"/>
+    </linearGradient>
+    <linearGradient id="check" x1="250" y1="246" x2="458" y2="78" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0891b2"/>
+      <stop offset="0.62" stop-color="#10e0b2"/>
+      <stop offset="1" stop-color="#19f2c7"/>
+    </linearGradient>
+    <linearGradient id="speed" x1="35" y1="223" x2="206" y2="223" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2563eb"/>
+      <stop offset="0.55" stop-color="#0ea5e9"/>
+      <stop offset="1" stop-color="#14e0bd"/>
+    </linearGradient>
+    <linearGradient id="traceText" x1="520" y1="300" x2="930" y2="300" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2563eb"/>
+      <stop offset="0.45" stop-color="#0ea5e9"/>
+      <stop offset="1" stop-color="#14e0bd"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="982" height="394" fill="transparent"/>
+  <g>
+    <path d="M156 143C186 61 273 18 356 46c22 7 42 19 59 34" fill="none" stroke="url(#ring)" stroke-width="31"/>
+    <path d="M447 119c36 77 8 171-66 215-70 42-159 22-207-43" fill="none" stroke="url(#ring)" stroke-width="31"/>
+    <path d="M196 325h73l18-46 20 80 23-55 13 31h70" fill="none" stroke="#19f2c7" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M249 209l70 72L456 83" fill="none" stroke="url(#check)" stroke-width="52" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M110 174h93M78 219h124M110 264h105" fill="none" stroke="url(#speed)" stroke-width="25" stroke-linecap="round"/>
+    <circle cx="49" cy="219" r="13" fill="#2563eb"/>
+  </g>
+
+  <g font-family="Inter, Segoe UI, Arial, sans-serif" font-style="italic" font-weight="900">
+    <text x="520" y="166" font-size="118" fill="#08224f" stroke="#dbeafe" stroke-width="1.5">Work</text>
+    <text x="520" y="296" font-size="118" fill="url(#traceText)">Trace</text>
+  </g>
+</svg>

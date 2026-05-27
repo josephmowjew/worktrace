@@ -24,6 +24,12 @@ body,
   overflow: hidden;
 }
 
+html.todo-widget-window,
+html.todo-widget-window body,
+html.todo-widget-window #root {
+  background: transparent;
+}
+
 button,
 input,
 textarea,

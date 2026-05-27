@@ -9,7 +9,8 @@ use std::error::Error;
 
 use crate::domain::sparc_force::{
     ConnectSparcForceInput, ListSparcForceRecordsInput, SparcForceCacheRecord,
-    SparcForceConnection, SparcForceImportedData, SparcForceIntegrationStatus,
+    SparcForceConnection, SparcForceImportedData, SparcForceImportedItem,
+    SparcForceIntegrationStatus,
     SparcForceLoginOutcome, SparcForceRecordQueryResult, SparcForceSyncResult,
     VerifySparcForceOtpInput,
 };
@@ -439,7 +440,9 @@ impl SparcForceService {
             .find_case_record(&external_id)
             .await
             .map_err(SparcForceError::Database)?
-            .ok_or_else(|| SparcForceError::Validation("Sparc Force case was not found.".to_string()))?;
+            .ok_or_else(|| {
+                SparcForceError::Validation("Sparc Force case was not found.".to_string())
+            })?;
 
         if case_raw_json_has_description(&cached.raw_json) {
             return Ok(cached);
@@ -458,7 +461,9 @@ impl SparcForceService {
             .find_case_record(&external_id)
             .await
             .map_err(SparcForceError::Database)?
-            .ok_or_else(|| SparcForceError::Validation("Sparc Force case was not found.".to_string()))
+            .ok_or_else(|| {
+                SparcForceError::Validation("Sparc Force case was not found.".to_string())
+            })
     }
 
     pub async fn disconnect(
@@ -698,9 +703,10 @@ async fn fetch_case_detail(
 }
 
 fn merge_case_detail(cached_raw_json: &str, detail: Value) -> Value {
-    serde_json::from_str::<Value>(cached_raw_json)
-        .map(|cached| merge_json_objects(cached, detail))
-        .unwrap_or(detail)
+    match serde_json::from_str::<Value>(cached_raw_json) {
+        Ok(cached) => merge_json_objects(cached, detail),
+        Err(_) => detail,
+    }
 }
 
 fn case_raw_json_has_description(raw_json: &str) -> bool {
@@ -725,7 +731,10 @@ fn case_raw_json_has_description(raw_json: &str) -> bool {
 }
 
 fn merge_json_objects(summary: Value, detail: Value) -> Value {
-    let (Value::Object(mut summary), Value::Object(detail)) = (summary, detail) else {
+    let Value::Object(mut summary) = summary else {
+        return detail;
+    };
+    let Value::Object(detail) = detail else {
         return detail;
     };
 
@@ -917,6 +926,7 @@ async fn status_from_connection(
 ) -> Result<SparcForceIntegrationStatus, SparcForceError> {
     let Some(connection) = connection else {
         return Ok(SparcForceIntegrationStatus {
+            addon_enabled: false,
             connected: false,
             status: "disconnected".to_string(),
             base_url: None,
@@ -958,6 +968,7 @@ async fn status_from_connection(
         .map_err(SparcForceError::Database)?;
 
     Ok(SparcForceIntegrationStatus {
+        addon_enabled: true,
         connected: status == "connected",
         status,
         base_url: Some(connection.base_url.clone()),
@@ -1073,6 +1084,7 @@ pub enum SparcForceError {
     Database(sqlx::Error),
     Keyring(String),
     Provider(String),
+    AddonLocked,
     StandaloneTasksDisabled,
 }
 
@@ -1083,6 +1095,7 @@ impl std::fmt::Display for SparcForceError {
             Self::Database(error) => write!(formatter, "{error}"),
             Self::Keyring(message) => write!(formatter, "Secret storage failed: {message}"),
             Self::Provider(message) => write!(formatter, "{message}"),
+            Self::AddonLocked => write!(formatter, "Sparc Force add-on is not enabled."),
             Self::StandaloneTasksDisabled => write!(formatter, "Standalone tasks are disabled."),
         }
     }

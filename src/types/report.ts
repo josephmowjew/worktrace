@@ -68,7 +68,11 @@ export type SaveDailyReviewNoteInput = {
   includedInReport?: boolean | null;
 };
 
-export type ReportAiProvider = "local_llama_cpp" | "openrouter_free" | "groq";
+export type ReportAiProvider =
+  | "local_llama_cpp"
+  | "openrouter_free"
+  | "groq"
+  | "nvidia_build";
 
 export type ReportPolishInput = {
   draft: string;

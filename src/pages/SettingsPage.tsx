@@ -21,7 +21,7 @@ import { Panel } from "../components/ui/Panel";
 import { SelectField } from "../components/ui/SelectField";
 import { useSpeech } from "../components/ui/SpeechProvider";
 import { useToast } from "../components/ui/ToastProvider";
-import { exportSettingsToFile, getSettings, importSettings, updateSettings } from "../lib/api/settings";
+import { activateSparcForceAddon, exportSettingsToFile, getSettings, importSettings, updateSettings } from "../lib/api/settings";
 import {
   connectGitHubPat,
   disconnectGitHub,
@@ -60,6 +60,8 @@ import type { WeeklyTaskPriority, WeeklyTaskStatus } from "../types/weeklyTask";
 import { sparcForceSyncAnnouncement, syncStartedAnnouncement, taskAnnouncement } from "../lib/announcements";
 import { currentWeekRange } from "../lib/dates";
 import { weeklyTaskQueryRoots } from "../lib/api/queryKeys";
+import { gravatarUrl } from "../lib/gravatar";
+import { appSignature } from "../lib/appSignature";
 
 const workingDays = [
   { label: "Mon", value: "monday" },
@@ -78,15 +80,16 @@ const settingsSchema = z.object({
     .trim()
     .optional()
     .refine((value) => !value || isEmailLike(value), {
-      message: "Use an email-like value",
+      message: "Use a valid email address",
     }),
+  useGravatarProfileImage: z.boolean(),
   defaultManagerName: z.string().optional(),
   gitAuthorEmail: z
     .string()
     .trim()
     .optional()
     .refine((value) => !value || isEmailLike(value), {
-      message: "Use an email-like value",
+      message: "Use a valid email address",
     }),
   defaultReportTemplate: z.enum([
     "professional_weekly_summary",
@@ -112,11 +115,13 @@ const settingsSchema = z.object({
   voiceGroqModel: z.string(),
   voiceOpenrouterModel: z.string(),
   reportAiEnabled: z.boolean(),
-  reportAiProvider: z.enum(["local_llama_cpp", "openrouter_free", "groq"]),
+  reportAiProvider: z.enum(["local_llama_cpp", "openrouter_free", "groq", "nvidia_build"]),
   reportAiOnlineAllowed: z.boolean(),
   reportAiPrivacyAcknowledged: z.boolean(),
   reportAiLocalModelPath: z.string(),
   reportAiGroqModel: z.string(),
+  reportAiNvidiaModel: z.string(),
+  sparcForceAddonEnabled: z.boolean(),
 });
 
 type SettingsFormValues = z.infer<typeof settingsSchema>;
@@ -129,6 +134,7 @@ type IntegrationPanel =
   | "voice"
   | "openrouter"
   | "groq"
+  | "nvidiaBuild"
   | null;
 
 const settingsTabs: { id: SettingsTab; label: string }[] = [
@@ -167,6 +173,7 @@ export function SettingsPage() {
   const [sparcForceEmail, setSparcForceEmail] = useState("");
   const [sparcForcePassword, setSparcForcePassword] = useState("");
   const [sparcForceOtp, setSparcForceOtp] = useState("");
+  const [sparcForceAddonCode, setSparcForceAddonCode] = useState("");
   const calendarSourcesQuery = useQuery({
     queryKey: ["calendarSources"],
     queryFn: listCalendarSources,
@@ -178,6 +185,7 @@ export function SettingsPage() {
   });
   const [openRouterKey, setOpenRouterKey] = useState("");
   const [groqKey, setGroqKey] = useState("");
+  const [nvidiaBuildKey, setNvidiaBuildKey] = useState("");
   const [providerModels, setProviderModels] = useState<
     Partial<Record<ReportAiProvider, ReportAiModelList>>
   >({});
@@ -187,6 +195,7 @@ export function SettingsPage() {
     defaultValues: {
       name: "",
       email: "",
+      useGravatarProfileImage: false,
       defaultManagerName: "",
       gitAuthorEmail: "",
       defaultReportTemplate: "professional_weekly_summary",
@@ -214,6 +223,8 @@ export function SettingsPage() {
       reportAiPrivacyAcknowledged: false,
       reportAiLocalModelPath: "",
       reportAiGroqModel: "llama-3.1-8b-instant",
+      reportAiNvidiaModel: "meta/llama-3.1-70b-instruct",
+      sparcForceAddonEnabled: false,
     },
   });
 
@@ -238,11 +249,15 @@ export function SettingsPage() {
     if (state?.openSettingsTab) {
       setActiveTab(state.openSettingsTab);
     }
-    if (state?.openIntegrationPanel === "sparcForce") {
+    const canOpenSparcForce =
+      form.getValues("sparcForceAddonEnabled") ||
+      sparcForceStatusQuery.data?.addonEnabled ||
+      sparcForceStatusQuery.data?.connected;
+    if (state?.openIntegrationPanel === "sparcForce" && canOpenSparcForce) {
       setActiveTab("integrations");
       setActiveIntegrationPanel("sparcForce");
     }
-  }, [location.state]);
+  }, [form, location.state, sparcForceStatusQuery.data]);
 
   useEffect(() => {
     if (!activeIntegrationPanel || activeTab !== "integrations") return;
@@ -261,6 +276,7 @@ export function SettingsPage() {
       updateSettings({
         name: values.name,
         email: values.email ?? "",
+        useGravatarProfileImage: values.useGravatarProfileImage,
         defaultManagerName: values.defaultManagerName ?? "",
         gitAuthorEmail: values.gitAuthorEmail ?? "",
         defaultReportTemplate: values.defaultReportTemplate,
@@ -288,6 +304,8 @@ export function SettingsPage() {
         reportAiPrivacyAcknowledged: values.reportAiPrivacyAcknowledged,
         reportAiLocalModelPath: values.reportAiLocalModelPath,
         reportAiGroqModel: values.reportAiGroqModel,
+        reportAiNvidiaModel: values.reportAiNvidiaModel,
+        sparcForceAddonEnabled: values.sparcForceAddonEnabled,
     }),
     onSuccess: async (settings) => {
       form.reset(toFormValues(settings));
@@ -435,6 +453,21 @@ export function SettingsPage() {
       toast.error("Sparc Force connect failed", error instanceof Error ? error.message : "Sparc Force could not be connected.");
     },
   });
+  const activateSparcForceAddonMutation = useMutation({
+    mutationFn: () => activateSparcForceAddon(sparcForceAddonCode),
+    onSuccess: async (settings) => {
+      setSparcForceAddonCode("");
+      form.reset(toFormValues(settings));
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["settings"] }),
+        queryClient.invalidateQueries({ queryKey: ["sparcForceIntegrationStatus"] }),
+      ]);
+      toast.success("Add-on unlocked", "The Sparc Force integration is now available.");
+    },
+    onError: (error) => {
+      toast.error("Unlock failed", error instanceof Error ? error.message : "Invalid add-on activation code.");
+    },
+  });
   const verifySparcForceOtpMutation = useMutation({
     mutationFn: () => verifySparcForceLoginOtp({ otpCode: sparcForceOtp }),
     onSuccess: async () => {
@@ -494,6 +527,7 @@ export function SettingsPage() {
     onSuccess: async (_, variables) => {
       if (variables.provider === "openrouter_free") setOpenRouterKey("");
       if (variables.provider === "groq") setGroqKey("");
+      if (variables.provider === "nvidia_build") setNvidiaBuildKey("");
       await reportAiStatusQuery.refetch();
       toast.success("AI provider connected");
     },
@@ -518,6 +552,7 @@ export function SettingsPage() {
     onSuccess: async (message, variables) => {
       if (variables.provider === "openrouter_free") setOpenRouterKey("");
       if (variables.provider === "groq") setGroqKey("");
+      if (variables.provider === "nvidia_build") setNvidiaBuildKey("");
       await reportAiStatusQuery.refetch();
       toast.success("Provider connected", message);
     },
@@ -547,8 +582,16 @@ export function SettingsPage() {
   });
 
   const selectedWorkingDays = form.watch("workingDays");
+  const profileName = form.watch("name");
+  const profileEmail = form.watch("email") ?? "";
+  const useGravatarProfileImage = form.watch("useGravatarProfileImage");
   const githubConnected = Boolean(githubStatusQuery.data?.connected);
   const sparcForceConnected = Boolean(sparcForceStatusQuery.data?.connected);
+  const sparcForceAddonAvailable = Boolean(
+    form.watch("sparcForceAddonEnabled") ||
+      sparcForceStatusQuery.data?.addonEnabled ||
+      sparcForceConnected,
+  );
   const sparcForceOtpRequired = sparcForceStatusQuery.data?.status === "otp_required";
   const calendarConnected = Boolean(
     calendarSourcesQuery.data?.some((source) => source.syncStatus === "connected"),
@@ -560,6 +603,7 @@ export function SettingsPage() {
     "openrouter_free",
   );
   const groqKeyConfigured = isProviderConfigured(reportAiStatusQuery.data, "groq");
+  const nvidiaBuildKeyConfigured = isProviderConfigured(reportAiStatusQuery.data, "nvidia_build");
   const openRouterConfigured =
     openRouterKeyConfigured ||
     form.watch("reportAiProvider") === "openrouter_free" ||
@@ -568,18 +612,21 @@ export function SettingsPage() {
     groqKeyConfigured ||
     form.watch("reportAiProvider") === "groq" ||
     form.watch("voiceTranscriptionProvider") === "groq";
+  const nvidiaBuildConfigured =
+    nvidiaBuildKeyConfigured || form.watch("reportAiProvider") === "nvidia_build";
   const connectedIntegrationCount = [
     githubConnected,
-    sparcForceConnected,
+    sparcForceAddonAvailable && sparcForceConnected,
     calendarConnected,
     voiceConfigured,
     reportAiEnabled,
     openRouterConfigured,
     groqConfigured,
+    nvidiaBuildConfigured,
   ].filter(Boolean).length;
-  const integrationTotal = 7;
+  const integrationTotal = sparcForceAddonAvailable ? 8 : 7;
   const lastSyncLabel =
-    sparcForceStatusQuery.data?.lastSyncedAt
+    sparcForceAddonAvailable && sparcForceStatusQuery.data?.lastSyncedAt
       ? formatTimestamp(sparcForceStatusQuery.data.lastSyncedAt)
       : calendarSourcesQuery.data?.find((source) => source.lastSyncedAt)?.lastSyncedAt
       ? formatTimestamp(
@@ -633,6 +680,8 @@ export function SettingsPage() {
           setOpenRouterKey={setOpenRouterKey}
           groqKey={groqKey}
           setGroqKey={setGroqKey}
+          nvidiaBuildKey={nvidiaBuildKey}
+          setNvidiaBuildKey={setNvidiaBuildKey}
           connectAiMutation={connectAiMutation}
           testAiMutation={testAiMutation}
           connectAndTestAiMutation={connectAndTestAiMutation}
@@ -642,6 +691,7 @@ export function SettingsPage() {
           reportAiStatus={reportAiStatusQuery.data}
           selectedGroqModel={form.watch("reportAiGroqModel")}
           selectedOpenRouterModel={form.watch("voiceOpenrouterModel")}
+          selectedNvidiaModel={form.watch("reportAiNvidiaModel")}
           onSelectModel={(provider, modelId) => {
             if (provider === "groq") {
               form.setValue("reportAiGroqModel", modelId, { shouldDirty: true });
@@ -649,6 +699,9 @@ export function SettingsPage() {
             }
             if (provider === "openrouter_free") {
               form.setValue("voiceOpenrouterModel", modelId, { shouldDirty: true });
+            }
+            if (provider === "nvidia_build") {
+              form.setValue("reportAiNvidiaModel", modelId, { shouldDirty: true });
             }
           }}
           onClose={() => setActiveIntegrationPanel(null)}
@@ -747,50 +800,85 @@ export function SettingsPage() {
       >
         <div className="space-y-4">
           {activeTab === "general" ? (
-          <Panel>
-            <div className="mb-4 flex items-center gap-2 text-base font-semibold text-white">
-              <User className="h-4 w-4 text-cyan-300" />
-              Profile
-            </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              <Field label="Full Name" error={form.formState.errors.name?.message}>
-                <input
-                  className={inputClass}
-                  disabled={settingsQuery.isLoading}
-                  {...form.register("name")}
+          <>
+            <Panel>
+              <div className="mb-4 flex items-center gap-2 text-base font-semibold text-white">
+                <User className="h-4 w-4 text-cyan-300" />
+                Profile
+              </div>
+              <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
+                <ProfileImagePreview
+                  name={profileName}
+                  email={profileEmail}
+                  enabled={useGravatarProfileImage}
+                  onToggle={(checked) =>
+                    form.setValue("useGravatarProfileImage", checked, { shouldDirty: true })
+                  }
                 />
-              </Field>
-              <Field
-                label="Email Address"
-                error={form.formState.errors.email?.message}
-              >
-                <input
-                  className={inputClass}
-                  disabled={settingsQuery.isLoading}
-                  {...form.register("email")}
-                />
-              </Field>
-              <Field label="Default Manager">
-                <input
-                  className={inputClass}
-                  disabled={settingsQuery.isLoading}
-                  placeholder="Manager name"
-                  {...form.register("defaultManagerName")}
-                />
-              </Field>
-              <Field
-                label="Git Author Email"
-                error={form.formState.errors.gitAuthorEmail?.message}
-              >
-                <input
-                  className={inputClass}
-                  disabled={settingsQuery.isLoading}
-                  placeholder="you@example.com"
-                  {...form.register("gitAuthorEmail")}
-                />
-              </Field>
-            </div>
-          </Panel>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Field label="Full Name" error={form.formState.errors.name?.message}>
+                    <input
+                      className={inputClass}
+                      disabled={settingsQuery.isLoading}
+                      {...form.register("name")}
+                    />
+                  </Field>
+                  <Field
+                    label="Email Address"
+                    error={form.formState.errors.email?.message}
+                  >
+                    <input
+                      className={inputClass}
+                      disabled={settingsQuery.isLoading}
+                      {...form.register("email")}
+                    />
+                  </Field>
+                  <Field label="Default Manager">
+                    <input
+                      className={inputClass}
+                      disabled={settingsQuery.isLoading}
+                      placeholder="Manager name"
+                      {...form.register("defaultManagerName")}
+                    />
+                  </Field>
+                  <Field
+                    label="Git Author Email"
+                    error={form.formState.errors.gitAuthorEmail?.message}
+                  >
+                    <input
+                      className={inputClass}
+                      disabled={settingsQuery.isLoading}
+                      placeholder="you@example.com"
+                      {...form.register("gitAuthorEmail")}
+                    />
+                  </Field>
+                </div>
+              </div>
+            </Panel>
+            <Panel>
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <div className="mb-2 flex items-center gap-2 text-base font-semibold text-white">
+                    <Sparkles className="h-4 w-4 text-cyan-300" />
+                    Application Signature
+                </div>
+                <p className="text-sm text-slate-300">{appSignature.developerCredit}</p>
+                <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-500">
+                  This credit is included in the application metadata, Git metadata, and installer bundle.
+                </p>
+              </div>
+              <a
+                href={appSignature.developerProfileUrl}
+                target="_blank"
+                rel="noreferrer"
+                  className="inline-flex items-center gap-2 rounded-xl border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-xs font-semibold text-cyan-100 transition hover:border-cyan-300/35 hover:bg-cyan-300/15"
+                >
+                  GitHub profile
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              </div>
+            </Panel>
+          </>
           ) : null}
 
           {activeTab === "portability" ? (
@@ -1025,7 +1113,7 @@ export function SettingsPage() {
               />
               <ToggleField
                 label="Allow online providers"
-                description="Permit selected report drafts and context to be sent to OpenRouter or Groq."
+                description="Permit selected report drafts and context to be sent to OpenRouter, Groq, or NVIDIA Build."
                 checked={form.watch("reportAiOnlineAllowed")}
                 onChange={(checked) =>
                   form.setValue("reportAiOnlineAllowed", checked, { shouldDirty: true })
@@ -1040,6 +1128,7 @@ export function SettingsPage() {
                     { value: "local_llama_cpp", label: "Local llama.cpp", icon: Monitor },
                     { value: "openrouter_free", label: "OpenRouter free router", icon: PlugZap },
                     { value: "groq", label: "Groq", icon: PlugZap },
+                    { value: "nvidia_build", label: "NVIDIA Build", icon: PlugZap },
                   ]}
                   size="sm"
                 />
@@ -1082,7 +1171,7 @@ export function SettingsPage() {
                   <div>
                     <h3 className="text-sm font-semibold text-white">Online Provider Keys</h3>
                     <p className="mt-1 text-xs leading-5 text-slate-400">
-                      Connect OpenRouter or Groq here. Keys stay in OS credential storage and are never returned to the UI.
+                      Connect OpenRouter, Groq, or NVIDIA Build here. Keys stay in OS credential storage and are never returned to the UI.
                     </p>
                   </div>
                   <Badge tone={form.watch("reportAiOnlineAllowed") ? "blue" : "slate"}>
@@ -1114,6 +1203,19 @@ export function SettingsPage() {
                     onTest={() => testAiMutation.mutate("groq")}
                     onDisconnect={() => disconnectAiMutation.mutate("groq")}
                   />
+                  <ProviderKeyRow
+                    label="NVIDIA Build"
+                    value={nvidiaBuildKey}
+                    status={providerStatus(reportAiStatusQuery.data, "nvidia_build")}
+                    configured={isProviderConfigured(reportAiStatusQuery.data, "nvidia_build")}
+                    isPending={connectAiMutation.isPending || testAiMutation.isPending || disconnectAiMutation.isPending}
+                    onChange={setNvidiaBuildKey}
+                    onConnect={() =>
+                      connectAiMutation.mutate({ provider: "nvidia_build", apiKey: nvidiaBuildKey })
+                    }
+                    onTest={() => testAiMutation.mutate("nvidia_build")}
+                    onDisconnect={() => disconnectAiMutation.mutate("nvidia_build")}
+                  />
                 </div>
                 <div className="mt-4">
                   <Field label="Groq Report Model">
@@ -1122,6 +1224,14 @@ export function SettingsPage() {
                       disabled={settingsQuery.isLoading}
                       placeholder="llama-3.1-8b-instant"
                       {...form.register("reportAiGroqModel")}
+                    />
+                  </Field>
+                  <Field label="NVIDIA Build Report Model">
+                    <input
+                      className={inputClass}
+                      disabled={settingsQuery.isLoading}
+                      placeholder="meta/llama-3.1-70b-instruct"
+                      {...form.register("reportAiNvidiaModel")}
                     />
                   </Field>
                 </div>
@@ -1222,18 +1332,20 @@ export function SettingsPage() {
                   onDanger={() => disconnectGithubMutation.mutate()}
                   disabledDanger={disconnectGithubMutation.isPending}
                 />
-                <IntegrationCard
-                  icon={<PlugZap className="h-8 w-8 text-cyan-300" />}
-                  title="Sparc Force"
-                  connected={sparcForceConnected}
-                  description="Import read-only cases, projects, project tasks, and standalone tasks from Sparc Force."
-                  primaryLabel="Manage"
-                  primaryIcon
-                  onPrimary={() => setActiveIntegrationPanel("sparcForce")}
-                  dangerLabel={sparcForceConnected ? "Disconnect" : undefined}
-                  onDanger={() => disconnectSparcForceMutation.mutate()}
-                  disabledDanger={disconnectSparcForceMutation.isPending}
-                />
+                {sparcForceAddonAvailable ? (
+                  <IntegrationCard
+                    icon={<PlugZap className="h-8 w-8 text-cyan-300" />}
+                    title="Sparc Force"
+                    connected={sparcForceConnected}
+                    description="Import read-only cases, projects, project tasks, and standalone tasks from Sparc Force."
+                    primaryLabel="Manage"
+                    primaryIcon
+                    onPrimary={() => setActiveIntegrationPanel("sparcForce")}
+                    dangerLabel={sparcForceConnected ? "Disconnect" : undefined}
+                    onDanger={() => disconnectSparcForceMutation.mutate()}
+                    disabledDanger={disconnectSparcForceMutation.isPending}
+                  />
+                ) : null}
                 <IntegrationCard
                   icon={<BrandIcon icon={siGit} />}
                   title="Git Repositories"
@@ -1257,6 +1369,14 @@ export function SettingsPage() {
                   disabledDanger
                 />
               </div>
+              {!sparcForceAddonAvailable ? (
+                <AddOnUnlockPanel
+                  code={sparcForceAddonCode}
+                  onCodeChange={setSparcForceAddonCode}
+                  isPending={activateSparcForceAddonMutation.isPending}
+                  onUnlock={() => activateSparcForceAddonMutation.mutate()}
+                />
+              ) : null}
             </section>
             {activePanelPlacement === "development" ? renderIntegrationSetupPanel() : null}
 
@@ -1326,6 +1446,22 @@ export function SettingsPage() {
                   }}
                   dangerLabel={groqKeyConfigured ? "Disconnect" : undefined}
                   onDanger={() => disconnectAiMutation.mutate("groq")}
+                  disabledDanger={disconnectAiMutation.isPending}
+                />
+                <IntegrationCard
+                  icon={<Sparkles className="h-8 w-8 text-emerald-300" />}
+                  title="NVIDIA Build"
+                  connected={nvidiaBuildKeyConfigured}
+                  description="Use NVIDIA Build hosted models for report polish and readiness analysis."
+                  primaryLabel="Manage Models"
+                  primaryIcon
+                  onPrimary={() => {
+                    form.setValue("reportAiProvider", "nvidia_build", { shouldDirty: true });
+                    form.setValue("reportAiOnlineAllowed", true, { shouldDirty: true });
+                    setActiveIntegrationPanel("nvidiaBuild");
+                  }}
+                  dangerLabel={nvidiaBuildKeyConfigured ? "Disconnect" : undefined}
+                  onDanger={() => disconnectAiMutation.mutate("nvidia_build")}
                   disabledDanger={disconnectAiMutation.isPending}
                 />
               </div>
@@ -1474,6 +1610,49 @@ function IntegrationMetric({
   );
 }
 
+function AddOnUnlockPanel({
+  code,
+  onCodeChange,
+  isPending,
+  onUnlock,
+}: {
+  code: string;
+  onCodeChange: (code: string) => void;
+  isPending: boolean;
+  onUnlock: () => void;
+}) {
+  return (
+    <div className="mt-4 rounded-2xl border border-cyan-300/15 bg-cyan-400/8 p-4">
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="min-w-56 flex-1">
+          <label className="text-xs font-semibold text-slate-200" htmlFor="addon-code">
+            Unlock add-on
+          </label>
+          <p className="mt-1 text-xs leading-5 text-slate-500">
+            Enter your activation code to reveal an additional private integration.
+          </p>
+          <input
+            id="addon-code"
+            value={code}
+            onChange={(event) => onCodeChange(event.currentTarget.value)}
+            className={`${inputClass} mt-3`}
+            placeholder="Activation code"
+          />
+        </div>
+        <Button
+          type="button"
+          variant="primary"
+          disabled={!code.trim() || isPending}
+          onClick={onUnlock}
+        >
+          <PlugZap className="h-4 w-4" />
+          {isPending ? "Unlocking..." : "Unlock"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function BrandIcon({ icon }: { icon: SimpleIcon }) {
   return (
     <svg
@@ -1613,6 +1792,8 @@ function IntegrationSetupPanel({
   setOpenRouterKey,
   groqKey,
   setGroqKey,
+  nvidiaBuildKey,
+  setNvidiaBuildKey,
   connectAiMutation,
   testAiMutation,
   connectAndTestAiMutation,
@@ -1622,6 +1803,7 @@ function IntegrationSetupPanel({
   reportAiStatus,
   selectedGroqModel,
   selectedOpenRouterModel,
+  selectedNvidiaModel,
   onSelectModel,
   onClose,
   onOpenAudio,
@@ -1663,6 +1845,8 @@ function IntegrationSetupPanel({
   setOpenRouterKey: (value: string) => void;
   groqKey: string;
   setGroqKey: (value: string) => void;
+  nvidiaBuildKey: string;
+  setNvidiaBuildKey: (value: string) => void;
   connectAiMutation: PendingMutation & {
     mutate: (input: { provider: ReportAiProvider; apiKey: string }) => void;
   };
@@ -1676,6 +1860,7 @@ function IntegrationSetupPanel({
   reportAiStatus: ReportAiStatus | undefined;
   selectedGroqModel: string;
   selectedOpenRouterModel: string;
+  selectedNvidiaModel: string;
   onSelectModel: (provider: ReportAiProvider, modelId: string) => void;
   onClose: () => void;
   onOpenAudio: () => void;
@@ -1968,6 +2153,30 @@ function IntegrationSetupPanel({
           onDisconnect={() => disconnectAiMutation.mutate("groq")}
           onRefreshModels={() => listModelsMutation.mutate("groq")}
           onSelectModel={(modelId) => onSelectModel("groq", modelId)}
+        />
+      ) : null}
+
+      {activePanel === "nvidiaBuild" ? (
+        <ProviderModelManager
+          label="NVIDIA Build"
+          provider="nvidia_build"
+          value={nvidiaBuildKey}
+          status={providerStatus(reportAiStatus, "nvidia_build")}
+          configured={isProviderConfigured(reportAiStatus, "nvidia_build")}
+          isPending={pending}
+          selectedModel={selectedNvidiaModel}
+          models={providerModels.nvidia_build?.models ?? []}
+          onChange={setNvidiaBuildKey}
+          onConnect={() =>
+            connectAiMutation.mutate({ provider: "nvidia_build", apiKey: nvidiaBuildKey })
+          }
+          onTest={() => testAiMutation.mutate("nvidia_build")}
+          onConnectAndTest={() =>
+            connectAndTestAiMutation.mutate({ provider: "nvidia_build", apiKey: nvidiaBuildKey })
+          }
+          onDisconnect={() => disconnectAiMutation.mutate("nvidia_build")}
+          onRefreshModels={() => listModelsMutation.mutate("nvidia_build")}
+          onSelectModel={(modelId) => onSelectModel("nvidia_build", modelId)}
         />
       ) : null}
 
@@ -2618,11 +2827,13 @@ function SparcForceImportedDetails({
   compact = false,
   onImportTask,
   isImportingTask = false,
+  isLoadingDetail = false,
 }: {
   item: SparcForceImportedItem | undefined;
   compact?: boolean;
   onImportTask?: (item: SparcForceImportedItem) => void;
   isImportingTask?: boolean;
+  isLoadingDetail?: boolean;
 }) {
   if (!item) {
     return (
@@ -2699,6 +2910,9 @@ function SparcForceImportedDetails({
 
       <div className="mt-4 rounded-lg border border-white/8 bg-slate-950/42 p-4">
         <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">{sectionTitle}</p>
+        {isLoadingDetail ? (
+          <p className="mt-2 text-xs font-semibold text-blue-200/80">Loading case details...</p>
+        ) : null}
         {description ? (
           descriptionIsHtml ? (
             <div
@@ -3443,6 +3657,8 @@ function integrationPanelTitle(panel: Exclude<IntegrationPanel, null>) {
       return "OpenRouter Provider";
     case "groq":
       return "Groq Provider";
+    case "nvidiaBuild":
+      return "NVIDIA Build Provider";
   }
 }
 
@@ -3498,6 +3714,70 @@ function ToggleField({
   );
 }
 
+function ProfileImagePreview({
+  name,
+  email,
+  enabled,
+  onToggle,
+}: {
+  name: string;
+  email: string;
+  enabled: boolean;
+  onToggle: (checked: boolean) => void;
+}) {
+  const [imageFailed, setImageFailed] = useState(false);
+  const hasUsableEmail = isEmailLike(email);
+  const imageUrl = enabled && hasUsableEmail ? gravatarUrl(email, 192) : null;
+  const initials = initialsForName(name || email);
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [imageUrl]);
+
+  return (
+    <div className="flex items-center gap-4 rounded-2xl border border-white/10 bg-slate-950/45 p-4 lg:block">
+      <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-full border border-cyan-300/25 bg-gradient-to-br from-cyan-400/25 via-blue-500/15 to-slate-900 shadow-lg shadow-cyan-950/25 lg:mx-auto lg:h-24 lg:w-24">
+        {imageUrl && !imageFailed ? (
+          <img
+            src={imageUrl}
+            alt=""
+            className="h-full w-full object-cover"
+            onError={() => setImageFailed(true)}
+          />
+        ) : (
+          <div className="grid h-full w-full place-items-center text-xl font-semibold text-cyan-100 lg:text-2xl">
+            {initials}
+          </div>
+        )}
+      </div>
+      <div className="min-w-0 lg:mt-3">
+        <div className="text-sm font-semibold text-slate-100">Profile image</div>
+        <div className="mt-1 text-xs leading-5 text-slate-400">
+          {profileImageStatusText({
+            enabled,
+            hasUsableEmail,
+            hasLoadedImage: Boolean(imageUrl && !imageFailed),
+          })}
+        </div>
+        <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-xl border border-white/10 bg-slate-900/55 p-2 text-left">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(event) => onToggle(event.currentTarget.checked)}
+            className="mt-0.5 h-4 w-4 accent-cyan-300"
+          />
+          <span className="text-xs leading-5 text-slate-300">
+            Use Gravatar
+            <span className="block text-slate-500">
+              Loads an external image from Gravatar for this email.
+            </span>
+          </span>
+        </label>
+      </div>
+    </div>
+  );
+}
+
 const inputClass =
   "h-10 w-full rounded-xl border border-white/10 bg-slate-950/75 px-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-blue-300/50 focus:ring-2 focus:ring-blue-500/15";
 const filterSelectClass =
@@ -3505,13 +3785,59 @@ const filterSelectClass =
 
 function isEmailLike(value: string) {
   const trimmed = value.trim();
-  return trimmed.includes("@") && !trimmed.startsWith("@") && !trimmed.endsWith("@");
+  const [localPart, domain, extra] = trimmed.split("@");
+  return Boolean(
+    localPart &&
+      domain &&
+      !extra &&
+      domain.includes(".") &&
+      !domain.startsWith(".") &&
+      !domain.endsWith("."),
+  );
+}
+
+function profileImageStatusText({
+  enabled,
+  hasUsableEmail,
+  hasLoadedImage,
+}: {
+  enabled: boolean;
+  hasUsableEmail: boolean;
+  hasLoadedImage: boolean;
+}) {
+  if (!enabled) {
+    return "WorkTrace is using local initials until Gravatar is enabled.";
+  }
+
+  if (!hasUsableEmail) {
+    return "Enter a valid profile email before loading Gravatar.";
+  }
+
+  if (hasLoadedImage) {
+    return "Loaded from Gravatar using your profile email.";
+  }
+
+  return "No Gravatar found for this email, so WorkTrace is using these initials.";
+}
+
+function initialsForName(value: string) {
+  const parts = value
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const initials = parts
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+
+  return initials || "WT";
 }
 
 function toFormValues(settings: Settings): SettingsFormValues {
   return {
     name: settings.name,
     email: settings.email,
+    useGravatarProfileImage: settings.useGravatarProfileImage,
     defaultManagerName: settings.defaultManagerName,
     gitAuthorEmail: settings.gitAuthorEmail,
     defaultReportTemplate: isReportTemplate(settings.defaultReportTemplate)
@@ -3547,6 +3873,8 @@ function toFormValues(settings: Settings): SettingsFormValues {
     reportAiPrivacyAcknowledged: settings.reportAiPrivacyAcknowledged,
     reportAiLocalModelPath: settings.reportAiLocalModelPath,
     reportAiGroqModel: settings.reportAiGroqModel || "llama-3.1-8b-instant",
+    reportAiNvidiaModel: settings.reportAiNvidiaModel || "meta/llama-3.1-70b-instruct",
+    sparcForceAddonEnabled: settings.sparcForceAddonEnabled,
   };
 }
 
@@ -3563,7 +3891,7 @@ function isReportTemplate(
 function isReportAiProvider(
   value: string,
 ): value is SettingsFormValues["reportAiProvider"] {
-  return ["local_llama_cpp", "openrouter_free", "groq"].includes(value);
+  return ["local_llama_cpp", "openrouter_free", "groq", "nvidia_build"].includes(value);
 }
 
 function isVoiceTranscriptionProvider(

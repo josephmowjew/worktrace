@@ -1,4 +1,5 @@
 pub mod activity;
+pub mod app_updates;
 pub mod calendar;
 pub mod daily_plan;
 pub mod focus_sessions;

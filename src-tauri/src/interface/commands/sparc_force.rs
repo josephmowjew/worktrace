@@ -14,7 +14,7 @@ use crate::domain::weekly_task::{
     CreateWeeklyTaskInput, WeeklyTaskPriority, WeeklyTaskStatus, WeeklyTaskType,
 };
 use crate::infrastructure::database::repositories::{
-    SparcForceConnectionRepository, WeeklyTaskRepository,
+    SettingsRepository, SparcForceConnectionRepository, WeeklyTaskRepository,
 };
 use crate::interface::dto::app_result::AppResult;
 use crate::AppState;
@@ -24,9 +24,10 @@ pub async fn get_sparc_force_integration_status(
     state: State<'_, AppState>,
 ) -> Result<AppResult<SparcForceIntegrationStatus>, String> {
     let repository = SparcForceConnectionRepository::new(state.database.pool());
+    let settings_repository = SettingsRepository::new(state.database.pool());
 
     Ok(match SparcForceService::status(&repository).await {
-        Ok(status) => AppResult::ok(status),
+        Ok(status) => AppResult::ok(apply_addon_availability(&settings_repository, status).await),
         Err(error) => sparc_force_error(error),
     })
 }
@@ -38,6 +39,11 @@ pub async fn connect_sparc_force(
 ) -> Result<AppResult<SparcForceLoginOutcome>, String> {
     let _guard = state.sparc_force_auth_lock.lock().await;
     let repository = SparcForceConnectionRepository::new(state.database.pool());
+    let settings_repository = SettingsRepository::new(state.database.pool());
+
+    if !sparc_force_addon_available(&settings_repository, &repository).await {
+        return Ok(sparc_force_error(SparcForceError::AddonLocked));
+    }
 
     Ok(match SparcForceService::connect(&repository, input).await {
         Ok(outcome) => AppResult::ok(outcome),
@@ -52,6 +58,11 @@ pub async fn verify_sparc_force_login_otp(
 ) -> Result<AppResult<SparcForceIntegrationStatus>, String> {
     let _guard = state.sparc_force_auth_lock.lock().await;
     let repository = SparcForceConnectionRepository::new(state.database.pool());
+    let settings_repository = SettingsRepository::new(state.database.pool());
+
+    if !sparc_force_addon_available(&settings_repository, &repository).await {
+        return Ok(sparc_force_error(SparcForceError::AddonLocked));
+    }
 
     Ok(
         match SparcForceService::verify_otp(&repository, input).await {
@@ -67,6 +78,11 @@ pub async fn test_sparc_force_connection(
 ) -> Result<AppResult<SparcForceIntegrationStatus>, String> {
     let _guard = state.sparc_force_auth_lock.lock().await;
     let repository = SparcForceConnectionRepository::new(state.database.pool());
+    let settings_repository = SettingsRepository::new(state.database.pool());
+
+    if !sparc_force_addon_available(&settings_repository, &repository).await {
+        return Ok(sparc_force_error(SparcForceError::AddonLocked));
+    }
 
     Ok(
         match SparcForceService::test_connection(&repository).await {
@@ -82,6 +98,11 @@ pub async fn sync_sparc_force(
 ) -> Result<AppResult<SparcForceSyncResult>, String> {
     let _guard = state.sparc_force_auth_lock.lock().await;
     let repository = SparcForceConnectionRepository::new(state.database.pool());
+    let settings_repository = SettingsRepository::new(state.database.pool());
+
+    if !sparc_force_addon_available(&settings_repository, &repository).await {
+        return Ok(sparc_force_error(SparcForceError::AddonLocked));
+    }
 
     Ok(match SparcForceService::sync(&repository).await {
         Ok(result) => AppResult::ok(result),
@@ -94,6 +115,11 @@ pub async fn list_sparc_force_imported_data(
     state: State<'_, AppState>,
 ) -> Result<AppResult<SparcForceImportedData>, String> {
     let repository = SparcForceConnectionRepository::new(state.database.pool());
+    let settings_repository = SettingsRepository::new(state.database.pool());
+
+    if !sparc_force_addon_available(&settings_repository, &repository).await {
+        return Ok(sparc_force_error(SparcForceError::AddonLocked));
+    }
 
     Ok(match SparcForceService::imported_data(&repository).await {
         Ok(data) => AppResult::ok(data),
@@ -107,6 +133,11 @@ pub async fn list_sparc_force_records(
     input: ListSparcForceRecordsInput,
 ) -> Result<AppResult<SparcForceRecordQueryResult>, String> {
     let repository = SparcForceConnectionRepository::new(state.database.pool());
+    let settings_repository = SettingsRepository::new(state.database.pool());
+
+    if !sparc_force_addon_available(&settings_repository, &repository).await {
+        return Ok(sparc_force_error(SparcForceError::AddonLocked));
+    }
 
     Ok(
         match SparcForceService::list_records(&repository, input).await {
@@ -122,6 +153,11 @@ pub async fn get_sparc_force_case_detail(
     external_id: String,
 ) -> Result<AppResult<SparcForceImportedItem>, String> {
     let repository = SparcForceConnectionRepository::new(state.database.pool());
+    let settings_repository = SettingsRepository::new(state.database.pool());
+
+    if !sparc_force_addon_available(&settings_repository, &repository).await {
+        return Ok(sparc_force_error(SparcForceError::AddonLocked));
+    }
 
     Ok(
         match SparcForceService::get_case_detail(&repository, external_id).await {
@@ -137,9 +173,10 @@ pub async fn disconnect_sparc_force(
 ) -> Result<AppResult<SparcForceIntegrationStatus>, String> {
     let _guard = state.sparc_force_auth_lock.lock().await;
     let repository = SparcForceConnectionRepository::new(state.database.pool());
+    let settings_repository = SettingsRepository::new(state.database.pool());
 
     Ok(match SparcForceService::disconnect(&repository).await {
-        Ok(status) => AppResult::ok(status),
+        Ok(status) => AppResult::ok(apply_addon_availability(&settings_repository, status).await),
         Err(error) => sparc_force_error(error),
     })
 }
@@ -150,7 +187,12 @@ pub async fn import_sparc_force_task_to_weekly_task(
     input: ImportSparcForceTaskInput,
 ) -> Result<AppResult<ImportSparcForceTaskOutcome>, String> {
     let sparc_repository = SparcForceConnectionRepository::new(state.database.pool());
+    let settings_repository = SettingsRepository::new(state.database.pool());
     let weekly_repository = WeeklyTaskRepository::new(state.database.pool());
+
+    if !sparc_force_addon_available(&settings_repository, &sparc_repository).await {
+        return Ok(sparc_force_error(SparcForceError::AddonLocked));
+    }
 
     let lookup_source = input.external_kind.as_deref().unwrap_or(&input.source);
     let record = match sparc_repository
@@ -209,11 +251,48 @@ fn sparc_force_error<T: Serialize>(error: SparcForceError) -> AppResult<T> {
         SparcForceError::Database(error) => AppResult::err("DATABASE_ERROR", error.to_string()),
         SparcForceError::Keyring(message) => AppResult::err("SECRET_STORAGE_ERROR", message),
         SparcForceError::Provider(message) => AppResult::err("SPARC_FORCE_ERROR", message),
+        SparcForceError::AddonLocked => AppResult::err(
+            "SPARC_FORCE_ADDON_LOCKED",
+            "Sparc Force add-on is not enabled.",
+        ),
         SparcForceError::StandaloneTasksDisabled => AppResult::err(
             "STANDALONE_TASKS_DISABLED",
             "Sparc Force standalone tasks are disabled.",
         ),
     }
+}
+
+async fn sparc_force_addon_available(
+    settings_repository: &SettingsRepository<'_>,
+    sparc_repository: &SparcForceConnectionRepository<'_>,
+) -> bool {
+    settings_repository
+        .get()
+        .await
+        .map(|settings| settings.sparc_force_addon_enabled)
+        .unwrap_or(false)
+        || sparc_repository
+            .get()
+            .await
+            .ok()
+            .flatten()
+            .is_some()
+}
+
+async fn apply_addon_availability(
+    settings_repository: &SettingsRepository<'_>,
+    mut status: SparcForceIntegrationStatus,
+) -> SparcForceIntegrationStatus {
+    let enabled_by_setting = settings_repository
+        .get()
+        .await
+        .map(|settings| settings.sparc_force_addon_enabled)
+        .unwrap_or(false);
+    status.addon_enabled = enabled_by_setting || status.connected || status.base_url.is_some();
+    if !status.addon_enabled && !status.connected {
+        status.status = "addon_locked".to_string();
+    }
+    status
 }
 
 fn create_weekly_task_from_sparc_force(

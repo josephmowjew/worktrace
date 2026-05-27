@@ -1,6 +1,7 @@
 import type { WeeklyTask, WeeklyTaskPriority, WeeklyTaskStatus } from "./weeklyTask";
 
 export type SparcForceIntegrationStatus = {
+  addonEnabled: boolean;
   connected: boolean;
   status: string;
   baseUrl?: string | null;

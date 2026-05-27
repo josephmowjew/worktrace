@@ -5,6 +5,7 @@ import type {
   ImportSparcForceTaskOutcome,
   ListSparcForceRecordsInput,
   SparcForceImportedData,
+  SparcForceImportedItem,
   SparcForceIntegrationStatus,
   SparcForceLoginOutcome,
   SparcForceRecordQueryResult,

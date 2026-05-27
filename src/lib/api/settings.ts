@@ -15,6 +15,10 @@ export function updateSettings(input: UpdateSettingsInput) {
   return callCommand<Settings>("update_settings", { input });
 }
 
+export function activateSparcForceAddon(code: string) {
+  return callCommand<Settings>("activate_sparc_force_addon", { code });
+}
+
 export function validateBackupLocation(location: string) {
   return callCommand<BackupLocationValidation>("validate_backup_location", { location });
 }
