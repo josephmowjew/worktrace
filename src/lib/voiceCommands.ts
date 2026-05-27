@@ -37,6 +37,18 @@ export function normalizeVoiceTranscript(transcript: string): NormalizedVoiceCom
   }
 
   if (
+    [
+      "sync sparc force",
+      "sync spark force",
+      "sync support",
+      "import sparc force",
+      "import spark force",
+    ].includes(normalized)
+  ) {
+    return powerCommand("sparc_force_sync", "Sync Sparc Force", false);
+  }
+
+  if (
     ["report", "prepare report", "prepare weekly report", "weekly report"].includes(normalized)
   ) {
     return powerCommand("report", "Prepare weekly report", false);
@@ -87,6 +99,9 @@ function parseNavigation(normalized: string): NormalizedVoiceCommand | null {
     reports: { path: "/reports", label: "Go to Reports" },
     guide: { path: "/guide", label: "Go to Guide" },
     settings: { path: "/settings", label: "Go to Settings" },
+    "sparc force": { path: "/settings", label: "Go to Sparc Force" },
+    "spark force": { path: "/settings", label: "Go to Sparc Force" },
+    "support integration": { path: "/settings", label: "Go to Sparc Force" },
   };
 
   const route = routes[target];

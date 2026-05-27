@@ -20,7 +20,11 @@ import { Button } from "../components/ui/Button";
 import { Panel } from "../components/ui/Panel";
 import { SelectField } from "../components/ui/SelectField";
 import { useToast } from "../components/ui/ToastProvider";
-import { getSettings, updateSettings, validateBackupLocation } from "../lib/api/settings";
+import {
+  getSettings,
+  updateSettings,
+  validateBackupLocation,
+} from "../lib/api/settings";
 import type { BackupLocationValidation, Settings } from "../types/settings";
 
 const days = [

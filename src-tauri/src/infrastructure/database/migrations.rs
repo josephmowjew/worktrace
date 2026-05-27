@@ -104,10 +104,222 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .await?;
 
     sqlx::raw_sql(CALENDAR_SQL).execute(pool).await?;
+    sqlx::raw_sql(DAILY_PLAN_SQL).execute(pool).await?;
     sqlx::raw_sql(GIT_METADATA_SQL).execute(pool).await?;
+    sqlx::raw_sql(SPARC_FORCE_SQL).execute(pool).await?;
+    run_sparc_force_dedup_migration(pool).await?;
 
     Ok(())
 }
+
+async fn run_sparc_force_dedup_migration(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    sqlx::query("ALTER TABLE sparc_force_tasks ADD COLUMN external_kind TEXT;")
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("ALTER TABLE sparc_force_cases ADD COLUMN created_at_remote TEXT;")
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("ALTER TABLE sparc_force_projects ADD COLUMN created_at_remote TEXT;")
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("ALTER TABLE sparc_force_tasks ADD COLUMN created_at_remote TEXT;")
+        .execute(pool)
+        .await
+        .ok();
+
+    sqlx::raw_sql(
+        r#"
+        UPDATE sparc_force_tasks
+        SET external_kind = CASE
+          WHEN source IN ('project_task_user', 'project_task_case') THEN 'project_task'
+          WHEN source IN ('standalone_assigned', 'case_task') THEN 'task'
+          ELSE COALESCE(NULLIF(source, ''), 'task')
+        END
+        WHERE external_kind IS NULL OR external_kind = '';
+
+        DROP INDEX IF EXISTS idx_sparc_force_native_links_unique;
+
+        UPDATE sparc_force_native_links
+        SET external_id =
+          CASE
+            WHEN external_id LIKE 'project_task_user:%'
+              THEN 'project_task:' || substr(external_id, length('project_task_user:') + 1)
+            WHEN external_id LIKE 'project_task_case:%'
+              THEN 'project_task:' || substr(external_id, length('project_task_case:') + 1)
+            WHEN external_id LIKE 'standalone_assigned:%'
+              THEN 'task:' || substr(external_id, length('standalone_assigned:') + 1)
+            WHEN external_id LIKE 'case_task:%'
+              THEN 'task:' || substr(external_id, length('case_task:') + 1)
+            ELSE external_id
+          END
+        WHERE external_kind = 'task';
+
+        UPDATE weekly_tasks
+        SET status = 'dropped',
+            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        WHERE id IN (
+          SELECT native_id
+          FROM (
+            SELECT links.native_id,
+                   ROW_NUMBER() OVER (
+                     PARTITION BY links.connection_id, links.external_kind, links.external_id, links.native_kind
+                     ORDER BY weekly_tasks.created_at ASC, links.created_at ASC, links.native_id ASC
+                   ) AS rn
+            FROM sparc_force_native_links links
+            LEFT JOIN weekly_tasks ON weekly_tasks.id = links.native_id
+            WHERE links.external_kind = 'task'
+              AND links.native_kind = 'weekly_task'
+          )
+          WHERE rn > 1
+        );
+
+        DELETE FROM sparc_force_native_links
+        WHERE id IN (
+          SELECT id
+          FROM (
+            SELECT links.id,
+                   ROW_NUMBER() OVER (
+                     PARTITION BY links.connection_id, links.external_kind, links.external_id, links.native_kind
+                     ORDER BY weekly_tasks.created_at ASC, links.created_at ASC, links.native_id ASC
+                   ) AS rn
+            FROM sparc_force_native_links links
+            LEFT JOIN weekly_tasks ON weekly_tasks.id = links.native_id
+            WHERE links.external_kind = 'task'
+              AND links.native_kind = 'weekly_task'
+          )
+          WHERE rn > 1
+        );
+
+        DELETE FROM sparc_force_tasks
+        WHERE rowid IN (
+          SELECT rowid
+          FROM (
+            SELECT rowid,
+                   ROW_NUMBER() OVER (
+                     PARTITION BY connection_id, external_kind, external_id
+                     ORDER BY
+                       CASE WHEN case_external_id IS NOT NULL AND case_external_id != '' THEN 0 ELSE 1 END,
+                       CASE WHEN project_external_id IS NOT NULL AND project_external_id != '' THEN 0 ELSE 1 END,
+                       COALESCE(updated_at_remote, '') DESC,
+                       imported_at DESC,
+                       source ASC
+                   ) AS rn
+            FROM sparc_force_tasks
+          )
+          WHERE rn > 1
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_sparc_force_tasks_canonical
+          ON sparc_force_tasks(connection_id, external_kind, external_id);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_sparc_force_native_links_unique
+          ON sparc_force_native_links(connection_id, external_kind, external_id, native_kind, native_id);
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+const SPARC_FORCE_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS sparc_force_connections (
+  id TEXT PRIMARY KEY,
+  base_url TEXT NOT NULL,
+  status TEXT NOT NULL,
+  account_email TEXT NOT NULL,
+  remote_user_id INTEGER,
+  remote_username TEXT,
+  masked_email TEXT,
+  access_token_ref TEXT,
+  refresh_token_ref TEXT,
+  otp_session_ref TEXT,
+  access_expires_at TEXT,
+  otp_expires_at TEXT,
+  connected_at TEXT,
+  last_validated_at TEXT,
+  last_synced_at TEXT,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sparc_force_connections_status
+  ON sparc_force_connections(status);
+
+CREATE TABLE IF NOT EXISTS sparc_force_cases (
+  connection_id TEXT NOT NULL,
+  external_id TEXT NOT NULL,
+  case_number TEXT,
+  title TEXT NOT NULL,
+  status TEXT,
+  priority TEXT,
+  assigned_to INTEGER,
+  project_external_id TEXT,
+  updated_at_remote TEXT,
+  created_at_remote TEXT,
+  raw_json TEXT NOT NULL,
+  imported_at TEXT NOT NULL,
+  PRIMARY KEY (connection_id, external_id),
+  FOREIGN KEY (connection_id) REFERENCES sparc_force_connections(id)
+);
+
+CREATE TABLE IF NOT EXISTS sparc_force_projects (
+  connection_id TEXT NOT NULL,
+  external_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  status TEXT,
+  priority TEXT,
+  updated_at_remote TEXT,
+  created_at_remote TEXT,
+  raw_json TEXT NOT NULL,
+  imported_at TEXT NOT NULL,
+  PRIMARY KEY (connection_id, external_id),
+  FOREIGN KEY (connection_id) REFERENCES sparc_force_connections(id)
+);
+
+CREATE TABLE IF NOT EXISTS sparc_force_tasks (
+  connection_id TEXT NOT NULL,
+  source TEXT NOT NULL,
+  external_kind TEXT NOT NULL DEFAULT 'task',
+  external_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  status TEXT,
+  priority TEXT,
+  assigned_to INTEGER,
+  project_external_id TEXT,
+  case_external_id TEXT,
+  updated_at_remote TEXT,
+  created_at_remote TEXT,
+  raw_json TEXT NOT NULL,
+  imported_at TEXT NOT NULL,
+  PRIMARY KEY (connection_id, source, external_id),
+  FOREIGN KEY (connection_id) REFERENCES sparc_force_connections(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sparc_force_tasks_project
+  ON sparc_force_tasks(connection_id, project_external_id);
+CREATE INDEX IF NOT EXISTS idx_sparc_force_tasks_case
+  ON sparc_force_tasks(connection_id, case_external_id);
+
+CREATE TABLE IF NOT EXISTS sparc_force_native_links (
+  id TEXT PRIMARY KEY,
+  connection_id TEXT NOT NULL,
+  external_kind TEXT NOT NULL,
+  external_id TEXT NOT NULL,
+  native_kind TEXT NOT NULL,
+  native_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (connection_id) REFERENCES sparc_force_connections(id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sparc_force_native_links_unique
+  ON sparc_force_native_links(connection_id, external_kind, external_id, native_kind, native_id);
+"#;
 
 const GIT_METADATA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS git_refs (
@@ -233,6 +445,39 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_calendar_events_source_external
 CREATE INDEX IF NOT EXISTS idx_calendar_events_starts_at ON calendar_events(starts_at);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_ends_at ON calendar_events(ends_at);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_source ON calendar_events(source_id);
+"#;
+
+const DAILY_PLAN_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS daily_plans (
+  id TEXT PRIMARY KEY,
+  date TEXT NOT NULL UNIQUE,
+  focus_goal_minutes INTEGER NOT NULL DEFAULT 240,
+  current_task_id TEXT,
+  suggested_task_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (current_task_id) REFERENCES weekly_tasks(id),
+  FOREIGN KEY (suggested_task_id) REFERENCES weekly_tasks(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_plans_date ON daily_plans(date);
+
+CREATE TABLE IF NOT EXISTS daily_plan_items (
+  id TEXT PRIMARY KEY,
+  daily_plan_id TEXT NOT NULL,
+  rank INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  weekly_task_id TEXT,
+  planned_minutes INTEGER,
+  status TEXT NOT NULL DEFAULT 'todo',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (daily_plan_id) REFERENCES daily_plans(id) ON DELETE CASCADE,
+  FOREIGN KEY (weekly_task_id) REFERENCES weekly_tasks(id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_plan_items_plan_rank ON daily_plan_items(daily_plan_id, rank);
+CREATE INDEX IF NOT EXISTS idx_daily_plan_items_plan ON daily_plan_items(daily_plan_id);
 "#;
 
 const SCHEMA_SQL: &str = r#"
@@ -496,4 +741,35 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_nudge_dismissals_unique
   ON nudge_dismissals(nudge_key, dismissed_for_date, scope);
 CREATE INDEX IF NOT EXISTS idx_nudge_dismissals_date
   ON nudge_dismissals(dismissed_for_date);
+
+CREATE TABLE IF NOT EXISTS daily_plans (
+  id TEXT PRIMARY KEY,
+  date TEXT NOT NULL UNIQUE,
+  focus_goal_minutes INTEGER NOT NULL DEFAULT 240,
+  current_task_id TEXT,
+  suggested_task_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (current_task_id) REFERENCES weekly_tasks(id),
+  FOREIGN KEY (suggested_task_id) REFERENCES weekly_tasks(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_plans_date ON daily_plans(date);
+
+CREATE TABLE IF NOT EXISTS daily_plan_items (
+  id TEXT PRIMARY KEY,
+  daily_plan_id TEXT NOT NULL,
+  rank INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  weekly_task_id TEXT,
+  planned_minutes INTEGER,
+  status TEXT NOT NULL DEFAULT 'todo',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (daily_plan_id) REFERENCES daily_plans(id) ON DELETE CASCADE,
+  FOREIGN KEY (weekly_task_id) REFERENCES weekly_tasks(id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_plan_items_plan_rank ON daily_plan_items(daily_plan_id, rank);
+CREATE INDEX IF NOT EXISTS idx_daily_plan_items_plan ON daily_plan_items(daily_plan_id);
 "#;

@@ -4,6 +4,10 @@ use crate::domain::calendar::{
     CalendarEvent, CalendarSource, GetWeekCapacityInput, ListCalendarEventsInput, WeekCapacity,
 };
 use crate::domain::commit::Commit;
+use crate::domain::daily_plan::{
+    DailyPlan, DailyPlanItem, GetDailyPlanInput, ReplaceDailyPlanItemInput,
+    UpdateDailyPlanItemInput, UpsertDailyPlanInput,
+};
 use crate::domain::focus_session::{
     CreateFocusSessionInput, FocusSession, FocusSessionStatus, ListFocusSessionsInput,
     StopFocusSessionInput,
@@ -169,4 +173,22 @@ pub trait WorkspaceStore: Send + Sync {
         workspace_id: &str,
         discovered: Vec<WorkspaceRepoDiscovery>,
     ) -> Result<Vec<WorkspaceRepoDiscovery>, sqlx::Error>;
+}
+
+#[async_trait]
+pub trait DailyPlanStore: Send + Sync {
+    async fn get_by_date(&self, input: GetDailyPlanInput)
+        -> Result<Option<DailyPlan>, sqlx::Error>;
+    async fn upsert(&self, input: UpsertDailyPlanInput) -> Result<DailyPlan, sqlx::Error>;
+    async fn list_items(&self, daily_plan_id: &str) -> Result<Vec<DailyPlanItem>, sqlx::Error>;
+    async fn replace_items(
+        &self,
+        daily_plan_id: &str,
+        items: Vec<ReplaceDailyPlanItemInput>,
+    ) -> Result<Vec<DailyPlanItem>, sqlx::Error>;
+    async fn update_item(
+        &self,
+        id: &str,
+        input: UpdateDailyPlanItemInput,
+    ) -> Result<Option<DailyPlanItem>, sqlx::Error>;
 }

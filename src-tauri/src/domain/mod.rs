@@ -1,6 +1,7 @@
 pub mod activity;
 pub mod calendar;
 pub mod commit;
+pub mod daily_plan;
 pub mod dashboard;
 pub mod focus_session;
 pub mod git_metadata;
@@ -10,5 +11,6 @@ pub mod nudge;
 pub mod project;
 pub mod report;
 pub mod settings;
+pub mod sparc_force;
 pub mod weekly_task;
 pub mod workspace;

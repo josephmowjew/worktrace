@@ -40,6 +40,11 @@ export type Settings = {
   reportAiPrivacyAcknowledged: boolean;
   reportAiLocalModelPath: string;
   reportAiGroqModel: string;
+  onboardingCompleted: boolean;
+  onboardingDismissedWelcome: boolean;
+  onboardingDismissedChecklist: boolean;
+  onboardingCompletedSteps: string[];
+  onboardingCompletedAt: string;
 };
 
 export type UpdateSettingsInput = Partial<Settings>;
@@ -47,4 +52,16 @@ export type UpdateSettingsInput = Partial<Settings>;
 export type BackupLocationValidation = {
   status: "needs_location" | "ready" | "unavailable" | "not_writable";
   message: string;
+};
+
+export type SettingsExport = {
+  app: "WorkTrace";
+  version: number;
+  exportedAt: string;
+  settings: Settings;
+};
+
+export type SettingsImportResult = {
+  settings: Settings;
+  warnings: string[];
 };

@@ -1,7 +1,9 @@
 use std::fs;
 use std::path::Path;
 
-use crate::domain::settings::{BackupLocationValidation, Settings, UpdateSettingsInput};
+use crate::domain::settings::{
+    BackupLocationValidation, Settings, SettingsExport, SettingsImportResult, UpdateSettingsInput,
+};
 use crate::infrastructure::database::repositories::SettingsRepository;
 
 pub struct SettingsService;
@@ -31,6 +33,90 @@ impl SettingsService {
 
     pub fn validate_backup_location(location: &str) -> BackupLocationValidation {
         validate_backup_location_path(location)
+    }
+
+    pub async fn export(
+        repository: &SettingsRepository<'_>,
+    ) -> Result<SettingsExport, sqlx::Error> {
+        Ok(SettingsExport {
+            app: "WorkTrace".to_string(),
+            version: 1,
+            exported_at: chrono::Utc::now().to_rfc3339(),
+            settings: repository.get().await?,
+        })
+    }
+
+    pub async fn export_to_file(
+        repository: &SettingsRepository<'_>,
+        path: String,
+    ) -> Result<(), SettingsServiceError> {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            return Err(SettingsServiceError::Validation(
+                "Choose where to save the settings export.".to_string(),
+            ));
+        }
+
+        let export = Self::export(repository)
+            .await
+            .map_err(SettingsServiceError::Database)?;
+        let payload = serde_json::to_string_pretty(&export).map_err(|error| {
+            SettingsServiceError::Validation(format!(
+                "Settings export could not be prepared: {error}"
+            ))
+        })?;
+
+        fs::write(trimmed, payload).map_err(|error| {
+            SettingsServiceError::Validation(format!("Settings export could not be saved: {error}"))
+        })?;
+
+        Ok(())
+    }
+
+    pub async fn import(
+        repository: &SettingsRepository<'_>,
+        payload: String,
+    ) -> Result<SettingsImportResult, SettingsServiceError> {
+        let parsed: SettingsExport = serde_json::from_str(&payload).map_err(|_| {
+            SettingsServiceError::Validation(
+                "Choose a valid WorkTrace settings export file.".to_string(),
+            )
+        })?;
+
+        if parsed.app != "WorkTrace" || parsed.version != 1 {
+            return Err(SettingsServiceError::Validation(
+                "This settings export is not supported by this version of WorkTrace.".to_string(),
+            ));
+        }
+
+        let mut input = update_input_from_settings(parsed.settings);
+        let mut warnings = Vec::new();
+
+        validate_update(&input)?;
+        if input.backup_enabled == Some(true)
+            && input.backup_storage_mode.as_deref() == Some("local")
+        {
+            let location = input
+                .backup_storage_location
+                .as_deref()
+                .unwrap_or_default()
+                .trim();
+            let validation = validate_backup_location_path(location);
+            if validation.status != "ready" {
+                input.backup_enabled = Some(false);
+                warnings.push(format!(
+                    "Automatic backups were paused because the saved backup folder is not ready: {}",
+                    validation.message
+                ));
+            }
+        }
+
+        let settings = repository
+            .update(input)
+            .await
+            .map_err(SettingsServiceError::Database)?;
+
+        Ok(SettingsImportResult { settings, warnings })
     }
 }
 
@@ -180,6 +266,18 @@ fn validate_update(input: &UpdateSettingsInput) -> Result<(), SettingsServiceErr
         if !["local_llama_cpp", "openrouter_free", "groq"].contains(&provider.as_str()) {
             return Err(SettingsServiceError::Validation(
                 "Report AI provider is not supported".to_string(),
+            ));
+        }
+    }
+
+    if let Some(steps) = &input.onboarding_completed_steps {
+        let supported_steps = ["profile", "projects", "sync", "capture", "report"];
+        if steps
+            .iter()
+            .any(|step| !supported_steps.contains(&step.as_str()))
+        {
+            return Err(SettingsServiceError::Validation(
+                "Onboarding step is not supported".to_string(),
             ));
         }
     }
@@ -379,6 +477,21 @@ fn merge_settings(mut settings: Settings, input: &UpdateSettingsInput) -> Settin
     if let Some(value) = &input.report_ai_groq_model {
         settings.report_ai_groq_model = value.clone();
     }
+    if let Some(value) = input.onboarding_completed {
+        settings.onboarding_completed = value;
+    }
+    if let Some(value) = input.onboarding_dismissed_welcome {
+        settings.onboarding_dismissed_welcome = value;
+    }
+    if let Some(value) = input.onboarding_dismissed_checklist {
+        settings.onboarding_dismissed_checklist = value;
+    }
+    if let Some(value) = &input.onboarding_completed_steps {
+        settings.onboarding_completed_steps = value.clone();
+    }
+    if let Some(value) = &input.onboarding_completed_at {
+        settings.onboarding_completed_at = value.clone();
+    }
 
     settings
 }
@@ -419,6 +532,57 @@ fn validate_email_like(label: &str, value: &str) -> Result<(), SettingsServiceEr
     }
 
     Ok(())
+}
+
+fn update_input_from_settings(settings: Settings) -> UpdateSettingsInput {
+    UpdateSettingsInput {
+        name: Some(settings.name),
+        email: Some(settings.email),
+        default_manager_name: Some(settings.default_manager_name),
+        git_author_email: Some(settings.git_author_email),
+        default_report_template: Some(settings.default_report_template),
+        working_days: Some(settings.working_days),
+        daily_work_minutes: Some(settings.daily_work_minutes),
+        theme: Some(settings.theme),
+        backup_enabled: Some(settings.backup_enabled),
+        backup_schedule: Some(settings.backup_schedule),
+        backup_time: Some(settings.backup_time),
+        backup_day: Some(settings.backup_day),
+        backup_storage_mode: Some(settings.backup_storage_mode),
+        backup_storage_location: Some(settings.backup_storage_location),
+        online_backup_status: Some(settings.online_backup_status),
+        online_backup_provider: Some(settings.online_backup_provider),
+        github_connected: Some(settings.github_connected),
+        github_username: Some(settings.github_username),
+        github_connected_at: Some(settings.github_connected_at),
+        github_last_validated_at: Some(settings.github_last_validated_at),
+        announcements_enabled: Some(settings.announcements_enabled),
+        announcement_volume: Some(settings.announcement_volume),
+        announcement_voice: Some(settings.announcement_voice),
+        announce_focus_events: Some(settings.announce_focus_events),
+        announce_nudges: Some(settings.announce_nudges),
+        announce_sync_results: Some(settings.announce_sync_results),
+        announce_task_changes: Some(settings.announce_task_changes),
+        voice_commands_enabled: Some(settings.voice_commands_enabled),
+        voice_command_mode: Some(settings.voice_command_mode),
+        voice_command_confirm_before_action: Some(settings.voice_command_confirm_before_action),
+        voice_transcription_provider: Some(settings.voice_transcription_provider),
+        voice_online_allowed: Some(settings.voice_online_allowed),
+        voice_privacy_acknowledged: Some(settings.voice_privacy_acknowledged),
+        voice_groq_model: Some(settings.voice_groq_model),
+        voice_openrouter_model: Some(settings.voice_openrouter_model),
+        report_ai_enabled: Some(settings.report_ai_enabled),
+        report_ai_provider: Some(settings.report_ai_provider),
+        report_ai_online_allowed: Some(settings.report_ai_online_allowed),
+        report_ai_privacy_acknowledged: Some(settings.report_ai_privacy_acknowledged),
+        report_ai_local_model_path: Some(settings.report_ai_local_model_path),
+        report_ai_groq_model: Some(settings.report_ai_groq_model),
+        onboarding_completed: Some(settings.onboarding_completed),
+        onboarding_dismissed_welcome: Some(settings.onboarding_dismissed_welcome),
+        onboarding_dismissed_checklist: Some(settings.onboarding_dismissed_checklist),
+        onboarding_completed_steps: Some(settings.onboarding_completed_steps),
+        onboarding_completed_at: Some(settings.onboarding_completed_at),
+    }
 }
 
 #[cfg(test)]

@@ -168,8 +168,8 @@ export function FloatingTodoWidget() {
   }
 
   return (
-    <div className="min-h-screen overflow-hidden bg-transparent p-2 text-slate-100">
-      <div className="flex h-[calc(100vh-1rem)] min-h-[224px] flex-col overflow-hidden rounded-[24px] border border-white/12 bg-slate-950/85 shadow-2xl shadow-black/40 backdrop-blur-2xl">
+    <div className="group/widget min-h-screen overflow-hidden bg-transparent p-2 text-slate-100">
+      <div className="flex h-[calc(100vh-1rem)] min-h-[224px] flex-col overflow-hidden rounded-[24px] border border-white/6 bg-slate-950/28 opacity-55 shadow-lg shadow-black/10 backdrop-blur-md transition-[background-color,border-color,box-shadow,opacity,backdrop-filter] duration-200 ease-out hover:border-white/12 hover:bg-slate-950/85 hover:opacity-100 hover:shadow-2xl hover:shadow-black/40 hover:backdrop-blur-2xl focus-within:border-white/12 focus-within:bg-slate-950/85 focus-within:opacity-100 focus-within:shadow-2xl focus-within:shadow-black/40 focus-within:backdrop-blur-2xl">
         <header
           className="flex shrink-0 items-center justify-between gap-2 border-b border-white/8 px-3 py-2"
           data-tauri-drag-region

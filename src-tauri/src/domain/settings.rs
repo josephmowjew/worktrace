@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
     pub name: String,
@@ -44,6 +44,11 @@ pub struct Settings {
     pub report_ai_privacy_acknowledged: bool,
     pub report_ai_local_model_path: String,
     pub report_ai_groq_model: String,
+    pub onboarding_completed: bool,
+    pub onboarding_dismissed_welcome: bool,
+    pub onboarding_dismissed_checklist: bool,
+    pub onboarding_completed_steps: Vec<String>,
+    pub onboarding_completed_at: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -51,6 +56,22 @@ pub struct Settings {
 pub struct BackupLocationValidation {
     pub status: String,
     pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsExport {
+    pub app: String,
+    pub version: u32,
+    pub exported_at: String,
+    pub settings: Settings,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsImportResult {
+    pub settings: Settings,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -97,6 +118,11 @@ pub struct UpdateSettingsInput {
     pub report_ai_privacy_acknowledged: Option<bool>,
     pub report_ai_local_model_path: Option<String>,
     pub report_ai_groq_model: Option<String>,
+    pub onboarding_completed: Option<bool>,
+    pub onboarding_dismissed_welcome: Option<bool>,
+    pub onboarding_dismissed_checklist: Option<bool>,
+    pub onboarding_completed_steps: Option<Vec<String>>,
+    pub onboarding_completed_at: Option<String>,
 }
 
 impl Default for Settings {
@@ -149,6 +175,11 @@ impl Default for Settings {
             report_ai_privacy_acknowledged: false,
             report_ai_local_model_path: String::new(),
             report_ai_groq_model: "llama-3.1-8b-instant".to_string(),
+            onboarding_completed: false,
+            onboarding_dismissed_welcome: false,
+            onboarding_dismissed_checklist: false,
+            onboarding_completed_steps: Vec::new(),
+            onboarding_completed_at: String::new(),
         }
     }
 }

@@ -2,6 +2,8 @@ import {
   Activity,
   BarChart3,
   CalendarDays,
+  Download,
+  FileJson,
   Home,
   BookOpen,
   ClipboardEdit,
@@ -12,16 +14,19 @@ import {
   ListChecks,
   ListTodo,
   ArrowLeft,
+  Upload,
 } from "lucide-react";
 import type { PropsWithChildren } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { save } from "@tauri-apps/plugin-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listActivity } from "../../lib/api/activity";
 import { syncCommits } from "../../lib/api/gitSync";
+import { getSparcForceIntegrationStatus, syncSparcForce } from "../../lib/api/sparcForce";
 import { listProjects } from "../../lib/api/projects";
-import { getSettings } from "../../lib/api/settings";
+import { exportSettingsToFile, getSettings, importSettings } from "../../lib/api/settings";
 import { toggleTodoWidget } from "../../lib/api/todoWidget";
 import { currentWeekRange } from "../../lib/dates";
 import { TitleBar } from "./TitleBar";
@@ -29,7 +34,11 @@ import { useToast } from "../ui/ToastProvider";
 import { CommandPalette, createBaseCommandActions } from "../ui/CommandPalette";
 import { useSpeech } from "../ui/SpeechProvider";
 import { normalizeVoiceTranscript } from "../../lib/voiceCommands";
-import { syncAnnouncement, syncStartedAnnouncement } from "../../lib/announcements";
+import {
+  sparcForceSyncAnnouncement,
+  syncAnnouncement,
+  syncStartedAnnouncement,
+} from "../../lib/announcements";
 
 const navItems = [
   { label: "Today", href: "/", icon: Home },
@@ -49,6 +58,7 @@ export function AppLayout({ children }: PropsWithChildren) {
   const toast = useToast();
   const speech = useSpeech();
   const navigate = useNavigate();
+  const importInputRef = useRef<HTMLInputElement>(null);
   const weekRange = currentWeekRange();
   const [isWidgetWindow, setIsWidgetWindow] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
@@ -59,6 +69,11 @@ export function AppLayout({ children }: PropsWithChildren) {
   const projectsQuery = useQuery({
     queryKey: ["projects"],
     queryFn: listProjects,
+    staleTime: 60_000,
+  });
+  const sparcForceStatusQuery = useQuery({
+    queryKey: ["sparcForceIntegrationStatus"],
+    queryFn: getSparcForceIntegrationStatus,
     staleTime: 60_000,
   });
   const activityQuery = useQuery({
@@ -99,6 +114,47 @@ export function AppLayout({ children }: PropsWithChildren) {
       );
     },
   });
+  const exportSettingsMutation = useMutation({
+    mutationFn: async () => {
+      const stamp = new Date().toISOString().slice(0, 10);
+      const path = await save({
+        title: "Export WorkTrace settings",
+        defaultPath: `worktrace-settings-${stamp}.json`,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!path) return false;
+
+      await exportSettingsToFile(path);
+      return true;
+    },
+    onSuccess: (saved) => {
+      if (saved) {
+        toast.success("Settings exported", "Your WorkTrace settings file was saved.");
+      }
+    },
+    onError: (error) => {
+      toast.error(
+        "Export failed",
+        error instanceof Error ? error.message : "Settings could not be exported.",
+      );
+    },
+  });
+  const importSettingsMutation = useMutation({
+    mutationFn: importSettings,
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: ["settings"] });
+      toast.success(
+        "Settings imported",
+        result.warnings[0] ?? "Your saved WorkTrace settings were loaded.",
+      );
+    },
+    onError: (error) => {
+      toast.error(
+        "Import failed",
+        error instanceof Error ? error.message : "Settings could not be imported.",
+      );
+    },
+  });
   const commandSyncMutation = useMutation({
     mutationFn: () =>
       syncCommits({
@@ -128,6 +184,30 @@ export function AppLayout({ children }: PropsWithChildren) {
       );
     },
   });
+  const commandSparcForceSyncMutation = useMutation({
+    mutationFn: syncSparcForce,
+    onMutate: () => {
+      speech.announce(syncStartedAnnouncement("Sparc Force"), {
+        category: "sync",
+        interrupt: true,
+      });
+    },
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: ["sparcForceIntegrationStatus"] });
+      await queryClient.invalidateQueries({ queryKey: ["sparcForceRecords"] });
+      toast.success("Sparc Force synced", result.message);
+      speech.announce(sparcForceSyncAnnouncement(result), {
+        category: "sync",
+        interrupt: true,
+      });
+    },
+    onError: (error) => {
+      toast.error(
+        "Sparc Force sync failed",
+        error instanceof Error ? error.message : "Sparc Force data could not be imported.",
+      );
+    },
+  });
   const settings = settingsQuery.data;
   const activityItems = activityQuery.data?.flatMap((day) => day.items) ?? [];
   const commitCount = activityItems.filter((item) => item.activityType === "commit").length;
@@ -141,10 +221,24 @@ export function AppLayout({ children }: PropsWithChildren) {
     navigate("/projects", { state: { openWorkspaceScan: true } });
   }
 
+  async function importSelectedSettingsFile(file: File | undefined) {
+    if (!file) return;
+
+    const payload = await file.text();
+    importSettingsMutation.mutate(payload);
+    if (importInputRef.current) {
+      importInputRef.current.value = "";
+    }
+  }
+
   function runPowerCommand(query: string) {
     const normalized = query.trim().toLowerCase();
     if (normalized === "sync") {
       commandSyncMutation.mutate();
+      return true;
+    }
+    if (normalized === "sparc_force_sync") {
+      commandSparcForceSyncMutation.mutate();
       return true;
     }
     if (normalized === "report") {
@@ -195,7 +289,11 @@ export function AppLayout({ children }: PropsWithChildren) {
     }
 
     if (command.kind === "navigation") {
-      navigate(command.path);
+      if (command.label === "Go to Sparc Force") {
+        navigate(command.path, { state: { openIntegrationPanel: "sparcForce" } });
+      } else {
+        navigate(command.path);
+      }
       toast.success("Voice command", command.label);
       speech.announce(command.label, { category: "general", interrupt: true });
       return;
@@ -206,6 +304,52 @@ export function AppLayout({ children }: PropsWithChildren) {
       speech.announce(command.label, { category: "general", interrupt: true });
     }
   }
+
+  const commandActions = useMemo(
+    () => [
+      ...createBaseCommandActions({
+        projects: projectsQuery.data ?? [],
+        navigate: (path, state) => navigate(path, state === undefined ? undefined : { state }),
+        onSync: () => commandSyncMutation.mutate(),
+        onScanRepos: () =>
+          commandSyncMutation.mutate(undefined, {
+            onSettled: openProjectsWorkspaceScan,
+          }),
+        onToggleWidget: () => widgetMutation.mutate(),
+      }),
+      {
+        id: "settings-portability",
+        label: "Open Settings Import / Export",
+        description: "Manage portable settings for reinstall or migration",
+        group: "Settings" as const,
+        icon: FileJson,
+        onRun: () => navigate("/settings", { state: { openSettingsTab: "portability" } }),
+      },
+      {
+        id: "settings-export",
+        label: "Export Settings",
+        description: "Download a WorkTrace settings JSON file",
+        group: "Settings" as const,
+        icon: Download,
+        onRun: () => exportSettingsMutation.mutate(),
+      },
+      {
+        id: "settings-import",
+        label: "Import Settings",
+        description: "Load a WorkTrace settings JSON file",
+        group: "Settings" as const,
+        icon: Upload,
+        onRun: () => importInputRef.current?.click(),
+      },
+    ],
+    [
+      commandSyncMutation,
+      exportSettingsMutation,
+      navigate,
+      projectsQuery.data,
+      widgetMutation,
+    ],
+  );
 
   useEffect(() => {
     try {
@@ -243,6 +387,23 @@ export function AppLayout({ children }: PropsWithChildren) {
 
     return () => window.clearInterval(syncInterval);
   }, [hasSyncableProjects, intervalSyncMutation]);
+
+  useEffect(() => {
+    if (!sparcForceStatusQuery.data?.connected) {
+      return;
+    }
+
+    const syncInterval = window.setInterval(
+      () => {
+        if (!commandSparcForceSyncMutation.isPending) {
+          commandSparcForceSyncMutation.mutate();
+        }
+      },
+      15 * 60 * 1000,
+    );
+
+    return () => window.clearInterval(syncInterval);
+  }, [commandSparcForceSyncMutation, sparcForceStatusQuery.data?.connected]);
 
   return (
     <div className="h-screen overflow-hidden bg-[#06101d] text-slate-100">
@@ -409,22 +570,22 @@ export function AppLayout({ children }: PropsWithChildren) {
       <CommandPalette
         isOpen={isCommandPaletteOpen}
         onClose={() => setIsCommandPaletteOpen(false)}
-        actions={createBaseCommandActions({
-          projects: projectsQuery.data ?? [],
-          navigate: (path, state) => navigate(path, state === undefined ? undefined : { state }),
-          onSync: () => commandSyncMutation.mutate(),
-          onScanRepos: () =>
-            commandSyncMutation.mutate(undefined, {
-              onSettled: openProjectsWorkspaceScan,
-            }),
-          onToggleWidget: () => widgetMutation.mutate(),
-        })}
+        actions={commandActions}
         onPowerCommand={(query) => {
           return runPowerCommand(query);
         }}
         onVoiceCommand={speech.isVoiceCommandAvailable ? handleVoiceCommand : undefined}
         voiceStatus={speech.status}
         voiceError={speech.error}
+      />
+      <input
+        ref={importInputRef}
+        type="file"
+        accept="application/json,.json"
+        className="hidden"
+        onChange={(event) => {
+          void importSelectedSettingsFile(event.currentTarget.files?.[0]);
+        }}
       />
     </div>
   );

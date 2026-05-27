@@ -1,5 +1,21 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, CheckCircle2, ClipboardEdit, FileText, GitCommit, ListChecks, Plus, RefreshCw, Sparkles, Target, Focus } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  CalendarClock,
+  CheckCircle2,
+  CheckCheck,
+  ClipboardEdit,
+  FileText,
+  Focus,
+  GitCommit,
+  Layers3,
+  ListChecks,
+  Plus,
+  RefreshCw,
+  Sparkles,
+  Target,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { AddTaskModal } from "../components/ui/AddTaskModal";
@@ -26,11 +42,19 @@ import {
 } from "../lib/api/focusSessions";
 import { syncCommits } from "../lib/api/gitSync";
 import { createManualLog } from "../lib/api/manualLogs";
+import { listManualLogs } from "../lib/api/manualLogs";
 import { dismissNudge, listNudgeDismissals } from "../lib/api/nudges";
 import { listProjects } from "../lib/api/projects";
-import { listReportNotes, saveDailyReviewNote } from "../lib/api/reports";
-import { getSettings } from "../lib/api/settings";
+import { listReportNotes, listReports, saveDailyReviewNote } from "../lib/api/reports";
+import { getSettings, updateSettings } from "../lib/api/settings";
+import { listWorkspaces } from "../lib/api/workspaces";
 import { getWeekCapacity } from "../lib/api/calendar";
+import {
+  getTodayCommandCenter,
+  replaceDailyPlanItems,
+  updateDailyPlanItem,
+  upsertDailyPlan,
+} from "../lib/api/dailyPlan";
 import { weeklyTaskQueryRoots } from "../lib/api/queryKeys";
 import {
   manualLogAnnouncement,
@@ -44,6 +68,7 @@ import { currentWeekRange, todayRange } from "../lib/dates";
 import type { CreateManualLogInput } from "../types/manualLog";
 import type { StopFocusSessionInput } from "../types/focusSession";
 import type { WeeklyTask, WeeklyTaskPriority, WeeklyTaskStatus, WeeklyTaskType } from "../types/weeklyTask";
+import type { DailyPlanItem } from "../types/dailyPlan";
 
 type LocationState = {
   openTask?: boolean;
@@ -67,10 +92,15 @@ export function TodayPage() {
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reportPrepOpen, setReportPrepOpen] = useState(false);
   const [stopFocusOpen, setStopFocusOpen] = useState(false);
+  const [priorityDraft, setPriorityDraft] = useState<Array<{ title: string; plannedMinutes: string; weeklyTaskId?: string }>>([]);
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
     queryFn: listProjects,
+  });
+  const workspacesQuery = useQuery({
+    queryKey: ["workspaces"],
+    queryFn: listWorkspaces,
   });
   const settingsQuery = useQuery({
     queryKey: ["settings"],
@@ -100,6 +130,26 @@ export function TodayPage() {
         to: today.to,
       }),
   });
+  const weekActivityQuery = useQuery({
+    queryKey: ["activity", weekRange.from, weekRange.to, "onboarding"],
+    queryFn: () =>
+      listActivity({
+        from: weekRange.from,
+        to: weekRange.to,
+      }),
+  });
+  const manualLogsQuery = useQuery({
+    queryKey: ["manualLogs", weekRange.from, weekRange.to, "onboarding"],
+    queryFn: () =>
+      listManualLogs({
+        from: weekRange.from,
+        to: weekRange.to,
+      }),
+  });
+  const reportsQuery = useQuery({
+    queryKey: ["reports", "onboarding"],
+    queryFn: listReports,
+  });
   const activeFocusQuery = useQuery({
     queryKey: ["focusSession", "active"],
     queryFn: getActiveFocusSession,
@@ -128,6 +178,10 @@ export function TodayPage() {
         dismissedForDate: today.date,
         scope: "today",
       }),
+  });
+  const commandCenterQuery = useQuery({
+    queryKey: ["todayCommandCenter", today.date],
+    queryFn: () => getTodayCommandCenter({ date: today.date }),
   });
 
   useEffect(() => {
@@ -167,6 +221,24 @@ export function TodayPage() {
       navigate(location.pathname, { replace: true, state: null });
     }
   }, [location.pathname, location.state, navigate]);
+
+  useEffect(() => {
+    const source = commandCenterQuery.data?.topPriorities ?? [];
+    if (!source.length) {
+      setPriorityDraft([
+        { title: "", plannedMinutes: "" },
+        { title: "", plannedMinutes: "" },
+        { title: "", plannedMinutes: "" },
+      ]);
+      return;
+    }
+    const next = Array.from({ length: 3 }, (_, index) => source[index]).map((item) => ({
+      title: item?.title ?? "",
+      plannedMinutes: item?.plannedMinutes ? String(item.plannedMinutes) : "",
+      weeklyTaskId: item?.weeklyTaskId ?? undefined,
+    }));
+    setPriorityDraft(next);
+  }, [commandCenterQuery.data?.topPriorities]);
 
   async function invalidateDailyViews() {
     await Promise.all([
@@ -345,6 +417,53 @@ export function TodayPage() {
       toast.error("Nudge dismiss failed", error instanceof Error ? error.message : "The nudge could not be dismissed.");
     },
   });
+  const onboardingMutation = useMutation({
+    mutationFn: updateSettings,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["settings"] });
+    },
+    onError: (error) => {
+      toast.error("Onboarding update failed", error instanceof Error ? error.message : "Could not update setup progress.");
+    },
+  });
+  const replacePrioritiesMutation = useMutation({
+    mutationFn: (items: Array<{ rank: number; title: string; weeklyTaskId?: string; plannedMinutes?: number }>) =>
+      replaceDailyPlanItems({
+        date: today.date,
+        items,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["todayCommandCenter", today.date] });
+      toast.success("Top priorities updated");
+    },
+    onError: (error) => {
+      toast.error("Priority update failed", error instanceof Error ? error.message : "Could not update top priorities.");
+    },
+  });
+  const updatePriorityMutation = useMutation({
+    mutationFn: ({ id, input }: { id: string; input: Parameters<typeof updateDailyPlanItem>[1] }) =>
+      updateDailyPlanItem(id, input),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["todayCommandCenter", today.date] });
+    },
+    onError: (error) => {
+      toast.error("Priority update failed", error instanceof Error ? error.message : "Could not update priority item.");
+    },
+  });
+  const updateFocusGoalMutation = useMutation({
+    mutationFn: (minutes: number) =>
+      upsertDailyPlan({
+        date: today.date,
+        focusGoalMinutes: minutes,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["todayCommandCenter", today.date] });
+      toast.success("Focus goal updated");
+    },
+    onError: (error) => {
+      toast.error("Focus goal update failed", error instanceof Error ? error.message : "Could not update focus goal.");
+    },
+  });
 
   const projects = (projectsQuery.data ?? []).filter((project) => project.status === "active");
   const tasks = tasksQuery.data ?? [];
@@ -388,6 +507,85 @@ export function TodayPage() {
   const reportReadyCount =
     activityItems.filter((item) => item.includedInReport).length +
     tasks.filter((task) => task.includedInReport).length;
+  const persistedOnboardingSteps = new Set(settingsQuery.data?.onboardingCompletedSteps ?? []);
+  const weekActivityItems = weekActivityQuery.data?.flatMap((day) => day.items) ?? [];
+  const profileComplete = Boolean(
+    settingsQuery.data &&
+      settingsQuery.data.name.trim() &&
+      settingsQuery.data.email.trim() &&
+      settingsQuery.data.name !== "John Developer" &&
+      settingsQuery.data.email !== "johndev@worktrace.app",
+  );
+  const projectsComplete =
+    projects.length > 0 ||
+    (workspacesQuery.data ?? []).some((workspace) => workspace.status === "active") ||
+    persistedOnboardingSteps.has("projects");
+  const syncComplete =
+    weekActivityItems.some((item) => item.activityType === "commit") ||
+    persistedOnboardingSteps.has("sync");
+  const captureComplete =
+    manualLogsQuery.data?.length ? true : tasks.length > 0 || persistedOnboardingSteps.has("capture");
+  const reportComplete =
+    reportsQuery.data?.length ? true : persistedOnboardingSteps.has("report");
+  const onboardingSteps = [
+    {
+      id: "profile",
+      title: "Complete profile basics",
+      detail: "Set your name, email, manager, and Git author email so reports read cleanly.",
+      action: "Open Settings",
+      done: profileComplete || persistedOnboardingSteps.has("profile"),
+      onAction: () => navigate("/settings"),
+    },
+    {
+      id: "projects",
+      title: "Add a project or workspace",
+      detail: "Point WorkTrace at a Git repo or workspace root so it can discover real work.",
+      action: "Add Projects",
+      done: projectsComplete,
+      onAction: () => navigate("/projects", { state: { openWorkspaceScan: true } }),
+    },
+    {
+      id: "sync",
+      title: "Sync commits",
+      detail: "Pull local Git activity into this week so the report has source material.",
+      action: "Sync Now",
+      done: syncComplete,
+      onAction: () => syncMutation.mutate(),
+      disabled: !projects.some((project) => Boolean(project.repoPath)) || syncMutation.isPending,
+    },
+    {
+      id: "capture",
+      title: "Capture one non-code item",
+      detail: "Add a task or quick log for meetings, support, research, QA, or planning.",
+      action: "Quick Log",
+      done: captureComplete,
+      onAction: () => setLogModalOpen(true),
+    },
+    {
+      id: "report",
+      title: "Preview the weekly report",
+      detail: "Open report prep and make sure the trail can become a polished update.",
+      action: "Prep Report",
+      done: reportComplete,
+      onAction: () => {
+        markOnboardingStep("report");
+        setReportPrepOpen(true);
+      },
+    },
+  ];
+  const onboardingDoneCount = onboardingSteps.filter((step) => step.done).length;
+  const onboardingIsComplete = onboardingDoneCount === onboardingSteps.length;
+  const hasMeaningfulSetup =
+    projectsComplete || syncComplete || captureComplete || reportComplete || profileComplete;
+  const showWelcomeModal =
+    Boolean(settingsQuery.data) &&
+    !settingsQuery.data?.onboardingDismissedWelcome &&
+    !settingsQuery.data?.onboardingCompleted &&
+    !hasMeaningfulSetup;
+  const showOnboardingPanel =
+    Boolean(settingsQuery.data) &&
+    !settingsQuery.data?.onboardingCompleted &&
+    !settingsQuery.data?.onboardingDismissedChecklist;
   const dismissedNudgeKeys = new Set((nudgeDismissalsQuery.data ?? []).map((dismissal) => dismissal.nudgeKey));
   const activeNudges = buildTodayNudges({
     activityCount: activityItems.length,
@@ -448,8 +646,53 @@ export function TodayPage() {
     }
   }
 
+  function markOnboardingStep(stepId: string) {
+    const existing = settingsQuery.data?.onboardingCompletedSteps ?? [];
+    if (existing.includes(stepId)) return;
+    onboardingMutation.mutate({
+      onboardingCompletedSteps: [...existing, stepId],
+    });
+  }
+
+  function dismissWelcome() {
+    onboardingMutation.mutate({
+      onboardingDismissedWelcome: true,
+    });
+  }
+
+  function dismissChecklist() {
+    onboardingMutation.mutate({
+      onboardingDismissedChecklist: true,
+    });
+  }
+
+  useEffect(() => {
+    if (!settingsQuery.data || settingsQuery.data.onboardingCompleted || !onboardingIsComplete) {
+      return;
+    }
+
+    onboardingMutation.mutate({
+      onboardingCompleted: true,
+      onboardingCompletedSteps: onboardingSteps.map((step) => step.id),
+      onboardingCompletedAt: new Date().toISOString(),
+    });
+  }, [onboardingIsComplete, settingsQuery.data?.onboardingCompleted]);
+
   return (
     <div className="space-y-4">
+      {showWelcomeModal ? (
+        <OnboardingWelcomeModal
+          isPending={onboardingMutation.isPending}
+          onStart={dismissWelcome}
+          onSkip={() =>
+            onboardingMutation.mutate({
+              onboardingDismissedWelcome: true,
+              onboardingDismissedChecklist: true,
+            })
+          }
+        />
+      ) : null}
+
       <Panel className="relative overflow-hidden p-0">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_16%_20%,rgba(59,130,246,0.22),transparent_28%),radial-gradient(circle_at_84%_10%,rgba(20,184,166,0.14),transparent_26%),linear-gradient(135deg,rgba(15,23,42,0.2),rgba(15,23,42,0.82))]" />
         <div className="relative flex flex-wrap items-center justify-between gap-4 px-5 py-5">
@@ -489,6 +732,50 @@ export function TodayPage() {
           </div>
         </div>
       </Panel>
+
+      {showOnboardingPanel ? (
+        <OnboardingPipelinePanel
+          steps={onboardingSteps}
+          completedCount={onboardingDoneCount}
+          isComplete={onboardingIsComplete}
+          isPending={onboardingMutation.isPending}
+          onDismiss={dismissChecklist}
+        />
+      ) : null}
+
+      <TodayCommandCenterPanel
+        todayDate={today.date}
+        commandCenter={commandCenterQuery.data}
+        isLoading={commandCenterQuery.isLoading}
+        isError={commandCenterQuery.isError}
+        errorMessage={commandCenterQuery.error instanceof Error ? commandCenterQuery.error.message : null}
+        priorityDraft={priorityDraft}
+        onPriorityDraftChange={setPriorityDraft}
+        onSavePriorities={() =>
+          replacePrioritiesMutation.mutate(
+            priorityDraft
+              .map((item, index) => ({
+                rank: index + 1,
+                title: item.title.trim(),
+                weeklyTaskId: item.weeklyTaskId,
+                plannedMinutes: item.plannedMinutes.trim() ? Number(item.plannedMinutes) : undefined,
+              }))
+              .filter((item) => item.title),
+          )
+        }
+        onSetFocusGoal={(minutes) => updateFocusGoalMutation.mutate(minutes)}
+        onMarkPriorityDone={(item) =>
+          updatePriorityMutation.mutate({
+            id: item.id,
+            input: { status: "done" },
+          })
+        }
+        isSaving={
+          replacePrioritiesMutation.isPending ||
+          updatePriorityMutation.isPending ||
+          updateFocusGoalMutation.isPending
+        }
+      />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <TodayStat icon={Target} label="Planned Today" value={planned.length.toString()} />
@@ -741,10 +1028,303 @@ function TodayStat({
   value: string;
 }) {
   return (
-    <Panel className="p-4">
-      <Icon className="h-5 w-5 text-cyan-200" />
-      <p className="mt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">{label}</p>
-      <p className="mt-1 text-3xl font-semibold text-white">{value}</p>
+    <Panel className="group relative overflow-hidden border-white/10 bg-gradient-to-br from-slate-950/85 via-[#07142a]/95 to-slate-950/90 p-4">
+      <div className="absolute -bottom-2 right-0 h-8 w-20 rounded-full bg-cyan-400/10 blur-xl transition-opacity group-hover:opacity-90" />
+      <div className="relative flex items-start justify-between gap-2">
+        <div>
+          <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-400">{label}</p>
+          <p className="mt-2 text-5xl font-semibold leading-none text-white">{value}</p>
+          <p className="mt-1 text-sm text-slate-400">minutes</p>
+        </div>
+        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-2">
+          <Icon className="h-4 w-4 text-cyan-200" />
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+function OnboardingWelcomeModal({
+  isPending,
+  onStart,
+  onSkip,
+}: {
+  isPending: boolean;
+  onStart: () => void;
+  onSkip: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4 backdrop-blur-sm">
+      <div className="relative w-full max-w-xl overflow-hidden rounded-3xl border border-cyan-300/20 bg-[#06101d] p-5 shadow-2xl shadow-blue-950/50">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_12%,rgba(59,130,246,0.28),transparent_34%),radial-gradient(circle_at_90%_10%,rgba(20,184,166,0.16),transparent_28%)]" />
+        <div className="relative">
+          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100">
+            <Sparkles className="h-3.5 w-3.5" />
+            Welcome to WorkTrace
+          </div>
+          <h2 className="text-3xl font-semibold tracking-tight text-white">
+            Get to a useful weekly report in under five minutes.
+          </h2>
+          <p className="mt-3 text-sm leading-6 text-slate-300">
+            We will set up only what matters: profile details, one project or workspace,
+            a commit sync, one captured non-code item, and a quick report preview.
+          </p>
+          <div className="mt-5 grid gap-2 text-sm text-slate-300">
+            {["Profile", "Project or workspace", "Commit sync", "Manual capture", "Report preview"].map((item) => (
+              <div key={item} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+                <CheckCircle2 className="h-4 w-4 text-cyan-200" />
+                {item}
+              </div>
+            ))}
+          </div>
+          <div className="mt-6 flex flex-wrap justify-end gap-2">
+            <Button variant="ghost" onClick={onSkip} disabled={isPending}>
+              Skip for now
+            </Button>
+            <Button variant="primary" onClick={onStart} disabled={isPending}>
+              Start setup
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OnboardingPipelinePanel({
+  steps,
+  completedCount,
+  isComplete,
+  isPending,
+  onDismiss,
+}: {
+  steps: Array<{
+    id: string;
+    title: string;
+    detail: string;
+    action: string;
+    done: boolean;
+    disabled?: boolean;
+    onAction: () => void;
+  }>;
+  completedCount: number;
+  isComplete: boolean;
+  isPending: boolean;
+  onDismiss: () => void;
+}) {
+  return (
+    <Panel className="relative overflow-hidden border-cyan-300/20 bg-cyan-400/10 p-0">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_6%_20%,rgba(34,211,238,0.14),transparent_28%),linear-gradient(135deg,rgba(14,165,233,0.08),transparent_50%)]" />
+      <div className="relative p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100">
+              <ListChecks className="h-3.5 w-3.5" />
+              Setup pipeline
+            </div>
+            <h2 className="text-xl font-semibold text-white">
+              {isComplete ? "WorkTrace is ready for weekly reporting" : "Turn WorkTrace into your reporting trail"}
+            </h2>
+            <p className="mt-1 text-sm text-slate-400">
+              {completedCount} of {steps.length} steps complete. Each action opens the real WorkTrace flow.
+            </p>
+          </div>
+          <Button variant="ghost" onClick={onDismiss} disabled={isPending}>
+            Hide
+          </Button>
+        </div>
+
+        <div className="mt-4 grid gap-3 lg:grid-cols-5">
+          {steps.map((step, index) => (
+            <article
+              key={step.id}
+              className={[
+                "rounded-2xl border p-3 transition",
+                step.done
+                  ? "border-emerald-300/25 bg-emerald-400/10"
+                  : "border-white/10 bg-slate-950/45",
+              ].join(" ")}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-xs font-semibold text-slate-200">
+                  {step.done ? <CheckCircle2 className="h-4 w-4 text-emerald-200" /> : index + 1}
+                </div>
+                {step.done ? <Badge tone="green">Done</Badge> : null}
+              </div>
+              <h3 className="mt-3 text-sm font-semibold text-white">{step.title}</h3>
+              <p className="mt-2 min-h-[52px] text-xs leading-5 text-slate-400">{step.detail}</p>
+              <Button
+                className="mt-3 h-8 w-full px-2 text-xs"
+                variant={step.done ? "secondary" : "primary"}
+                onClick={step.onAction}
+                disabled={step.disabled}
+              >
+                {step.done ? "Open" : step.action}
+              </Button>
+            </article>
+          ))}
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+function TodayCommandCenterPanel({
+  todayDate,
+  commandCenter,
+  isLoading,
+  isError,
+  errorMessage,
+  priorityDraft,
+  onPriorityDraftChange,
+  onSavePriorities,
+  onSetFocusGoal,
+  onMarkPriorityDone,
+  isSaving,
+}: {
+  todayDate: string;
+  commandCenter?: import("../types/dailyPlan").TodayCommandCenter;
+  isLoading: boolean;
+  isError: boolean;
+  errorMessage: string | null;
+  priorityDraft: Array<{ title: string; plannedMinutes: string; weeklyTaskId?: string }>;
+  onPriorityDraftChange: (draft: Array<{ title: string; plannedMinutes: string; weeklyTaskId?: string }>) => void;
+  onSavePriorities: () => void;
+  onSetFocusGoal: (minutes: number) => void;
+  onMarkPriorityDone: (item: DailyPlanItem) => void;
+  isSaving: boolean;
+}) {
+  return (
+    <Panel className="border-white/10 bg-gradient-to-b from-[#05112a]/88 to-[#040c1f]/92 p-3 sm:p-4">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h2 className="text-2xl font-semibold text-white">Today Command Center</h2>
+        <span className="rounded-lg border border-blue-300/20 bg-blue-500/10 px-3 py-1 text-xs font-semibold text-blue-200">{todayDate}</span>
+      </div>
+      {isLoading ? (
+        <div className="h-24 animate-pulse rounded-xl border border-white/8 bg-white/[0.03]" />
+      ) : isError ? (
+        <div className="rounded-xl border border-amber-300/20 bg-amber-500/10 p-3 text-xs text-amber-100">
+          Command Center is unavailable. Existing Today tools remain usable. {errorMessage ?? ""}
+        </div>
+      ) : (
+        <div className="grid gap-3 xl:grid-cols-2 2xl:grid-cols-3">
+          <div className="rounded-xl border border-white/10 bg-gradient-to-br from-slate-950/80 to-[#081832]/80 p-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Top 3 Priorities</p>
+            <div className="space-y-2">
+              {priorityDraft.map((item, index) => (
+                <div key={index} className="grid grid-cols-[24px_1fr_84px] items-center gap-2">
+                  <div className="flex h-6 w-6 items-center justify-center rounded-full border border-cyan-300/30 bg-cyan-500/10 text-[11px] font-semibold text-cyan-200">
+                    {index + 1}
+                  </div>
+                  <input
+                    value={item.title}
+                    onChange={(event) => {
+                      const next = [...priorityDraft];
+                      next[index] = { ...next[index], title: event.currentTarget.value };
+                      onPriorityDraftChange(next);
+                    }}
+                    placeholder={`Priority ${index + 1}`}
+                    className="h-9 rounded-lg border border-white/10 bg-slate-950/70 px-2 text-sm text-slate-100 outline-none focus:border-blue-300/50"
+                  />
+                  <input
+                    value={item.plannedMinutes}
+                    onChange={(event) => {
+                      const next = [...priorityDraft];
+                      next[index] = { ...next[index], plannedMinutes: event.currentTarget.value };
+                      onPriorityDraftChange(next);
+                    }}
+                    placeholder="mins"
+                    className="h-9 rounded-lg border border-white/10 bg-slate-950/70 px-2 text-xs text-slate-100 outline-none focus:border-blue-300/50"
+                  />
+                </div>
+              ))}
+            </div>
+            <Button onClick={onSavePriorities} className="mt-3 h-9 px-3 text-sm" disabled={isSaving}>
+              Save priorities
+            </Button>
+          </div>
+
+          <div className="rounded-xl border border-white/10 bg-gradient-to-br from-slate-950/80 to-[#071428]/80 p-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Plan vs Actual</p>
+            <div className="flex items-center gap-4">
+              <div className="flex h-28 w-28 items-center justify-center rounded-full border-8 border-white/10">
+                <div className="text-center">
+                  <p className="text-2xl font-semibold text-white">
+                    {Math.round(
+                      ((commandCenter?.endOfDayProgress.actualMinutes ?? 0) /
+                        Math.max(commandCenter?.endOfDayProgress.plannedMinutes ?? 1, 1)) *
+                        100,
+                    )}%
+                  </p>
+                  <p className="text-[11px] text-slate-400">Completed</p>
+                </div>
+              </div>
+              <div className="space-y-1 text-sm text-slate-300">
+                <p>Plan: {(commandCenter?.endOfDayProgress.plannedMinutes ?? 0)}m</p>
+                <p>Actual: {(commandCenter?.endOfDayProgress.actualMinutes ?? 0)}m</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-white/10 bg-gradient-to-br from-slate-950/80 to-[#07122a]/80 p-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Focus + Risk</p>
+            <p className="text-sm text-slate-300">Goal: {commandCenter?.focusGoalMinutes ?? 240}m</p>
+            <p className="text-sm text-slate-300">Actual: {commandCenter?.focusActualMinutes ?? 0}m</p>
+            <p className="mt-2 text-sm text-slate-300">
+              Risk: {commandCenter?.distractionRisk.level ?? "low"} ({commandCenter?.distractionRisk.score ?? 0})
+            </p>
+            <Button
+              onClick={() => onSetFocusGoal(240)}
+              className="mt-3 h-8 px-3 text-sm"
+              disabled={isSaving}
+            >
+              Reset goal to 4h
+            </Button>
+          </div>
+
+          <div className="rounded-xl border border-white/10 bg-gradient-to-br from-slate-950/80 to-[#07122a]/80 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Current + Next</p>
+              <Layers3 className="h-4 w-4 text-slate-500" />
+            </div>
+            <p className="text-sm text-slate-300">Current: {commandCenter?.currentTask?.title ?? "None"}</p>
+            <p className="mt-1 text-sm text-slate-300">Suggested: {commandCenter?.suggestedNextTask?.title ?? "None"}</p>
+          </div>
+
+          <div className="rounded-xl border border-white/10 bg-gradient-to-br from-slate-950/80 to-[#07122a]/80 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Meetings + EOD</p>
+              <CalendarClock className="h-4 w-4 text-slate-500" />
+            </div>
+            <p className="text-sm text-slate-300">Meetings today: {commandCenter?.meetings.length ?? 0}</p>
+            <p className="mt-1 text-sm text-slate-300">
+              Progress: {commandCenter?.endOfDayProgress.completedPriorities ?? 0}/
+              {commandCenter?.endOfDayProgress.totalPriorities ?? 0}
+            </p>
+          </div>
+
+          <div className="rounded-xl border border-white/10 bg-gradient-to-br from-slate-950/80 to-[#07122a]/80 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Mark Done</p>
+              <CheckCheck className="h-4 w-4 text-slate-500" />
+            </div>
+            <div className="space-y-2">
+              {(commandCenter?.topPriorities ?? []).map((item) => (
+                <div key={item.id} className="flex items-center justify-between gap-2 rounded-lg border border-white/8 bg-white/[0.02] p-2">
+                  <p className="truncate text-sm text-slate-200">{item.rank}. {item.title}</p>
+                  {item.status !== "done" ? (
+                    <Button onClick={() => onMarkPriorityDone(item)} className="h-7 px-2 text-xs" disabled={isSaving}>
+                      Done
+                    </Button>
+                  ) : (
+                    <Badge tone="green">Done</Badge>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </Panel>
   );
 }

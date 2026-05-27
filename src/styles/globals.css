@@ -96,3 +96,59 @@ a {
   user-select: none;
   -webkit-user-select: none;
 }
+
+.sparc-force-html {
+  overflow-wrap: anywhere;
+}
+
+.sparc-force-html :where(p, ul, ol, blockquote, pre, table) {
+  margin: 0.65rem 0 0;
+}
+
+.sparc-force-html :where(p:first-child, ul:first-child, ol:first-child, blockquote:first-child, pre:first-child, table:first-child) {
+  margin-top: 0;
+}
+
+.sparc-force-html :where(ul, ol) {
+  padding-left: 1.25rem;
+}
+
+.sparc-force-html ul {
+  list-style: disc;
+}
+
+.sparc-force-html ol {
+  list-style: decimal;
+}
+
+.sparc-force-html a {
+  color: rgb(147, 197, 253);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.sparc-force-html table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.sparc-force-html :where(th, td) {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 0.45rem 0.55rem;
+  text-align: left;
+}
+
+.sparc-force-html blockquote {
+  border: 1px solid rgba(147, 197, 253, 0.16);
+  border-radius: 0.5rem;
+  background: rgba(59, 130, 246, 0.08);
+  padding: 0.65rem 0.8rem;
+}
+
+.sparc-force-html code,
+.sparc-force-html pre {
+  border-radius: 0.4rem;
+  background: rgba(2, 6, 23, 0.5);
+  color: rgb(203, 213, 225);
+}

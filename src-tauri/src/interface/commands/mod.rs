@@ -1,5 +1,6 @@
 pub mod activity;
 pub mod calendar;
+pub mod daily_plan;
 pub mod dashboard;
 pub mod focus_sessions;
 pub mod git_sync;
@@ -10,6 +11,7 @@ pub mod project_stats;
 pub mod projects;
 pub mod reports;
 pub mod settings;
+pub mod sparc_force;
 pub mod voice;
 pub mod weekly_tasks;
 pub mod windows;
@@ -34,6 +36,11 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         dashboard::get_dashboard_stats,
         dashboard::get_weekly_activity_hours,
         dashboard::get_project_breakdown,
+        daily_plan::get_daily_plan,
+        daily_plan::upsert_daily_plan,
+        daily_plan::replace_daily_plan_items,
+        daily_plan::update_daily_plan_item,
+        daily_plan::get_today_command_center,
         activity::list_activity,
         activity::get_activity_heatmap,
         activity::get_week_summary,
@@ -78,6 +85,19 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         settings::get_settings,
         settings::update_settings,
         settings::validate_backup_location,
+        settings::export_settings,
+        settings::export_settings_to_file,
+        settings::import_settings,
+        sparc_force::get_sparc_force_integration_status,
+        sparc_force::connect_sparc_force,
+        sparc_force::verify_sparc_force_login_otp,
+        sparc_force::test_sparc_force_connection,
+        sparc_force::sync_sparc_force,
+        sparc_force::list_sparc_force_imported_data,
+        sparc_force::list_sparc_force_records,
+        sparc_force::get_sparc_force_case_detail,
+        sparc_force::import_sparc_force_task_to_weekly_task,
+        sparc_force::disconnect_sparc_force,
         voice::transcribe_voice_command,
         weekly_tasks::list_weekly_tasks,
         weekly_tasks::create_weekly_task,

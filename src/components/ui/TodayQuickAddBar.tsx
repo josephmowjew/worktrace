@@ -60,7 +60,7 @@ export function TodayQuickAddBar({
   }
 
   return (
-    <Panel className="p-3">
+    <Panel className="border-white/10 bg-gradient-to-r from-[#050f24]/92 to-[#06142d]/92 p-3">
       <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
         <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-white/10 bg-slate-950/55 px-3">
           <Plus className="h-4 w-4 shrink-0 text-cyan-200" />
@@ -73,7 +73,7 @@ export function TodayQuickAddBar({
                 submit();
               }
             }}
-            placeholder="Add a task for today"
+            placeholder="Add a task for today..."
             className="h-11 min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-slate-500"
           />
         </div>

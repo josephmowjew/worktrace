@@ -105,6 +105,26 @@ export function syncStartedAnnouncement(scope = "activity") {
   return `Syncing ${scope}.`;
 }
 
+export function sparcForceSyncAnnouncement(result: {
+  casesImported: number;
+  projectsImported: number;
+  tasksImported: number;
+  standaloneTasksEnabled: boolean;
+}) {
+  const standaloneNote = result.standaloneTasksEnabled
+    ? null
+    : "Standalone tasks are disabled in Sparc Force.";
+  return [
+    "Sparc Force sync complete.",
+    `Imported ${result.casesImported} cases.`,
+    `Imported ${result.projectsImported} projects.`,
+    `Imported ${result.tasksImported} tasks.`,
+    standaloneNote,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 export function manualLogAnnouncement(
   action: string,
   log: ManualLog | CreateManualLogInput,

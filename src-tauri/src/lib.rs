@@ -12,6 +12,7 @@ use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 pub struct AppState {
     pub database: Database,
     pub cancelled_report_ai_streams: Mutex<HashSet<String>>,
+    pub sparc_force_auth_lock: tokio::sync::Mutex<()>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -26,6 +27,7 @@ pub fn run() {
             app.manage(AppState {
                 database,
                 cancelled_report_ai_streams: Mutex::new(HashSet::new()),
+                sparc_force_auth_lock: tokio::sync::Mutex::new(()),
             });
 
             WebviewWindowBuilder::new(app, "widget", WebviewUrl::App("/widget".into()))

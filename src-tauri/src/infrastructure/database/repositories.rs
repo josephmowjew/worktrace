@@ -5,9 +5,9 @@ use chrono::{Datelike, NaiveDate, Utc};
 use sqlx::{Row, SqlitePool};
 
 use crate::application::repositories::{
-    CalendarEventStore, CalendarSourceStore, CommitStore, FocusSessionStore, ManualLogStore,
-    NudgeDismissalStore, ProjectStore, ReportItemStore, ReportNoteStore, ReportStore,
-    SettingsStore, WeeklyTaskStore, WorkspaceStore,
+    CalendarEventStore, CalendarSourceStore, CommitStore, DailyPlanStore, FocusSessionStore,
+    ManualLogStore, NudgeDismissalStore, ProjectStore, ReportItemStore, ReportNoteStore,
+    ReportStore, SettingsStore, WeeklyTaskStore, WorkspaceStore,
 };
 use crate::domain::activity::{
     ActivityDay, ActivityItem, HeatmapCell, HeatmapData, HeatmapInput, KeyHighlight,
@@ -18,6 +18,10 @@ use crate::domain::calendar::{
     WeekCapacity,
 };
 use crate::domain::commit::Commit;
+use crate::domain::daily_plan::{
+    DailyPlan, DailyPlanItem, DailyPlanItemStatus, GetDailyPlanInput, ReplaceDailyPlanItemInput,
+    UpdateDailyPlanItemInput, UpsertDailyPlanInput,
+};
 use crate::domain::focus_session::{
     CreateFocusSessionInput, FocusSession, FocusSessionStatus, ListFocusSessionsInput,
     StopFocusSessionInput,
@@ -36,6 +40,11 @@ use crate::domain::report::{
     SaveReportInput, UpdateReportNoteInput,
 };
 use crate::domain::settings::{Settings, UpdateSettingsInput};
+use crate::domain::sparc_force::{
+    ListSparcForceRecordsInput, SparcForceCacheRecord, SparcForceConnection,
+    SparcForceImportCounts, SparcForceImportedData, SparcForceImportedItem, SparcForceRecordBucket,
+    SparcForceRecordCounts, SparcForceRecordQueryResult,
+};
 use crate::domain::weekly_task::{
     CreateWeeklyTaskInput, ListWeeklyTasksInput, UpdateWeeklyTaskInput, WeeklyTask,
     WeeklyTaskPriority, WeeklyTaskStatus, WeeklyTaskType,
@@ -2261,6 +2270,692 @@ pub struct SettingsRepository<'a> {
     pool: &'a SqlitePool,
 }
 
+pub struct SparcForceConnectionRepository<'a> {
+    pool: &'a SqlitePool,
+}
+
+pub struct SparcForceCachedCaseDetail {
+    pub updated_at_remote: Option<String>,
+    pub raw_json: String,
+}
+
+impl<'a> SparcForceConnectionRepository<'a> {
+    pub fn new(pool: &'a SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn get(&self) -> Result<Option<SparcForceConnection>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, base_url, status, account_email, remote_user_id, remote_username,
+                   masked_email, access_token_ref, refresh_token_ref, otp_session_ref,
+                   access_expires_at, otp_expires_at, connected_at, last_validated_at,
+                   last_synced_at, last_error, created_at, updated_at
+            FROM sparc_force_connections
+            ORDER BY updated_at DESC
+            LIMIT 1
+            "#,
+        )
+        .fetch_optional(self.pool)
+        .await?;
+
+        Ok(row.map(sparc_force_connection_from_row))
+    }
+
+    pub async fn save(&self, connection: &SparcForceConnection) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO sparc_force_connections (
+              id, base_url, status, account_email, remote_user_id, remote_username,
+              masked_email, access_token_ref, refresh_token_ref, otp_session_ref,
+              access_expires_at, otp_expires_at, connected_at, last_validated_at,
+              last_synced_at, last_error, created_at, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+            ON CONFLICT(id) DO UPDATE SET
+              base_url = excluded.base_url,
+              status = excluded.status,
+              account_email = excluded.account_email,
+              remote_user_id = excluded.remote_user_id,
+              remote_username = excluded.remote_username,
+              masked_email = excluded.masked_email,
+              access_token_ref = excluded.access_token_ref,
+              refresh_token_ref = excluded.refresh_token_ref,
+              otp_session_ref = excluded.otp_session_ref,
+              access_expires_at = excluded.access_expires_at,
+              otp_expires_at = excluded.otp_expires_at,
+              connected_at = excluded.connected_at,
+              last_validated_at = excluded.last_validated_at,
+              last_synced_at = excluded.last_synced_at,
+              last_error = excluded.last_error,
+              updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(&connection.id)
+        .bind(&connection.base_url)
+        .bind(&connection.status)
+        .bind(&connection.account_email)
+        .bind(connection.remote_user_id)
+        .bind(&connection.remote_username)
+        .bind(&connection.masked_email)
+        .bind(&connection.access_token_ref)
+        .bind(&connection.refresh_token_ref)
+        .bind(&connection.otp_session_ref)
+        .bind(&connection.access_expires_at)
+        .bind(&connection.otp_expires_at)
+        .bind(&connection.connected_at)
+        .bind(&connection.last_validated_at)
+        .bind(&connection.last_synced_at)
+        .bind(&connection.last_error)
+        .bind(&connection.created_at)
+        .bind(&connection.updated_at)
+        .execute(self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn new_connection(
+        &self,
+        base_url: String,
+        account_email: String,
+    ) -> SparcForceConnection {
+        let now = current_timestamp();
+        let id = generate_id("sparc_force");
+
+        SparcForceConnection {
+            access_token_ref: Some(format!("sparc_force:{id}:access_token")),
+            refresh_token_ref: Some(format!("sparc_force:{id}:refresh_token")),
+            id,
+            base_url,
+            status: "disconnected".to_string(),
+            account_email,
+            remote_user_id: None,
+            remote_username: None,
+            masked_email: None,
+            otp_session_ref: None,
+            access_expires_at: None,
+            otp_expires_at: None,
+            connected_at: None,
+            last_validated_at: None,
+            last_synced_at: None,
+            last_error: None,
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+
+    pub async fn import_counts(
+        &self,
+        connection_id: &str,
+    ) -> Result<SparcForceImportCounts, sqlx::Error> {
+        let cases = count_table(self.pool, "sparc_force_cases", connection_id).await?;
+        let projects = count_table(self.pool, "sparc_force_projects", connection_id).await?;
+        let tasks = count_table(self.pool, "sparc_force_tasks", connection_id).await?;
+
+        Ok(SparcForceImportCounts {
+            cases,
+            projects,
+            tasks,
+        })
+    }
+
+    pub async fn upsert_case(
+        &self,
+        connection_id: &str,
+        record: &SparcForceCacheRecord,
+    ) -> Result<(), sqlx::Error> {
+        let now = current_timestamp();
+        sqlx::query(
+            r#"
+            INSERT INTO sparc_force_cases (
+              connection_id, external_id, case_number, title, status, priority,
+              assigned_to, project_external_id, updated_at_remote, created_at_remote, raw_json, imported_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            ON CONFLICT(connection_id, external_id) DO UPDATE SET
+              case_number = excluded.case_number,
+              title = excluded.title,
+              status = excluded.status,
+              priority = excluded.priority,
+              assigned_to = excluded.assigned_to,
+              project_external_id = excluded.project_external_id,
+              updated_at_remote = excluded.updated_at_remote,
+              created_at_remote = excluded.created_at_remote,
+              raw_json = excluded.raw_json,
+              imported_at = excluded.imported_at
+            "#,
+        )
+        .bind(connection_id)
+        .bind(&record.external_id)
+        .bind(None::<String>)
+        .bind(&record.title)
+        .bind(&record.status)
+        .bind(&record.priority)
+        .bind(record.assigned_to)
+        .bind(&record.project_external_id)
+        .bind(&record.updated_at_remote)
+        .bind(&record.created_at_remote)
+        .bind(&record.raw_json)
+        .bind(now)
+        .execute(self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn cached_case_details(
+        &self,
+        connection_id: &str,
+        external_ids: &[String],
+    ) -> Result<HashMap<String, SparcForceCachedCaseDetail>, sqlx::Error> {
+        let mut output = HashMap::new();
+        for external_id in external_ids {
+            let row = sqlx::query(
+                r#"
+                SELECT external_id, updated_at_remote, raw_json
+                FROM sparc_force_cases
+                WHERE connection_id = ?1 AND external_id = ?2
+                LIMIT 1
+                "#,
+            )
+            .bind(connection_id)
+            .bind(external_id)
+            .fetch_optional(self.pool)
+            .await?;
+
+            if let Some(row) = row {
+                output.insert(
+                    row.get("external_id"),
+                    SparcForceCachedCaseDetail {
+                        updated_at_remote: row.get("updated_at_remote"),
+                        raw_json: row.get("raw_json"),
+                    },
+                );
+            }
+        }
+
+        Ok(output)
+    }
+
+    pub async fn find_case_record(
+        &self,
+        external_id: &str,
+    ) -> Result<Option<SparcForceImportedItem>, sqlx::Error> {
+        let Some(connection) = self.get().await? else {
+            return Ok(None);
+        };
+
+        let row = sqlx::query(
+            r#"
+            SELECT external_id, title, status, priority, assigned_to, project_external_id,
+                   updated_at_remote, created_at_remote, imported_at, raw_json
+            FROM sparc_force_cases
+            WHERE connection_id = ?1 AND external_id = ?2
+            LIMIT 1
+            "#,
+        )
+        .bind(&connection.id)
+        .bind(external_id)
+        .fetch_optional(self.pool)
+        .await?;
+
+        Ok(row.map(|row| {
+            sparc_force_imported_item_from_row(
+                row,
+                "case",
+                connection.remote_user_id,
+                connection.remote_username.as_deref(),
+            )
+        }))
+    }
+
+    pub async fn upsert_project(
+        &self,
+        connection_id: &str,
+        record: &SparcForceCacheRecord,
+    ) -> Result<(), sqlx::Error> {
+        let now = current_timestamp();
+        sqlx::query(
+            r#"
+            INSERT INTO sparc_force_projects (
+              connection_id, external_id, name, status, priority, updated_at_remote, created_at_remote, raw_json, imported_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            ON CONFLICT(connection_id, external_id) DO UPDATE SET
+              name = excluded.name,
+              status = excluded.status,
+              priority = excluded.priority,
+              updated_at_remote = excluded.updated_at_remote,
+              created_at_remote = excluded.created_at_remote,
+              raw_json = excluded.raw_json,
+              imported_at = excluded.imported_at
+            "#,
+        )
+        .bind(connection_id)
+        .bind(&record.external_id)
+        .bind(&record.title)
+        .bind(&record.status)
+        .bind(&record.priority)
+        .bind(&record.updated_at_remote)
+        .bind(&record.created_at_remote)
+        .bind(&record.raw_json)
+        .bind(now)
+        .execute(self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn upsert_task(
+        &self,
+        connection_id: &str,
+        source: &str,
+        record: &SparcForceCacheRecord,
+    ) -> Result<(), sqlx::Error> {
+        let now = current_timestamp();
+        let external_kind = sparc_force_canonical_task_kind(source);
+        sqlx::query(
+            r#"
+            INSERT INTO sparc_force_tasks (
+              connection_id, source, external_kind, external_id, title, status, priority, assigned_to,
+              project_external_id, case_external_id, updated_at_remote, created_at_remote, raw_json, imported_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+            ON CONFLICT(connection_id, external_kind, external_id) DO UPDATE SET
+              source = excluded.source,
+              title = excluded.title,
+              status = excluded.status,
+              priority = excluded.priority,
+              assigned_to = excluded.assigned_to,
+              project_external_id = excluded.project_external_id,
+              case_external_id = excluded.case_external_id,
+              updated_at_remote = excluded.updated_at_remote,
+              created_at_remote = excluded.created_at_remote,
+              raw_json = excluded.raw_json,
+              imported_at = excluded.imported_at
+            "#,
+        )
+        .bind(connection_id)
+        .bind(source)
+        .bind(external_kind)
+        .bind(&record.external_id)
+        .bind(&record.title)
+        .bind(&record.status)
+        .bind(&record.priority)
+        .bind(record.assigned_to)
+        .bind(&record.project_external_id)
+        .bind(&record.case_external_id)
+        .bind(&record.updated_at_remote)
+        .bind(&record.created_at_remote)
+        .bind(&record.raw_json)
+        .bind(now)
+        .execute(self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn imported_data(&self, limit: i64) -> Result<SparcForceImportedData, sqlx::Error> {
+        let Some(connection) = self.get().await? else {
+            return Ok(SparcForceImportedData {
+                cases: Vec::new(),
+                projects: Vec::new(),
+                tasks: Vec::new(),
+            });
+        };
+        let limit = limit.clamp(1, 100);
+
+        let case_rows = sqlx::query(
+            r#"
+            SELECT external_id, title, status, priority, assigned_to, project_external_id,
+                   updated_at_remote, created_at_remote, imported_at, raw_json
+            FROM sparc_force_cases
+            WHERE connection_id = ?1
+            ORDER BY imported_at DESC
+            LIMIT ?2
+            "#,
+        )
+        .bind(&connection.id)
+        .bind(limit)
+        .fetch_all(self.pool)
+        .await?;
+
+        let project_rows = sqlx::query(
+            r#"
+            SELECT external_id, name AS title, status, priority, updated_at_remote, created_at_remote, imported_at, raw_json
+            FROM sparc_force_projects
+            WHERE connection_id = ?1
+            ORDER BY imported_at DESC
+            LIMIT ?2
+            "#,
+        )
+        .bind(&connection.id)
+        .bind(limit)
+        .fetch_all(self.pool)
+        .await?;
+
+        let task_rows = sqlx::query(
+            r#"
+            SELECT external_id, title, status, priority, source, external_kind, assigned_to, project_external_id,
+                   case_external_id, updated_at_remote, created_at_remote, imported_at, raw_json
+            FROM sparc_force_tasks
+            WHERE connection_id = ?1
+            ORDER BY imported_at DESC
+            LIMIT ?2
+            "#,
+        )
+        .bind(&connection.id)
+        .bind(limit)
+        .fetch_all(self.pool)
+        .await?;
+
+        Ok(SparcForceImportedData {
+            cases: case_rows
+                .into_iter()
+                .map(|row| {
+                    sparc_force_imported_item_from_row(
+                        row,
+                        "case",
+                        connection.remote_user_id,
+                        connection.remote_username.as_deref(),
+                    )
+                })
+                .collect(),
+            projects: project_rows
+                .into_iter()
+                .map(|row| {
+                    sparc_force_imported_item_from_row(
+                        row,
+                        "project",
+                        connection.remote_user_id,
+                        connection.remote_username.as_deref(),
+                    )
+                })
+                .collect(),
+            tasks: task_rows
+                .into_iter()
+                .map(|row| {
+                    sparc_force_imported_item_from_row(
+                        row,
+                        "task",
+                        connection.remote_user_id,
+                        connection.remote_username.as_deref(),
+                    )
+                })
+                .collect(),
+        })
+    }
+
+    pub async fn list_records(
+        &self,
+        input: ListSparcForceRecordsInput,
+    ) -> Result<SparcForceRecordQueryResult, sqlx::Error> {
+        let Some(connection) = self.get().await? else {
+            let limit = input.limit.unwrap_or(50).clamp(1, 100);
+            let offset = input.offset.unwrap_or(0).max(0);
+            return Ok(SparcForceRecordQueryResult {
+                records: Vec::new(),
+                total: 0,
+                limit,
+                offset,
+                counts: SparcForceRecordCounts::default(),
+            });
+        };
+
+        let mut records = Vec::new();
+        if input.kind.as_deref().map(normalize_filter_value) != Some("task".to_string())
+            && input.kind.as_deref().map(normalize_filter_value) != Some("project".to_string())
+        {
+            records.extend(
+                self.list_case_records(
+                    &connection.id,
+                    connection.remote_user_id,
+                    connection.remote_username.as_deref(),
+                )
+                .await?,
+            );
+        }
+        if input.kind.as_deref().map(normalize_filter_value) != Some("case".to_string())
+            && input.kind.as_deref().map(normalize_filter_value) != Some("task".to_string())
+        {
+            records.extend(
+                self.list_project_records(
+                    &connection.id,
+                    connection.remote_user_id,
+                    connection.remote_username.as_deref(),
+                )
+                .await?,
+            );
+        }
+        if input.kind.as_deref().map(normalize_filter_value) != Some("case".to_string())
+            && input.kind.as_deref().map(normalize_filter_value) != Some("project".to_string())
+        {
+            records.extend(
+                self.list_task_records(
+                    &connection.id,
+                    connection.remote_user_id,
+                    connection.remote_username.as_deref(),
+                )
+                .await?,
+            );
+        }
+
+        let counts = sparc_force_record_counts(&records);
+        let mut filtered = records
+            .into_iter()
+            .filter(|record| sparc_force_record_matches(record, &input))
+            .collect::<Vec<_>>();
+
+        sort_sparc_force_records(&mut filtered, &input);
+
+        let total = filtered.len() as i64;
+        let limit = input.limit.unwrap_or(50).clamp(1, 100);
+        let offset = input.offset.unwrap_or(0).max(0);
+        let records = filtered
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect();
+
+        Ok(SparcForceRecordQueryResult {
+            records,
+            total,
+            limit,
+            offset,
+            counts,
+        })
+    }
+
+    async fn list_case_records(
+        &self,
+        connection_id: &str,
+        remote_user_id: Option<i64>,
+        remote_username: Option<&str>,
+    ) -> Result<Vec<SparcForceImportedItem>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT external_id, title, status, priority, assigned_to, project_external_id,
+                   updated_at_remote, created_at_remote, imported_at, raw_json
+            FROM sparc_force_cases
+            WHERE connection_id = ?1
+            "#,
+        )
+        .bind(connection_id)
+        .fetch_all(self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                sparc_force_imported_item_from_row(row, "case", remote_user_id, remote_username)
+            })
+            .collect())
+    }
+
+    async fn list_project_records(
+        &self,
+        connection_id: &str,
+        remote_user_id: Option<i64>,
+        remote_username: Option<&str>,
+    ) -> Result<Vec<SparcForceImportedItem>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT external_id, name AS title, status, priority, updated_at_remote, created_at_remote, imported_at, raw_json
+            FROM sparc_force_projects
+            WHERE connection_id = ?1
+            "#,
+        )
+        .bind(connection_id)
+        .fetch_all(self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                sparc_force_imported_item_from_row(row, "project", remote_user_id, remote_username)
+            })
+            .collect())
+    }
+
+    async fn list_task_records(
+        &self,
+        connection_id: &str,
+        remote_user_id: Option<i64>,
+        remote_username: Option<&str>,
+    ) -> Result<Vec<SparcForceImportedItem>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT external_id, title, status, priority, source, external_kind, assigned_to, project_external_id,
+                   case_external_id, updated_at_remote, created_at_remote, imported_at, raw_json
+            FROM sparc_force_tasks
+            WHERE connection_id = ?1
+            "#,
+        )
+        .bind(connection_id)
+        .fetch_all(self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                sparc_force_imported_item_from_row(row, "task", remote_user_id, remote_username)
+            })
+            .collect())
+    }
+
+    pub async fn find_task_record(
+        &self,
+        source: &str,
+        external_id: &str,
+    ) -> Result<Option<SparcForceImportedItem>, sqlx::Error> {
+        let Some(connection) = self.get().await? else {
+            return Ok(None);
+        };
+        let external_kind = sparc_force_canonical_task_kind(source);
+
+        let row = sqlx::query(
+            r#"
+            SELECT external_id, title, status, priority, source, external_kind, assigned_to, project_external_id,
+                   case_external_id, updated_at_remote, created_at_remote, imported_at, raw_json
+            FROM sparc_force_tasks
+            WHERE connection_id = ?1 AND external_kind = ?2 AND external_id = ?3
+            LIMIT 1
+            "#,
+        )
+        .bind(&connection.id)
+        .bind(external_kind)
+        .bind(external_id)
+        .fetch_optional(self.pool)
+        .await?;
+
+        Ok(row.map(|row| {
+            sparc_force_imported_item_from_row(
+                row,
+                "task",
+                connection.remote_user_id,
+                connection.remote_username.as_deref(),
+            )
+        }))
+    }
+
+    pub async fn linked_weekly_task_id(
+        &self,
+        external_kind: &str,
+        external_source: &str,
+        external_id: &str,
+    ) -> Result<Option<String>, sqlx::Error> {
+        let Some(connection) = self.get().await? else {
+            return Ok(None);
+        };
+        let linked_external_id = sparc_force_linked_task_external_id(external_source, external_id);
+        sqlx::query_scalar(
+            r#"
+            SELECT native_id
+            FROM sparc_force_native_links
+            WHERE connection_id = ?1
+              AND external_kind = ?2
+              AND external_id = ?3
+              AND native_kind = 'weekly_task'
+            LIMIT 1
+            "#,
+        )
+        .bind(&connection.id)
+        .bind(external_kind)
+        .bind(linked_external_id)
+        .fetch_optional(self.pool)
+        .await
+    }
+
+    pub async fn save_weekly_task_link(
+        &self,
+        external_kind: &str,
+        external_source: &str,
+        external_id: &str,
+        weekly_task_id: &str,
+    ) -> Result<(), sqlx::Error> {
+        let Some(connection) = self.get().await? else {
+            return Ok(());
+        };
+        let now = current_timestamp();
+        let linked_external_id = sparc_force_linked_task_external_id(external_source, external_id);
+        sqlx::query(
+            r#"
+            DELETE FROM sparc_force_native_links
+            WHERE connection_id = ?1
+              AND external_kind = ?2
+              AND external_id = ?3
+              AND native_kind = 'weekly_task'
+            "#,
+        )
+        .bind(&connection.id)
+        .bind(external_kind)
+        .bind(&linked_external_id)
+        .execute(self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO sparc_force_native_links (
+              id, connection_id, external_kind, external_id, native_kind, native_id, created_at, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, 'weekly_task', ?5, ?6, ?7)
+            "#,
+        )
+        .bind(generate_id("sparc_force_link"))
+        .bind(&connection.id)
+        .bind(external_kind)
+        .bind(linked_external_id)
+        .bind(weekly_task_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(self.pool)
+        .await?;
+
+        Ok(())
+    }
+}
+
 pub struct WeeklyTaskRepository<'a> {
     pool: &'a SqlitePool,
 }
@@ -2270,6 +2965,10 @@ pub struct CalendarSourceRepository<'a> {
 }
 
 pub struct CalendarEventRepository<'a> {
+    pool: &'a SqlitePool,
+}
+
+pub struct DailyPlanRepository<'a> {
     pool: &'a SqlitePool,
 }
 
@@ -2525,7 +3224,7 @@ impl<'a> WeeklyTaskRepository<'a> {
         Ok(result.rows_affected() > 0)
     }
 
-    async fn find(&self, id: &str) -> Result<Option<WeeklyTask>, sqlx::Error> {
+    pub async fn find(&self, id: &str) -> Result<Option<WeeklyTask>, sqlx::Error> {
         let row = sqlx::query(
             r#"
             SELECT weekly_tasks.id,
@@ -2859,6 +3558,237 @@ impl CalendarEventStore for CalendarEventRepository<'_> {
         input: GetWeekCapacityInput,
     ) -> Result<WeekCapacity, sqlx::Error> {
         CalendarEventRepository::week_capacity(self, input).await
+    }
+}
+
+impl<'a> DailyPlanRepository<'a> {
+    pub fn new(pool: &'a SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn get_by_date(
+        &self,
+        input: GetDailyPlanInput,
+    ) -> Result<Option<DailyPlan>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, date, focus_goal_minutes, current_task_id, suggested_task_id, created_at, updated_at
+            FROM daily_plans
+            WHERE date = ?1
+            LIMIT 1
+            "#,
+        )
+        .bind(input.date)
+        .fetch_optional(self.pool)
+        .await?;
+
+        Ok(row.map(daily_plan_from_row))
+    }
+
+    pub async fn upsert(&self, input: UpsertDailyPlanInput) -> Result<DailyPlan, sqlx::Error> {
+        let now = current_timestamp();
+        let existing = self
+            .get_by_date(GetDailyPlanInput {
+                date: input.date.clone(),
+            })
+            .await?;
+        if let Some(mut plan) = existing {
+            if let Some(minutes) = input.focus_goal_minutes {
+                plan.focus_goal_minutes = minutes;
+            }
+            if input.current_task_id.is_some() {
+                plan.current_task_id = normalize_optional(input.current_task_id);
+            }
+            if input.suggested_task_id.is_some() {
+                plan.suggested_task_id = normalize_optional(input.suggested_task_id);
+            }
+            plan.updated_at = now.clone();
+            sqlx::query(
+                r#"
+                UPDATE daily_plans
+                SET focus_goal_minutes = ?2,
+                    current_task_id = ?3,
+                    suggested_task_id = ?4,
+                    updated_at = ?5
+                WHERE id = ?1
+                "#,
+            )
+            .bind(&plan.id)
+            .bind(plan.focus_goal_minutes)
+            .bind(&plan.current_task_id)
+            .bind(&plan.suggested_task_id)
+            .bind(&plan.updated_at)
+            .execute(self.pool)
+            .await?;
+            return Ok(plan);
+        }
+
+        let plan = DailyPlan {
+            id: generate_id("daily_plan"),
+            date: input.date,
+            focus_goal_minutes: input.focus_goal_minutes.unwrap_or(240),
+            current_task_id: normalize_optional(input.current_task_id),
+            suggested_task_id: normalize_optional(input.suggested_task_id),
+            created_at: now.clone(),
+            updated_at: now,
+        };
+
+        sqlx::query(
+            r#"
+            INSERT INTO daily_plans (id, date, focus_goal_minutes, current_task_id, suggested_task_id, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "#,
+        )
+        .bind(&plan.id)
+        .bind(&plan.date)
+        .bind(plan.focus_goal_minutes)
+        .bind(&plan.current_task_id)
+        .bind(&plan.suggested_task_id)
+        .bind(&plan.created_at)
+        .bind(&plan.updated_at)
+        .execute(self.pool)
+        .await?;
+
+        Ok(plan)
+    }
+
+    pub async fn list_items(&self, daily_plan_id: &str) -> Result<Vec<DailyPlanItem>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, daily_plan_id, rank, title, weekly_task_id, planned_minutes, status, created_at, updated_at
+            FROM daily_plan_items
+            WHERE daily_plan_id = ?1
+            ORDER BY rank ASC, created_at ASC
+            "#,
+        )
+        .bind(daily_plan_id)
+        .fetch_all(self.pool)
+        .await?;
+
+        Ok(rows.into_iter().map(daily_plan_item_from_row).collect())
+    }
+
+    pub async fn replace_items(
+        &self,
+        daily_plan_id: &str,
+        items: Vec<ReplaceDailyPlanItemInput>,
+    ) -> Result<Vec<DailyPlanItem>, sqlx::Error> {
+        sqlx::query("DELETE FROM daily_plan_items WHERE daily_plan_id = ?1")
+            .bind(daily_plan_id)
+            .execute(self.pool)
+            .await?;
+        let now = current_timestamp();
+        for item in items {
+            sqlx::query(
+                r#"
+                INSERT INTO daily_plan_items (
+                  id, daily_plan_id, rank, title, weekly_task_id, planned_minutes, status, created_at, updated_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'todo', ?7, ?8)
+                "#,
+            )
+            .bind(generate_id("daily_plan_item"))
+            .bind(daily_plan_id)
+            .bind(item.rank)
+            .bind(item.title.trim())
+            .bind(normalize_optional(item.weekly_task_id))
+            .bind(item.planned_minutes)
+            .bind(&now)
+            .bind(&now)
+            .execute(self.pool)
+            .await?;
+        }
+        self.list_items(daily_plan_id).await
+    }
+
+    pub async fn update_item(
+        &self,
+        id: &str,
+        input: UpdateDailyPlanItemInput,
+    ) -> Result<Option<DailyPlanItem>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, daily_plan_id, rank, title, weekly_task_id, planned_minutes, status, created_at, updated_at
+            FROM daily_plan_items
+            WHERE id = ?1
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(self.pool)
+        .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let mut item = daily_plan_item_from_row(row);
+        if let Some(status) = input.status {
+            item.status = status;
+        }
+        if let Some(title) = input.title {
+            item.title = title.trim().to_string();
+        }
+        if input.weekly_task_id.is_some() {
+            item.weekly_task_id = normalize_optional(input.weekly_task_id);
+        }
+        if input.planned_minutes.is_some() {
+            item.planned_minutes = input.planned_minutes;
+        }
+        item.updated_at = current_timestamp();
+
+        sqlx::query(
+            r#"
+            UPDATE daily_plan_items
+            SET title = ?2,
+                weekly_task_id = ?3,
+                planned_minutes = ?4,
+                status = ?5,
+                updated_at = ?6
+            WHERE id = ?1
+            "#,
+        )
+        .bind(&item.id)
+        .bind(&item.title)
+        .bind(&item.weekly_task_id)
+        .bind(item.planned_minutes)
+        .bind(item.status.as_storage_value())
+        .bind(&item.updated_at)
+        .execute(self.pool)
+        .await?;
+
+        Ok(Some(item))
+    }
+}
+
+#[async_trait::async_trait]
+impl DailyPlanStore for DailyPlanRepository<'_> {
+    async fn get_by_date(
+        &self,
+        input: GetDailyPlanInput,
+    ) -> Result<Option<DailyPlan>, sqlx::Error> {
+        DailyPlanRepository::get_by_date(self, input).await
+    }
+
+    async fn upsert(&self, input: UpsertDailyPlanInput) -> Result<DailyPlan, sqlx::Error> {
+        DailyPlanRepository::upsert(self, input).await
+    }
+
+    async fn list_items(&self, daily_plan_id: &str) -> Result<Vec<DailyPlanItem>, sqlx::Error> {
+        DailyPlanRepository::list_items(self, daily_plan_id).await
+    }
+
+    async fn replace_items(
+        &self,
+        daily_plan_id: &str,
+        items: Vec<ReplaceDailyPlanItemInput>,
+    ) -> Result<Vec<DailyPlanItem>, sqlx::Error> {
+        DailyPlanRepository::replace_items(self, daily_plan_id, items).await
+    }
+
+    async fn update_item(
+        &self,
+        id: &str,
+        input: UpdateDailyPlanItemInput,
+    ) -> Result<Option<DailyPlanItem>, sqlx::Error> {
+        DailyPlanRepository::update_item(self, id, input).await
     }
 }
 
@@ -3360,6 +4290,21 @@ impl<'a> SettingsRepository<'a> {
         if let Some(value) = input.report_ai_groq_model {
             settings.report_ai_groq_model = value;
         }
+        if let Some(value) = input.onboarding_completed {
+            settings.onboarding_completed = value;
+        }
+        if let Some(value) = input.onboarding_dismissed_welcome {
+            settings.onboarding_dismissed_welcome = value;
+        }
+        if let Some(value) = input.onboarding_dismissed_checklist {
+            settings.onboarding_dismissed_checklist = value;
+        }
+        if let Some(value) = input.onboarding_completed_steps {
+            settings.onboarding_completed_steps = value;
+        }
+        if let Some(value) = input.onboarding_completed_at {
+            settings.onboarding_completed_at = value;
+        }
 
         self.upsert("profile.name", &settings.name).await?;
         self.upsert("profile.email", &settings.email).await?;
@@ -3560,6 +4505,41 @@ impl<'a> SettingsRepository<'a> {
         .await?;
         self.upsert("report_ai.groq_model", &settings.report_ai_groq_model)
             .await?;
+        self.upsert(
+            "onboarding.completed",
+            if settings.onboarding_completed {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
+        self.upsert(
+            "onboarding.dismissed_welcome",
+            if settings.onboarding_dismissed_welcome {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
+        self.upsert(
+            "onboarding.dismissed_checklist",
+            if settings.onboarding_dismissed_checklist {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
+        self.upsert(
+            "onboarding.completed_steps",
+            &serde_json::to_string(&settings.onboarding_completed_steps)
+                .unwrap_or_else(|_| "[]".to_string()),
+        )
+        .await?;
+        self.upsert("onboarding.completed_at", &settings.onboarding_completed_at)
+            .await?;
 
         Ok(settings)
     }
@@ -3651,6 +4631,580 @@ fn report_item_from_row(row: sqlx::sqlite::SqliteRow) -> ReportItem {
     }
 }
 
+fn sparc_force_connection_from_row(row: sqlx::sqlite::SqliteRow) -> SparcForceConnection {
+    SparcForceConnection {
+        id: row.get("id"),
+        base_url: row.get("base_url"),
+        status: row.get("status"),
+        account_email: row.get("account_email"),
+        remote_user_id: row.get("remote_user_id"),
+        remote_username: row.get("remote_username"),
+        masked_email: row.get("masked_email"),
+        access_token_ref: row.get("access_token_ref"),
+        refresh_token_ref: row.get("refresh_token_ref"),
+        otp_session_ref: row.get("otp_session_ref"),
+        access_expires_at: row.get("access_expires_at"),
+        otp_expires_at: row.get("otp_expires_at"),
+        connected_at: row.get("connected_at"),
+        last_validated_at: row.get("last_validated_at"),
+        last_synced_at: row.get("last_synced_at"),
+        last_error: row.get("last_error"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    }
+}
+
+fn sparc_force_imported_item_from_row(
+    row: sqlx::sqlite::SqliteRow,
+    kind: &str,
+    remote_user_id: Option<i64>,
+    remote_username: Option<&str>,
+) -> SparcForceImportedItem {
+    let assigned_to = try_get_optional_i64(&row, "assigned_to");
+    let raw_json: String = row.get("raw_json");
+    SparcForceImportedItem {
+        kind: kind.to_string(),
+        external_id: row.get("external_id"),
+        title: row.get("title"),
+        status: row.get("status"),
+        priority: row.get("priority"),
+        external_kind: try_get_optional_string(&row, "external_kind"),
+        source: try_get_optional_string(&row, "source"),
+        assigned_to,
+        ownership: sparc_force_ownership(kind, assigned_to, remote_user_id),
+        created_by: sparc_force_created_by(&raw_json),
+        created_ownership: sparc_force_created_ownership(
+            &raw_json,
+            remote_user_id,
+            remote_username,
+        ),
+        project_external_id: try_get_optional_string(&row, "project_external_id"),
+        case_external_id: try_get_optional_string(&row, "case_external_id"),
+        updated_at_remote: row.get("updated_at_remote"),
+        created_at_remote: try_get_optional_string(&row, "created_at_remote")
+            .or_else(|| sparc_force_raw_string(&raw_json, SPARC_FORCE_CREATED_AT_KEYS)),
+        imported_at: row.get("imported_at"),
+        raw_json,
+    }
+}
+
+fn sparc_force_record_matches(
+    record: &SparcForceImportedItem,
+    input: &ListSparcForceRecordsInput,
+) -> bool {
+    if let Some(kind) = input.kind.as_deref().map(normalize_filter_value) {
+        if kind != "all" && normalize_filter_value(&record.kind) != kind {
+            return false;
+        }
+    }
+
+    if !matches_optional_filter(&record.status, input.statuses.as_deref()) {
+        return false;
+    }
+    if !matches_optional_filter(&record.priority, input.priorities.as_deref()) {
+        return false;
+    }
+    if !matches_optional_filter(&record.source, input.sources.as_deref()) {
+        return false;
+    }
+
+    if let Some(project_external_id) = input.project_external_id.as_deref() {
+        if record.project_external_id.as_deref() != Some(project_external_id) {
+            return false;
+        }
+    }
+    if let Some(case_external_id) = input.case_external_id.as_deref() {
+        if record.case_external_id.as_deref() != Some(case_external_id) {
+            return false;
+        }
+    }
+
+    if let Some(relationship) = input.relationship.as_deref() {
+        let relationship = normalize_filter_value(relationship);
+        if relationship != "all" && sparc_force_relationship(record) != relationship {
+            return false;
+        }
+    }
+
+    if let Some(ownership) = input.ownership.as_deref() {
+        let ownership = normalize_filter_value(ownership);
+        if ownership != "all"
+            && record
+                .ownership
+                .as_deref()
+                .map(normalize_filter_value)
+                .as_deref()
+                != Some(ownership.as_str())
+        {
+            return false;
+        }
+    }
+
+    if let Some(created_ownership) = input.created_ownership.as_deref() {
+        let created_ownership = normalize_filter_value(created_ownership);
+        if created_ownership != "all"
+            && record
+                .created_ownership
+                .as_deref()
+                .map(normalize_filter_value)
+                .as_deref()
+                != Some(created_ownership.as_str())
+        {
+            return false;
+        }
+    }
+
+    if let Some(date_from) = input.date_from.as_deref().filter(|value| !value.is_empty()) {
+        let value = record
+            .updated_at_remote
+            .as_deref()
+            .unwrap_or(&record.imported_at);
+        if value < date_from {
+            return false;
+        }
+    }
+    if let Some(date_to) = input.date_to.as_deref().filter(|value| !value.is_empty()) {
+        let value = record
+            .updated_at_remote
+            .as_deref()
+            .unwrap_or(&record.imported_at);
+        if value > date_to {
+            return false;
+        }
+    }
+
+    if let Some(search) = input.search.as_deref().map(str::trim) {
+        if !search.is_empty() {
+            let assigned_to = record
+                .assigned_to
+                .map(|value| value.to_string())
+                .unwrap_or_default();
+            let haystack = [
+                record.kind.as_str(),
+                record.external_id.as_str(),
+                record.title.as_str(),
+                record.status.as_deref().unwrap_or(""),
+                record.priority.as_deref().unwrap_or(""),
+                record.external_kind.as_deref().unwrap_or(""),
+                record.source.as_deref().unwrap_or(""),
+                assigned_to.as_str(),
+                record.ownership.as_deref().unwrap_or(""),
+                record.created_by.as_deref().unwrap_or(""),
+                record.created_ownership.as_deref().unwrap_or(""),
+                record.project_external_id.as_deref().unwrap_or(""),
+                record.case_external_id.as_deref().unwrap_or(""),
+                record.raw_json.as_str(),
+            ]
+            .join(" ")
+            .to_lowercase();
+            if !haystack.contains(&search.to_lowercase()) {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+fn matches_optional_filter(value: &Option<String>, filters: Option<&[String]>) -> bool {
+    let Some(filters) = filters else {
+        return true;
+    };
+    let normalized_filters = filters
+        .iter()
+        .map(|filter| normalize_filter_value(filter))
+        .filter(|filter| !filter.is_empty() && filter != "all")
+        .collect::<Vec<_>>();
+    if normalized_filters.is_empty() {
+        return true;
+    }
+
+    value
+        .as_deref()
+        .map(normalize_filter_value)
+        .map(|normalized| {
+            normalized_filters
+                .iter()
+                .any(|filter| filter == &normalized)
+        })
+        .unwrap_or(false)
+}
+
+fn sort_sparc_force_records(
+    records: &mut [SparcForceImportedItem],
+    input: &ListSparcForceRecordsInput,
+) {
+    let sort_by = input
+        .sort_by
+        .as_deref()
+        .map(normalize_filter_value)
+        .unwrap_or_else(|| "updated".to_string());
+    let descending = input
+        .sort_direction
+        .as_deref()
+        .map(normalize_filter_value)
+        .map(|direction| direction != "asc")
+        .unwrap_or(true);
+
+    records.sort_by(|left, right| {
+        let ordering = match sort_by.as_str() {
+            "title" => left.title.to_lowercase().cmp(&right.title.to_lowercase()),
+            "status" => left
+                .status
+                .as_deref()
+                .unwrap_or("")
+                .cmp(right.status.as_deref().unwrap_or("")),
+            "priority" => left
+                .priority
+                .as_deref()
+                .unwrap_or("")
+                .cmp(right.priority.as_deref().unwrap_or("")),
+            "created" | "created_at" => left
+                .created_at_remote
+                .as_deref()
+                .unwrap_or(&left.imported_at)
+                .cmp(
+                    right
+                        .created_at_remote
+                        .as_deref()
+                        .unwrap_or(&right.imported_at),
+                ),
+            "imported" | "imported_at" => left.imported_at.cmp(&right.imported_at),
+            _ => left
+                .updated_at_remote
+                .as_deref()
+                .unwrap_or(&left.imported_at)
+                .cmp(
+                    right
+                        .updated_at_remote
+                        .as_deref()
+                        .unwrap_or(&right.imported_at),
+                ),
+        };
+        if descending {
+            ordering.reverse()
+        } else {
+            ordering
+        }
+    });
+}
+
+fn sparc_force_record_counts(records: &[SparcForceImportedItem]) -> SparcForceRecordCounts {
+    SparcForceRecordCounts {
+        total: records.len() as i64,
+        cases: records
+            .iter()
+            .filter(|record| record.kind == "case")
+            .count() as i64,
+        projects: records
+            .iter()
+            .filter(|record| record.kind == "project")
+            .count() as i64,
+        tasks: records
+            .iter()
+            .filter(|record| record.kind == "task")
+            .count() as i64,
+        statuses: count_optional_buckets(records.iter().map(|record| record.status.as_deref())),
+        priorities: count_optional_buckets(records.iter().map(|record| record.priority.as_deref())),
+        sources: count_optional_buckets(records.iter().map(|record| record.source.as_deref())),
+        relationships: count_buckets(records.iter().filter_map(|record| {
+            (record.kind == "task").then(|| relationship_label(&sparc_force_relationship(record)))
+        })),
+        ownerships: count_buckets(records.iter().filter_map(|record| {
+            (record.kind == "case" || record.kind == "task")
+                .then(|| record.ownership.as_deref().map(ownership_label))
+                .flatten()
+        })),
+        created_ownerships: count_buckets(records.iter().filter_map(|record| {
+            (record.kind == "case" || record.kind == "task")
+                .then(|| {
+                    record
+                        .created_ownership
+                        .as_deref()
+                        .map(created_ownership_label)
+                })
+                .flatten()
+        })),
+    }
+}
+
+fn count_optional_buckets<'a>(
+    values: impl Iterator<Item = Option<&'a str>>,
+) -> Vec<SparcForceRecordBucket> {
+    count_buckets(values.map(|value| value.unwrap_or("Unknown").to_string()))
+}
+
+fn count_buckets(values: impl Iterator<Item = String>) -> Vec<SparcForceRecordBucket> {
+    let mut counts = HashMap::<String, i64>::new();
+    for value in values {
+        let label = value.trim();
+        if label.is_empty() {
+            continue;
+        }
+        *counts.entry(label.to_string()).or_default() += 1;
+    }
+    let mut buckets = counts
+        .into_iter()
+        .map(|(label, count)| SparcForceRecordBucket { label, count })
+        .collect::<Vec<_>>();
+    buckets.sort_by(|left, right| left.label.cmp(&right.label));
+    buckets
+}
+
+fn sparc_force_relationship(record: &SparcForceImportedItem) -> String {
+    if record
+        .case_external_id
+        .as_deref()
+        .is_some_and(|value| !value.is_empty())
+        || json_field_present(
+            &record.raw_json,
+            &[
+                "case_ID",
+                "caseId",
+                "case_Number",
+                "caseTitle",
+                "case_Title",
+            ],
+        )
+    {
+        return "case_linked".to_string();
+    }
+    if record
+        .project_external_id
+        .as_deref()
+        .is_some_and(|value| !value.is_empty())
+        || json_field_present(
+            &record.raw_json,
+            &[
+                "fk_Project_ID",
+                "fkProjectId",
+                "project_ID",
+                "projectId",
+                "project_Name",
+            ],
+        )
+    {
+        return "project_task".to_string();
+    }
+    "standalone".to_string()
+}
+
+fn json_field_present(raw_json: &str, keys: &[&str]) -> bool {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(raw_json) else {
+        return false;
+    };
+    keys.iter().any(|key| {
+        value
+            .get(*key)
+            .and_then(|field| {
+                field
+                    .as_str()
+                    .map(|text| !text.trim().is_empty())
+                    .or_else(|| field.as_i64().map(|number| number > 0))
+                    .or_else(|| field.as_bool())
+            })
+            .unwrap_or(false)
+    })
+}
+
+fn relationship_label(value: &str) -> String {
+    match value {
+        "case_linked" => "Case linked".to_string(),
+        "project_task" => "Project task".to_string(),
+        "standalone" => "Standalone".to_string(),
+        _ => humanize_filter_value(value),
+    }
+}
+
+fn sparc_force_ownership(
+    kind: &str,
+    assigned_to: Option<i64>,
+    remote_user_id: Option<i64>,
+) -> Option<String> {
+    if kind != "case" && kind != "task" {
+        return None;
+    }
+
+    match assigned_to {
+        None => Some("unassigned".to_string()),
+        Some(assigned_to) if Some(assigned_to) == remote_user_id => Some("mine".to_string()),
+        Some(_) => Some("other".to_string()),
+    }
+}
+
+const SPARC_FORCE_CREATED_BY_ID_KEYS: &[&str] = &[
+    "created_By",
+    "createdBy",
+    "created_By_ID",
+    "createdById",
+    "created_User_ID",
+    "createdUserId",
+    "created_By_User_ID",
+    "createdByUserId",
+];
+const SPARC_FORCE_CREATED_BY_NAME_KEYS: &[&str] = &[
+    "created_By_Name",
+    "createdByName",
+    "created_User_Name",
+    "createdUserName",
+    "created_By_Username",
+    "createdByUsername",
+    "created_By_Email",
+    "createdByEmail",
+];
+const SPARC_FORCE_CREATED_AT_KEYS: &[&str] = &[
+    "created_At",
+    "createdAt",
+    "created_Date",
+    "createdDate",
+    "created_On",
+    "createdOn",
+];
+
+fn sparc_force_created_by(raw_json: &str) -> Option<String> {
+    sparc_force_raw_string(raw_json, SPARC_FORCE_CREATED_BY_NAME_KEYS).or_else(|| {
+        sparc_force_raw_i64(raw_json, SPARC_FORCE_CREATED_BY_ID_KEYS).map(|id| id.to_string())
+    })
+}
+
+fn sparc_force_created_ownership(
+    raw_json: &str,
+    remote_user_id: Option<i64>,
+    remote_username: Option<&str>,
+) -> Option<String> {
+    if remote_user_id
+        .and_then(|id| {
+            sparc_force_raw_i64(raw_json, SPARC_FORCE_CREATED_BY_ID_KEYS)
+                .map(|created_by| created_by == id)
+        })
+        .unwrap_or(false)
+    {
+        return Some("created_by_me".to_string());
+    }
+
+    let created_by = sparc_force_raw_string(raw_json, SPARC_FORCE_CREATED_BY_NAME_KEYS)?;
+    let normalized_created_by = normalize_person_value(&created_by);
+    let Some(remote_username) = remote_username.map(normalize_person_value) else {
+        return Some("created_by_other".to_string());
+    };
+
+    if !remote_username.is_empty()
+        && (normalized_created_by == remote_username
+            || normalized_created_by.contains(&remote_username)
+            || remote_username.contains(&normalized_created_by))
+    {
+        Some("created_by_me".to_string())
+    } else {
+        Some("created_by_other".to_string())
+    }
+}
+
+fn sparc_force_raw_string(raw_json: &str, keys: &[&str]) -> Option<String> {
+    let value = serde_json::from_str::<serde_json::Value>(raw_json).ok()?;
+    keys.iter().find_map(|key| {
+        value.get(*key).and_then(|field| {
+            field
+                .as_str()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_string)
+                .or_else(|| field.as_i64().map(|number| number.to_string()))
+        })
+    })
+}
+
+fn sparc_force_raw_i64(raw_json: &str, keys: &[&str]) -> Option<i64> {
+    let value = serde_json::from_str::<serde_json::Value>(raw_json).ok()?;
+    keys.iter().find_map(|key| {
+        value.get(*key).and_then(|field| {
+            field.as_i64().or_else(|| {
+                field
+                    .as_str()
+                    .and_then(|text| text.trim().parse::<i64>().ok())
+            })
+        })
+    })
+}
+
+fn normalize_person_value(value: &str) -> String {
+    value
+        .trim()
+        .to_lowercase()
+        .replace(|character: char| !character.is_ascii_alphanumeric(), "")
+}
+
+fn sparc_force_canonical_task_kind(source: &str) -> &'static str {
+    match source {
+        "project_task_user" | "project_task_case" | "project_task" => "project_task",
+        "standalone_assigned" | "case_task" | "task" => "task",
+        _ => "task",
+    }
+}
+
+fn sparc_force_linked_task_external_id(external_source: &str, external_id: &str) -> String {
+    format!(
+        "{}:{external_id}",
+        sparc_force_canonical_task_kind(external_source)
+    )
+}
+
+fn ownership_label(value: &str) -> String {
+    match value {
+        "mine" => "Assigned to me".to_string(),
+        "other" => "Assigned to others".to_string(),
+        "unassigned" => "Unassigned".to_string(),
+        _ => humanize_filter_value(value),
+    }
+}
+
+fn created_ownership_label(value: &str) -> String {
+    match value {
+        "created_by_me" => "Created by me".to_string(),
+        "created_by_other" => "Created by others".to_string(),
+        _ => humanize_filter_value(value),
+    }
+}
+
+fn normalize_filter_value(value: &str) -> String {
+    value.trim().to_lowercase().replace([' ', '-'], "_")
+}
+
+fn humanize_filter_value(value: &str) -> String {
+    value
+        .split('_')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn try_get_optional_string(row: &sqlx::sqlite::SqliteRow, column: &str) -> Option<String> {
+    row.try_get(column).ok().flatten()
+}
+
+fn try_get_optional_i64(row: &sqlx::sqlite::SqliteRow, column: &str) -> Option<i64> {
+    row.try_get(column).ok().flatten()
+}
+
+async fn count_table(
+    pool: &SqlitePool,
+    table: &str,
+    connection_id: &str,
+) -> Result<i64, sqlx::Error> {
+    let sql = format!("SELECT COUNT(*) AS count FROM {table} WHERE connection_id = ?1");
+    let row = sqlx::query(&sql)
+        .bind(connection_id)
+        .fetch_one(pool)
+        .await?;
+    Ok(row.get("count"))
+}
+
 fn report_note_from_row(row: sqlx::sqlite::SqliteRow) -> ReportNote {
     ReportNote {
         id: row.get("id"),
@@ -3720,6 +5274,33 @@ fn weekly_task_from_row(row: sqlx::sqlite::SqliteRow) -> WeeklyTask {
         included_in_report: i64_to_bool(row.get("included_in_report")),
         progress_percent: row.get("progress_percent"),
         estimated_minutes: row.get("estimated_minutes"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    }
+}
+
+fn daily_plan_from_row(row: sqlx::sqlite::SqliteRow) -> DailyPlan {
+    DailyPlan {
+        id: row.get("id"),
+        date: row.get("date"),
+        focus_goal_minutes: row.get("focus_goal_minutes"),
+        current_task_id: row.get("current_task_id"),
+        suggested_task_id: row.get("suggested_task_id"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    }
+}
+
+fn daily_plan_item_from_row(row: sqlx::sqlite::SqliteRow) -> DailyPlanItem {
+    let status: String = row.get("status");
+    DailyPlanItem {
+        id: row.get("id"),
+        daily_plan_id: row.get("daily_plan_id"),
+        rank: row.get("rank"),
+        title: row.get("title"),
+        weekly_task_id: row.get("weekly_task_id"),
+        planned_minutes: row.get("planned_minutes"),
+        status: DailyPlanItemStatus::try_from(status).unwrap_or(DailyPlanItemStatus::Todo),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     }
@@ -3846,6 +5427,15 @@ fn apply_setting(settings: &mut Settings, key: &str, value: String) {
         }
         "report_ai.local_model_path" => settings.report_ai_local_model_path = value,
         "report_ai.groq_model" => settings.report_ai_groq_model = value,
+        "onboarding.completed" => settings.onboarding_completed = value == "true",
+        "onboarding.dismissed_welcome" => settings.onboarding_dismissed_welcome = value == "true",
+        "onboarding.dismissed_checklist" => {
+            settings.onboarding_dismissed_checklist = value == "true"
+        }
+        "onboarding.completed_steps" => {
+            settings.onboarding_completed_steps = serde_json::from_str(&value).unwrap_or_default();
+        }
+        "onboarding.completed_at" => settings.onboarding_completed_at = value,
         _ => {}
     }
 }
@@ -4316,6 +5906,42 @@ mod tests {
         pool
     }
 
+    async fn connected_sparc_force_repository<'a>(
+        pool: &'a SqlitePool,
+    ) -> SparcForceConnectionRepository<'a> {
+        let repository = SparcForceConnectionRepository::new(pool);
+        let mut connection = repository
+            .new_connection(
+                "https://sparc-force.example".to_string(),
+                "jane.engineer@example.com".to_string(),
+            )
+            .await;
+        connection.status = "connected".to_string();
+        connection.remote_user_id = Some(12);
+        repository.save(&connection).await.expect("save connection");
+        repository
+    }
+
+    fn sparc_force_test_task(
+        external_id: &str,
+        title: &str,
+        case_external_id: Option<&str>,
+        project_external_id: Option<&str>,
+    ) -> SparcForceCacheRecord {
+        SparcForceCacheRecord {
+            external_id: external_id.to_string(),
+            title: title.to_string(),
+            status: Some("Open".to_string()),
+            priority: Some("Normal".to_string()),
+            project_external_id: project_external_id.map(str::to_string),
+            case_external_id: case_external_id.map(str::to_string),
+            assigned_to: Some(12),
+            updated_at_remote: Some("2026-05-26T10:00:00Z".to_string()),
+            created_at_remote: Some("2026-05-24T10:00:00Z".to_string()),
+            raw_json: format!(r#"{{"task_ID":{external_id},"task_Name":"{title}"}}"#),
+        }
+    }
+
     async fn create_project(pool: &SqlitePool) -> Project {
         ProjectRepository::new(pool)
             .create(CreateProjectInput {
@@ -4405,6 +6031,330 @@ mod tests {
             .expect("project exists");
 
         assert_eq!(archived.status, "archived");
+    }
+
+    #[tokio::test]
+    async fn sparc_force_case_ownership_filters_and_counts_work() {
+        let pool = test_pool().await;
+        let repository = SparcForceConnectionRepository::new(&pool);
+        let mut connection = repository
+            .new_connection(
+                "https://sparc-force.example".to_string(),
+                "jane.engineer@example.com".to_string(),
+            )
+            .await;
+        connection.status = "connected".to_string();
+        connection.remote_user_id = Some(12);
+        repository.save(&connection).await.expect("save connection");
+
+        let cases = [
+            ("101", "Mine", Some(12)),
+            ("102", "Other", Some(99)),
+            ("103", "Unassigned", None),
+        ];
+        for (external_id, title, assigned_to) in cases {
+            repository
+                .upsert_case(
+                    &connection.id,
+                    &SparcForceCacheRecord {
+                        external_id: external_id.to_string(),
+                        title: title.to_string(),
+                        status: Some("Open".to_string()),
+                        priority: Some("High".to_string()),
+                        project_external_id: None,
+                        case_external_id: None,
+                        assigned_to,
+                        updated_at_remote: Some("2026-05-26T10:00:00+02:00".to_string()),
+                        created_at_remote: Some("2026-05-24T10:00:00+02:00".to_string()),
+                        raw_json: format!(r#"{{"case_ID":{external_id},"title":"{title}"}}"#),
+                    },
+                )
+                .await
+                .expect("upsert case");
+        }
+
+        let mine = repository
+            .list_records(ListSparcForceRecordsInput {
+                kind: Some("case".to_string()),
+                ownership: Some("mine".to_string()),
+                ..Default::default()
+            })
+            .await
+            .expect("list mine cases");
+        assert_eq!(mine.total, 1);
+        assert_eq!(mine.records[0].external_id, "101");
+        assert_eq!(mine.records[0].assigned_to, Some(12));
+        assert_eq!(mine.records[0].ownership.as_deref(), Some("mine"));
+
+        let other = repository
+            .list_records(ListSparcForceRecordsInput {
+                kind: Some("case".to_string()),
+                ownership: Some("other".to_string()),
+                ..Default::default()
+            })
+            .await
+            .expect("list other cases");
+        assert_eq!(other.total, 1);
+        assert_eq!(other.records[0].external_id, "102");
+
+        let unassigned = repository
+            .list_records(ListSparcForceRecordsInput {
+                kind: Some("case".to_string()),
+                ownership: Some("unassigned".to_string()),
+                ..Default::default()
+            })
+            .await
+            .expect("list unassigned cases");
+        assert_eq!(unassigned.total, 1);
+        assert_eq!(unassigned.records[0].external_id, "103");
+
+        let all_cases = repository
+            .list_records(ListSparcForceRecordsInput {
+                kind: Some("case".to_string()),
+                ..Default::default()
+            })
+            .await
+            .expect("list all cases");
+        let ownership_counts = all_cases
+            .counts
+            .ownerships
+            .iter()
+            .map(|bucket| (bucket.label.as_str(), bucket.count))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(ownership_counts.get("Assigned to me"), Some(&1));
+        assert_eq!(ownership_counts.get("Assigned to others"), Some(&1));
+        assert_eq!(ownership_counts.get("Unassigned"), Some(&1));
+    }
+
+    #[tokio::test]
+    async fn sparc_force_project_task_sources_share_one_cached_record() {
+        let pool = test_pool().await;
+        let repository = connected_sparc_force_repository(&pool).await;
+        let connection = repository.get().await.expect("get connection").unwrap();
+
+        repository
+            .upsert_task(
+                &connection.id,
+                "project_task_user",
+                &sparc_force_test_task("301", "User scoped", None, Some("44")),
+            )
+            .await
+            .expect("upsert user project task");
+        repository
+            .upsert_task(
+                &connection.id,
+                "project_task_case",
+                &sparc_force_test_task("301", "Case scoped", Some("88"), Some("44")),
+            )
+            .await
+            .expect("upsert case project task");
+
+        let result = repository
+            .list_records(ListSparcForceRecordsInput {
+                kind: Some("task".to_string()),
+                ..Default::default()
+            })
+            .await
+            .expect("list tasks");
+
+        assert_eq!(result.total, 1);
+        assert_eq!(
+            result.records[0].external_kind.as_deref(),
+            Some("project_task")
+        );
+        assert_eq!(result.records[0].external_id, "301");
+        assert_eq!(
+            result.records[0].source.as_deref(),
+            Some("project_task_case")
+        );
+        assert_eq!(result.records[0].case_external_id.as_deref(), Some("88"));
+    }
+
+    #[tokio::test]
+    async fn sparc_force_standalone_task_sources_share_one_cached_record() {
+        let pool = test_pool().await;
+        let repository = connected_sparc_force_repository(&pool).await;
+        let connection = repository.get().await.expect("get connection").unwrap();
+
+        repository
+            .upsert_task(
+                &connection.id,
+                "standalone_assigned",
+                &sparc_force_test_task("401", "Assigned task", None, None),
+            )
+            .await
+            .expect("upsert assigned task");
+        repository
+            .upsert_task(
+                &connection.id,
+                "case_task",
+                &sparc_force_test_task("401", "Case task", Some("91"), None),
+            )
+            .await
+            .expect("upsert case task");
+
+        let result = repository
+            .list_records(ListSparcForceRecordsInput {
+                kind: Some("task".to_string()),
+                ..Default::default()
+            })
+            .await
+            .expect("list tasks");
+
+        assert_eq!(result.total, 1);
+        assert_eq!(result.records[0].external_kind.as_deref(), Some("task"));
+        assert_eq!(result.records[0].source.as_deref(), Some("case_task"));
+        assert_eq!(result.records[0].case_external_id.as_deref(), Some("91"));
+    }
+
+    #[tokio::test]
+    async fn sparc_force_task_and_project_task_ids_remain_distinct() {
+        let pool = test_pool().await;
+        let repository = connected_sparc_force_repository(&pool).await;
+        let connection = repository.get().await.expect("get connection").unwrap();
+
+        repository
+            .upsert_task(
+                &connection.id,
+                "standalone_assigned",
+                &sparc_force_test_task("501", "Standalone", None, None),
+            )
+            .await
+            .expect("upsert standalone task");
+        repository
+            .upsert_task(
+                &connection.id,
+                "project_task_user",
+                &sparc_force_test_task("501", "Project task", None, Some("12")),
+            )
+            .await
+            .expect("upsert project task");
+
+        let result = repository
+            .list_records(ListSparcForceRecordsInput {
+                kind: Some("task".to_string()),
+                ..Default::default()
+            })
+            .await
+            .expect("list tasks");
+
+        let kinds = result
+            .records
+            .iter()
+            .map(|record| record.external_kind.as_deref().unwrap_or(""))
+            .collect::<Vec<_>>();
+        assert_eq!(result.total, 2);
+        assert!(kinds.contains(&"task"));
+        assert!(kinds.contains(&"project_task"));
+    }
+
+    #[tokio::test]
+    async fn sparc_force_migration_merges_duplicate_task_rows_and_links() {
+        let pool = test_pool().await;
+        let repository = connected_sparc_force_repository(&pool).await;
+        let connection = repository.get().await.expect("get connection").unwrap();
+        let weekly_tasks = WeeklyTaskRepository::new(&pool);
+
+        sqlx::query("DROP INDEX IF EXISTS idx_sparc_force_tasks_canonical")
+            .execute(&pool)
+            .await
+            .expect("drop canonical index");
+        sqlx::query(
+            r#"
+            INSERT INTO sparc_force_tasks (
+              connection_id, source, external_kind, external_id, title, status, priority, assigned_to,
+              project_external_id, case_external_id, updated_at_remote, raw_json, imported_at
+            )
+            VALUES
+              (?1, 'project_task_user', 'project_task', '601', 'Older', 'Open', 'Normal', NULL, '31', NULL, '2026-05-25T08:00:00Z', '{}', '2026-05-25T08:00:00Z'),
+              (?1, 'project_task_case', 'project_task', '601', 'Newer', 'Open', 'Normal', NULL, '31', '77', '2026-05-26T08:00:00Z', '{}', '2026-05-26T08:00:00Z')
+            "#,
+        )
+        .bind(&connection.id)
+        .execute(&pool)
+        .await
+        .expect("insert duplicate cached tasks");
+
+        let survivor = weekly_tasks
+            .create(CreateWeeklyTaskInput {
+                project_id: None,
+                task_type: WeeklyTaskType::PlannedWork,
+                status: Some(WeeklyTaskStatus::Todo),
+                title: "Keep me".to_string(),
+                details: None,
+                week_start_date: "2026-05-25".to_string(),
+                target_date: None,
+                completed_at: None,
+                priority: Some(WeeklyTaskPriority::Normal),
+                included_in_report: Some(true),
+                progress_percent: None,
+                estimated_minutes: None,
+            })
+            .await
+            .expect("create survivor task");
+        let duplicate = weekly_tasks
+            .create(CreateWeeklyTaskInput {
+                project_id: None,
+                task_type: WeeklyTaskType::PlannedWork,
+                status: Some(WeeklyTaskStatus::Todo),
+                title: "Drop me".to_string(),
+                details: None,
+                week_start_date: "2026-05-25".to_string(),
+                target_date: None,
+                completed_at: None,
+                priority: Some(WeeklyTaskPriority::Normal),
+                included_in_report: Some(true),
+                progress_percent: None,
+                estimated_minutes: None,
+            })
+            .await
+            .expect("create duplicate task");
+
+        sqlx::query(
+            r#"
+            INSERT INTO sparc_force_native_links (
+              id, connection_id, external_kind, external_id, native_kind, native_id, created_at, updated_at
+            )
+            VALUES
+              ('link_keep', ?1, 'task', 'project_task_user:601', 'weekly_task', ?2, '2026-05-25T08:00:00Z', '2026-05-25T08:00:00Z'),
+              ('link_drop', ?1, 'task', 'project_task_case:601', 'weekly_task', ?3, '2026-05-26T08:00:00Z', '2026-05-26T08:00:00Z')
+            "#,
+        )
+        .bind(&connection.id)
+        .bind(&survivor.id)
+        .bind(&duplicate.id)
+        .execute(&pool)
+        .await
+        .expect("insert duplicate links");
+
+        run_migrations(&pool).await.expect("rerun migrations");
+
+        let result = repository
+            .list_records(ListSparcForceRecordsInput {
+                kind: Some("task".to_string()),
+                ..Default::default()
+            })
+            .await
+            .expect("list migrated tasks");
+        assert_eq!(result.total, 1);
+        assert_eq!(
+            result.records[0].source.as_deref(),
+            Some("project_task_case")
+        );
+        assert_eq!(result.records[0].case_external_id.as_deref(), Some("77"));
+
+        let linked = repository
+            .linked_weekly_task_id("task", "project_task_case", "601")
+            .await
+            .expect("lookup canonical link");
+        assert_eq!(linked.as_deref(), Some(survivor.id.as_str()));
+
+        let duplicate_after = weekly_tasks
+            .find(&duplicate.id)
+            .await
+            .expect("find duplicate")
+            .expect("duplicate exists");
+        assert_eq!(duplicate_after.status, WeeklyTaskStatus::Dropped);
     }
 
     #[tokio::test]
@@ -5234,7 +7184,6 @@ mod tests {
                     manual_log_summary: None,
                     complete_task: None,
                     progress_percent: None,
-                    estimated_minutes: None,
                 },
             )
             .await

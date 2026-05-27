@@ -169,13 +169,19 @@ export function TaskCard({
             e.stopPropagation();
             onToggleComplete();
           }}
-          className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors ${
-            isCompleted
-              ? "border-emerald-400/50 bg-emerald-500/20 text-emerald-400"
-              : "border-slate-500/50 bg-transparent text-transparent hover:border-slate-400"
-          }`}
+          aria-label={isCompleted ? "Mark task as incomplete" : "Mark task as complete"}
+          title={isCompleted ? "Mark as incomplete" : "Mark as complete"}
+          className="mt-0.5 -m-1.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md"
         >
-          <Check className="h-3 w-3" />
+          <span
+            className={`flex h-4 w-4 items-center justify-center rounded border transition-colors ${
+              isCompleted
+                ? "border-emerald-400/50 bg-emerald-500/20 text-emerald-400"
+                : "border-slate-500/50 bg-transparent text-transparent hover:border-slate-400"
+            }`}
+          >
+            <Check className="h-3 w-3" />
+          </span>
         </button>
 
         <div className="min-w-0 flex-1">
@@ -228,9 +234,9 @@ export function TaskCard({
           )}
         </div>
 
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-1">
           <div
-            className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-700/50 text-[10px] font-medium text-slate-400"
+            className="hidden h-6 w-6 items-center justify-center rounded-full bg-slate-700/50 text-[10px] font-medium text-slate-400 2xl:flex"
           >
             {getInitials(task.title)}
           </div>

@@ -1,7 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, Check, ExternalLink, FileText, LockKeyhole, Mail, Mic, Monitor, MoreHorizontal, Palette, PlugZap, Save, Settings as SettingsIcon, Sparkles, User, Volume2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Briefcase, Building2, CalendarDays, Check, CheckCircle2, ChevronDown, Clock3, Database, Download, ExternalLink, FileJson, FileText, Filter, Folder, Hash, Layers, Link2, LockKeyhole, Mail, Mic, Monitor, MoreHorizontal, Palette, PlugZap, Save, Search, Settings as SettingsIcon, Sparkles, Upload, User, Users, Volume2, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { SimpleIcon } from "simple-icons";
 import {
@@ -12,6 +12,8 @@ import {
   siWakatime,
 } from "simple-icons";
 import { useForm } from "react-hook-form";
+import { useLocation } from "react-router-dom";
+import { save } from "@tauri-apps/plugin-dialog";
 import { z } from "zod";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -19,7 +21,7 @@ import { Panel } from "../components/ui/Panel";
 import { SelectField } from "../components/ui/SelectField";
 import { useSpeech } from "../components/ui/SpeechProvider";
 import { useToast } from "../components/ui/ToastProvider";
-import { getSettings, updateSettings } from "../lib/api/settings";
+import { exportSettingsToFile, getSettings, importSettings, updateSettings } from "../lib/api/settings";
 import {
   connectGitHubPat,
   disconnectGitHub,
@@ -39,9 +41,25 @@ import {
   listReportAiProviderModels,
   testReportAiProvider,
 } from "../lib/api/reports";
+import {
+  connectSparcForce,
+  disconnectSparcForce,
+  getSparcForceCaseDetail,
+  getSparcForceIntegrationStatus,
+  importSparcForceTaskToWeeklyTask,
+  listSparcForceRecords,
+  syncSparcForce,
+  testSparcForceConnection,
+  verifySparcForceLoginOtp,
+} from "../lib/api/sparcForce";
 import type { ReportAiModelList, ReportAiProvider, ReportAiStatus } from "../types/report";
 import type { CalendarSource } from "../types/calendar";
 import type { Settings } from "../types/settings";
+import type { SparcForceImportedItem, SparcForceIntegrationStatus, SparcForceRecordCounts } from "../types/sparcForce";
+import type { WeeklyTaskPriority, WeeklyTaskStatus } from "../types/weeklyTask";
+import { sparcForceSyncAnnouncement, syncStartedAnnouncement, taskAnnouncement } from "../lib/announcements";
+import { currentWeekRange } from "../lib/dates";
+import { weeklyTaskQueryRoots } from "../lib/api/queryKeys";
 
 const workingDays = [
   { label: "Mon", value: "monday" },
@@ -102,9 +120,10 @@ const settingsSchema = z.object({
 });
 
 type SettingsFormValues = z.infer<typeof settingsSchema>;
-type SettingsTab = "general" | "work" | "audio" | "integrations" | "reporting";
+type SettingsTab = "general" | "work" | "audio" | "integrations" | "reporting" | "portability";
 type IntegrationPanel =
   | "github"
+  | "sparcForce"
   | "git"
   | "calendar"
   | "voice"
@@ -118,15 +137,19 @@ const settingsTabs: { id: SettingsTab; label: string }[] = [
   { id: "audio", label: "Audio & Voice" },
   { id: "integrations", label: "Integrations" },
   { id: "reporting", label: "Reporting" },
+  { id: "portability", label: "Import / Export" },
 ];
 
 export function SettingsPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
   const speech = useSpeech();
+  const location = useLocation();
   const [activeTab, setActiveTab] = useState<SettingsTab>("general");
   const [activeIntegrationPanel, setActiveIntegrationPanel] =
     useState<IntegrationPanel>(null);
+  const integrationSetupPanelRef = useRef<HTMLDivElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
   const settingsQuery = useQuery({
     queryKey: ["settings"],
     queryFn: getSettings,
@@ -136,6 +159,14 @@ export function SettingsPage() {
     queryFn: getGitHubIntegrationStatus,
   });
   const [githubToken, setGithubToken] = useState("");
+  const sparcForceStatusQuery = useQuery({
+    queryKey: ["sparcForceIntegrationStatus"],
+    queryFn: getSparcForceIntegrationStatus,
+  });
+  const [sparcForceBaseUrl, setSparcForceBaseUrl] = useState("");
+  const [sparcForceEmail, setSparcForceEmail] = useState("");
+  const [sparcForcePassword, setSparcForcePassword] = useState("");
+  const [sparcForceOtp, setSparcForceOtp] = useState("");
   const calendarSourcesQuery = useQuery({
     queryKey: ["calendarSources"],
     queryFn: listCalendarSources,
@@ -192,6 +223,39 @@ export function SettingsPage() {
     }
   }, [form, form.formState.isDirty, settingsQuery.data]);
 
+  useEffect(() => {
+    const status = sparcForceStatusQuery.data;
+    if (!status) return;
+    if (status.baseUrl && !sparcForceBaseUrl) setSparcForceBaseUrl(status.baseUrl);
+    if (status.accountEmail && !sparcForceEmail) setSparcForceEmail(status.accountEmail);
+  }, [sparcForceBaseUrl, sparcForceEmail, sparcForceStatusQuery.data]);
+
+  useEffect(() => {
+    const state = location.state as {
+      openIntegrationPanel?: IntegrationPanel;
+      openSettingsTab?: SettingsTab;
+    } | null;
+    if (state?.openSettingsTab) {
+      setActiveTab(state.openSettingsTab);
+    }
+    if (state?.openIntegrationPanel === "sparcForce") {
+      setActiveTab("integrations");
+      setActiveIntegrationPanel("sparcForce");
+    }
+  }, [location.state]);
+
+  useEffect(() => {
+    if (!activeIntegrationPanel || activeTab !== "integrations") return;
+    const scrollTimer = window.setTimeout(() => {
+      integrationSetupPanelRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
+    }, 0);
+
+    return () => window.clearTimeout(scrollTimer);
+  }, [activeIntegrationPanel, activeTab]);
+
   const saveMutation = useMutation({
     mutationFn: (values: SettingsFormValues) =>
       updateSettings({
@@ -232,6 +296,39 @@ export function SettingsPage() {
     },
     onError: (error) => {
       toast.error("Settings failed", error instanceof Error ? error.message : "Settings could not be saved.");
+    },
+  });
+  const exportMutation = useMutation({
+    mutationFn: async () => {
+      const stamp = new Date().toISOString().slice(0, 10);
+      const path = await save({
+        title: "Export WorkTrace settings",
+        defaultPath: `worktrace-settings-${stamp}.json`,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!path) return false;
+
+      await exportSettingsToFile(path);
+      return true;
+    },
+    onSuccess: (saved) => {
+      if (saved) {
+        toast.success("Settings exported", "Your WorkTrace settings file was saved.");
+      }
+    },
+    onError: (error) => {
+      toast.error("Export failed", error instanceof Error ? error.message : "Settings could not be exported.");
+    },
+  });
+  const importMutation = useMutation({
+    mutationFn: importSettings,
+    onSuccess: async (result) => {
+      form.reset(toFormValues(result.settings));
+      await queryClient.invalidateQueries({ queryKey: ["settings"] });
+      toast.success("Settings imported", result.warnings[0] ?? "Your saved WorkTrace settings were loaded.");
+    },
+    onError: (error) => {
+      toast.error("Import failed", error instanceof Error ? error.message : "Settings could not be imported.");
     },
   });
   const connectCalendarMutation = useMutation({
@@ -319,6 +416,78 @@ export function SettingsPage() {
       toast.error("Disconnect failed", error instanceof Error ? error.message : "GitHub could not be disconnected.");
     },
   });
+  const connectSparcForceMutation = useMutation({
+    mutationFn: () =>
+      connectSparcForce({
+        baseUrl: sparcForceBaseUrl,
+        email: sparcForceEmail,
+        password: sparcForcePassword,
+      }),
+    onSuccess: async (outcome) => {
+      setSparcForcePassword("");
+      await queryClient.invalidateQueries({ queryKey: ["sparcForceIntegrationStatus"] });
+      if (outcome.status.baseUrl) setSparcForceBaseUrl(outcome.status.baseUrl);
+      if (outcome.status.accountEmail) setSparcForceEmail(outcome.status.accountEmail);
+      if (!outcome.otpRequired) setSparcForceOtp("");
+      toast.success(outcome.otpRequired ? "OTP required" : "Sparc Force connected", outcome.message);
+    },
+    onError: (error) => {
+      toast.error("Sparc Force connect failed", error instanceof Error ? error.message : "Sparc Force could not be connected.");
+    },
+  });
+  const verifySparcForceOtpMutation = useMutation({
+    mutationFn: () => verifySparcForceLoginOtp({ otpCode: sparcForceOtp }),
+    onSuccess: async () => {
+      setSparcForceOtp("");
+      await queryClient.invalidateQueries({ queryKey: ["sparcForceIntegrationStatus"] });
+      toast.success("Sparc Force connected", "OTP verified.");
+    },
+    onError: (error) => {
+      toast.error("OTP verification failed", error instanceof Error ? error.message : "Sparc Force OTP could not be verified.");
+    },
+  });
+  const testSparcForceMutation = useMutation({
+    mutationFn: testSparcForceConnection,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["sparcForceIntegrationStatus"] });
+      toast.success("Sparc Force connection verified");
+    },
+    onError: (error) => {
+      toast.error("Sparc Force test failed", error instanceof Error ? error.message : "The connection could not be verified.");
+    },
+  });
+  const syncSparcForceMutation = useMutation({
+    mutationFn: syncSparcForce,
+    onMutate: () => {
+      speech.announce(syncStartedAnnouncement("Sparc Force"), { category: "sync" });
+    },
+    onSuccess: async (result) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["sparcForceIntegrationStatus"] }),
+        queryClient.invalidateQueries({ queryKey: ["sparcForceRecords"] }),
+      ]);
+      toast.success("Sparc Force synced", result.message);
+      speech.announce(sparcForceSyncAnnouncement(result), { category: "sync" });
+    },
+    onError: (error) => {
+      toast.error("Sparc Force sync failed", error instanceof Error ? error.message : "Sparc Force data could not be imported.");
+    },
+  });
+  const disconnectSparcForceMutation = useMutation({
+    mutationFn: disconnectSparcForce,
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["sparcForceIntegrationStatus"] }),
+        queryClient.invalidateQueries({ queryKey: ["sparcForceRecords"] }),
+      ]);
+      setSparcForcePassword("");
+      setSparcForceOtp("");
+      toast.success("Sparc Force disconnected");
+    },
+    onError: (error) => {
+      toast.error("Sparc Force disconnect failed", error instanceof Error ? error.message : "Sparc Force could not be disconnected.");
+    },
+  });
   const connectAiMutation = useMutation({
     mutationFn: ({ provider, apiKey }: { provider: ReportAiProvider; apiKey: string }) =>
       connectReportAiProvider({ provider, apiKey }),
@@ -379,6 +548,8 @@ export function SettingsPage() {
 
   const selectedWorkingDays = form.watch("workingDays");
   const githubConnected = Boolean(githubStatusQuery.data?.connected);
+  const sparcForceConnected = Boolean(sparcForceStatusQuery.data?.connected);
+  const sparcForceOtpRequired = sparcForceStatusQuery.data?.status === "otp_required";
   const calendarConnected = Boolean(
     calendarSourcesQuery.data?.some((source) => source.syncStatus === "connected"),
   );
@@ -399,14 +570,18 @@ export function SettingsPage() {
     form.watch("voiceTranscriptionProvider") === "groq";
   const connectedIntegrationCount = [
     githubConnected,
+    sparcForceConnected,
     calendarConnected,
     voiceConfigured,
     reportAiEnabled,
     openRouterConfigured,
     groqConfigured,
   ].filter(Boolean).length;
+  const integrationTotal = 7;
   const lastSyncLabel =
-    calendarSourcesQuery.data?.find((source) => source.lastSyncedAt)?.lastSyncedAt
+    sparcForceStatusQuery.data?.lastSyncedAt
+      ? formatTimestamp(sparcForceStatusQuery.data.lastSyncedAt)
+      : calendarSourcesQuery.data?.find((source) => source.lastSyncedAt)?.lastSyncedAt
       ? formatTimestamp(
           calendarSourcesQuery.data.find((source) => source.lastSyncedAt)!
             .lastSyncedAt!,
@@ -414,6 +589,75 @@ export function SettingsPage() {
       : githubStatusQuery.data?.lastValidatedAt
         ? formatTimestamp(githubStatusQuery.data.lastValidatedAt)
         : "Not synced yet";
+  const activePanelPlacement = integrationPanelPlacement(activeIntegrationPanel);
+
+  function renderIntegrationSetupPanel() {
+    if (!activeIntegrationPanel) return null;
+
+    return (
+      <div ref={integrationSetupPanelRef}>
+        <IntegrationSetupPanel
+          activePanel={activeIntegrationPanel}
+          githubToken={githubToken}
+          setGithubToken={setGithubToken}
+          connectGithubMutation={connectGithubMutation}
+          testGithubMutation={testGithubMutation}
+          githubConnected={githubConnected}
+          githubError={githubStatusQuery.error}
+          githubIsError={githubStatusQuery.isError}
+          sparcForceStatus={sparcForceStatusQuery.data}
+          sparcForceIsError={sparcForceStatusQuery.isError}
+          sparcForceError={sparcForceStatusQuery.error}
+          sparcForceBaseUrl={sparcForceBaseUrl}
+          setSparcForceBaseUrl={setSparcForceBaseUrl}
+          sparcForceEmail={sparcForceEmail}
+          setSparcForceEmail={setSparcForceEmail}
+          sparcForcePassword={sparcForcePassword}
+          setSparcForcePassword={setSparcForcePassword}
+          sparcForceOtp={sparcForceOtp}
+          setSparcForceOtp={setSparcForceOtp}
+          sparcForceOtpRequired={sparcForceOtpRequired}
+          connectSparcForceMutation={connectSparcForceMutation}
+          verifySparcForceOtpMutation={verifySparcForceOtpMutation}
+          testSparcForceMutation={testSparcForceMutation}
+          syncSparcForceMutation={syncSparcForceMutation}
+          disconnectSparcForceMutation={disconnectSparcForceMutation}
+          calendarEmail={calendarEmail}
+          setCalendarEmail={setCalendarEmail}
+          connectCalendarMutation={connectCalendarMutation}
+          syncCalendarMutation={syncCalendarMutation}
+          calendarSources={calendarSourcesQuery.data ?? []}
+          calendarError={calendarSourcesQuery.error}
+          calendarIsError={calendarSourcesQuery.isError}
+          openRouterKey={openRouterKey}
+          setOpenRouterKey={setOpenRouterKey}
+          groqKey={groqKey}
+          setGroqKey={setGroqKey}
+          connectAiMutation={connectAiMutation}
+          testAiMutation={testAiMutation}
+          connectAndTestAiMutation={connectAndTestAiMutation}
+          disconnectAiMutation={disconnectAiMutation}
+          listModelsMutation={listModelsMutation}
+          providerModels={providerModels}
+          reportAiStatus={reportAiStatusQuery.data}
+          selectedGroqModel={form.watch("reportAiGroqModel")}
+          selectedOpenRouterModel={form.watch("voiceOpenrouterModel")}
+          onSelectModel={(provider, modelId) => {
+            if (provider === "groq") {
+              form.setValue("reportAiGroqModel", modelId, { shouldDirty: true });
+              form.setValue("voiceGroqModel", modelId, { shouldDirty: true });
+            }
+            if (provider === "openrouter_free") {
+              form.setValue("voiceOpenrouterModel", modelId, { shouldDirty: true });
+            }
+          }}
+          onClose={() => setActiveIntegrationPanel(null)}
+          onOpenAudio={() => setActiveTab("audio")}
+          onOpenReporting={() => setActiveTab("reporting")}
+        />
+      </div>
+    );
+  }
 
   function toggleWorkingDay(day: string) {
     const current = form.getValues("workingDays");
@@ -425,6 +669,16 @@ export function SettingsPage() {
       shouldDirty: true,
       shouldValidate: true,
     });
+  }
+
+  async function importSelectedFile(file: File | undefined) {
+    if (!file) return;
+
+    const payload = await file.text();
+    importMutation.mutate(payload);
+    if (importInputRef.current) {
+      importInputRef.current.value = "";
+    }
   }
 
   return (
@@ -536,6 +790,75 @@ export function SettingsPage() {
                 />
               </Field>
             </div>
+          </Panel>
+          ) : null}
+
+          {activeTab === "portability" ? (
+          <Panel className="space-y-4">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <div className="mb-3 flex items-center gap-2 text-base font-semibold text-white">
+                  <FileJson className="h-4 w-4 text-cyan-300" />
+                  Settings Import / Export
+                </div>
+                <p className="max-w-2xl text-sm leading-6 text-slate-400">
+                  Export a WorkTrace settings file before reinstalling, then import it on the fresh install to restore preferences, backup setup, integrations, voice, reporting, and onboarding state.
+                </p>
+              </div>
+              <Badge tone="cyan">JSON</Badge>
+            </div>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={(event) => {
+                void importSelectedFile(event.currentTarget.files?.[0]);
+              }}
+            />
+            <div className="grid gap-3 md:grid-cols-2">
+              <button
+                type="button"
+                disabled={exportMutation.isPending || settingsQuery.isLoading}
+                onClick={() => exportMutation.mutate()}
+                className="flex min-h-24 items-center gap-4 rounded-xl border border-white/10 bg-slate-950/45 p-4 text-left transition hover:border-cyan-300/25 hover:bg-cyan-300/5 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-cyan-300/20 bg-cyan-300/10 text-cyan-100">
+                  <Download className="h-5 w-5" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold text-white">
+                    {exportMutation.isPending ? "Exporting settings..." : "Export Settings"}
+                  </span>
+                  <span className="mt-1 block text-xs leading-5 text-slate-400">
+                    Download a portable file for reinstall or device migration.
+                  </span>
+                </span>
+              </button>
+              <button
+                type="button"
+                disabled={importMutation.isPending}
+                onClick={() => importInputRef.current?.click()}
+                className="flex min-h-24 items-center gap-4 rounded-xl border border-white/10 bg-slate-950/45 p-4 text-left transition hover:border-blue-300/25 hover:bg-blue-400/5 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-blue-300/20 bg-blue-400/10 text-blue-100">
+                  <Upload className="h-5 w-5" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold text-white">
+                    {importMutation.isPending ? "Importing settings..." : "Import Settings"}
+                  </span>
+                  <span className="mt-1 block text-xs leading-5 text-slate-400">
+                    Load a WorkTrace settings export from disk.
+                  </span>
+                </span>
+              </button>
+            </div>
+            {importMutation.data?.warnings.length ? (
+              <div className="rounded-lg border border-orange-300/20 bg-orange-500/10 px-3 py-2 text-xs leading-5 text-orange-100">
+                {importMutation.data.warnings.join(" ")}
+              </div>
+            ) : null}
           </Panel>
           ) : null}
 
@@ -861,7 +1184,7 @@ export function SettingsPage() {
                 <IntegrationMetric
                   value={String(connectedIntegrationCount)}
                   label="Connected"
-                  detail="of 7 integrations"
+                  detail={`of ${integrationTotal} integrations`}
                   tone="green"
                 />
                 <IntegrationMetric
@@ -900,6 +1223,18 @@ export function SettingsPage() {
                   disabledDanger={disconnectGithubMutation.isPending}
                 />
                 <IntegrationCard
+                  icon={<PlugZap className="h-8 w-8 text-cyan-300" />}
+                  title="Sparc Force"
+                  connected={sparcForceConnected}
+                  description="Import read-only cases, projects, project tasks, and standalone tasks from Sparc Force."
+                  primaryLabel="Manage"
+                  primaryIcon
+                  onPrimary={() => setActiveIntegrationPanel("sparcForce")}
+                  dangerLabel={sparcForceConnected ? "Disconnect" : undefined}
+                  onDanger={() => disconnectSparcForceMutation.mutate()}
+                  disabledDanger={disconnectSparcForceMutation.isPending}
+                />
+                <IntegrationCard
                   icon={<BrandIcon icon={siGit} />}
                   title="Git Repositories"
                   connected
@@ -923,6 +1258,7 @@ export function SettingsPage() {
                 />
               </div>
             </section>
+            {activePanelPlacement === "development" ? renderIntegrationSetupPanel() : null}
 
             <section className="mt-5">
               <h3 className="mb-3 text-sm font-semibold text-white">Calendar & Productivity</h3>
@@ -944,6 +1280,7 @@ export function SettingsPage() {
                 />
               </div>
             </section>
+            {activePanelPlacement === "calendar" ? renderIntegrationSetupPanel() : null}
 
             <section className="mt-5">
               <h3 className="mb-3 text-sm font-semibold text-white">AI / Voice Services</h3>
@@ -993,51 +1330,7 @@ export function SettingsPage() {
                 />
               </div>
             </section>
-
-            {activeIntegrationPanel ? (
-              <IntegrationSetupPanel
-                activePanel={activeIntegrationPanel}
-                githubToken={githubToken}
-                setGithubToken={setGithubToken}
-                connectGithubMutation={connectGithubMutation}
-                testGithubMutation={testGithubMutation}
-                githubConnected={githubConnected}
-                githubError={githubStatusQuery.error}
-                githubIsError={githubStatusQuery.isError}
-                calendarEmail={calendarEmail}
-                setCalendarEmail={setCalendarEmail}
-                connectCalendarMutation={connectCalendarMutation}
-                syncCalendarMutation={syncCalendarMutation}
-                calendarSources={calendarSourcesQuery.data ?? []}
-                calendarError={calendarSourcesQuery.error}
-                calendarIsError={calendarSourcesQuery.isError}
-                openRouterKey={openRouterKey}
-                setOpenRouterKey={setOpenRouterKey}
-                groqKey={groqKey}
-                setGroqKey={setGroqKey}
-                connectAiMutation={connectAiMutation}
-                testAiMutation={testAiMutation}
-                connectAndTestAiMutation={connectAndTestAiMutation}
-                disconnectAiMutation={disconnectAiMutation}
-                listModelsMutation={listModelsMutation}
-                providerModels={providerModels}
-                reportAiStatus={reportAiStatusQuery.data}
-                selectedGroqModel={form.watch("reportAiGroqModel")}
-                selectedOpenRouterModel={form.watch("voiceOpenrouterModel")}
-                onSelectModel={(provider, modelId) => {
-                  if (provider === "groq") {
-                    form.setValue("reportAiGroqModel", modelId, { shouldDirty: true });
-                    form.setValue("voiceGroqModel", modelId, { shouldDirty: true });
-                  }
-                  if (provider === "openrouter_free") {
-                    form.setValue("voiceOpenrouterModel", modelId, { shouldDirty: true });
-                  }
-                }}
-                onClose={() => setActiveIntegrationPanel(null)}
-                onOpenAudio={() => setActiveTab("audio")}
-                onOpenReporting={() => setActiveTab("reporting")}
-              />
-            ) : null}
+            {activePanelPlacement === "ai" ? renderIntegrationSetupPanel() : null}
 
             <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-blue-500/8 px-4 py-3 text-xs text-slate-400">
               <span className="inline-flex items-center gap-2">
@@ -1292,6 +1585,23 @@ function IntegrationSetupPanel({
   githubConnected,
   githubError,
   githubIsError,
+  sparcForceStatus,
+  sparcForceIsError,
+  sparcForceError,
+  sparcForceBaseUrl,
+  setSparcForceBaseUrl,
+  sparcForceEmail,
+  setSparcForceEmail,
+  sparcForcePassword,
+  setSparcForcePassword,
+  sparcForceOtp,
+  setSparcForceOtp,
+  sparcForceOtpRequired,
+  connectSparcForceMutation,
+  verifySparcForceOtpMutation,
+  testSparcForceMutation,
+  syncSparcForceMutation,
+  disconnectSparcForceMutation,
   calendarEmail,
   setCalendarEmail,
   connectCalendarMutation,
@@ -1325,6 +1635,23 @@ function IntegrationSetupPanel({
   githubConnected: boolean;
   githubError: unknown;
   githubIsError: boolean;
+  sparcForceStatus: SparcForceIntegrationStatus | undefined;
+  sparcForceIsError: boolean;
+  sparcForceError: unknown;
+  sparcForceBaseUrl: string;
+  setSparcForceBaseUrl: (value: string) => void;
+  sparcForceEmail: string;
+  setSparcForceEmail: (value: string) => void;
+  sparcForcePassword: string;
+  setSparcForcePassword: (value: string) => void;
+  sparcForceOtp: string;
+  setSparcForceOtp: (value: string) => void;
+  sparcForceOtpRequired: boolean;
+  connectSparcForceMutation: PendingMutation & { mutate: () => void };
+  verifySparcForceOtpMutation: PendingMutation & { mutate: () => void };
+  testSparcForceMutation: PendingMutation & { mutate: () => void };
+  syncSparcForceMutation: PendingMutation & { mutate: () => void };
+  disconnectSparcForceMutation: PendingMutation & { mutate: () => void };
   calendarEmail: string;
   setCalendarEmail: (value: string) => void;
   connectCalendarMutation: PendingMutation & { mutate: () => void };
@@ -1362,22 +1689,23 @@ function IntegrationSetupPanel({
     listModelsMutation.isPending;
 
   return (
-    <div className="mt-5 rounded-2xl border border-blue-300/15 bg-slate-950/55 p-4">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+    <div className="mt-5 rounded-2xl border border-blue-300/20 bg-[radial-gradient(circle_at_top_left,rgba(37,99,235,0.16),transparent_36%),linear-gradient(135deg,rgba(15,23,42,0.94),rgba(2,12,27,0.96))] p-5 shadow-2xl shadow-blue-950/30">
+      <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="text-sm font-semibold text-white">
+          <h3 className="text-2xl font-bold leading-tight text-white">
             {integrationPanelTitle(activePanel)}
           </h3>
-          <p className="mt-1 text-xs leading-5 text-slate-400">
+          <p className="mt-2 text-sm leading-5 text-slate-400">
             Configure this integration without leaving the Integrations section.
           </p>
         </div>
         <button
           type="button"
-          className="rounded-lg border border-white/10 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-white/8"
+          className="inline-flex min-h-11 items-center gap-3 rounded-xl border border-white/10 bg-slate-950/35 px-4 py-2 text-sm font-semibold text-slate-200 shadow-lg shadow-black/10 transition hover:border-blue-300/30 hover:bg-white/8 active:scale-[0.96]"
           onClick={onClose}
         >
           Close
+          <X className="h-4 w-4 text-slate-400" />
         </button>
       </div>
 
@@ -1407,6 +1735,155 @@ function IntegrationSetupPanel({
             {testGithubMutation.isPending ? "Testing..." : "Test"}
           </Button>
           {githubIsError ? <InlineError error={githubError} fallback="GitHub integration status could not be loaded." /> : null}
+        </div>
+      ) : null}
+
+      {activePanel === "sparcForce" ? (
+        <div className="grid gap-4">
+          {sparcForceStatus ? (
+            <div className="grid gap-4 rounded-xl border border-blue-300/20 bg-[linear-gradient(135deg,rgba(30,64,175,0.22),rgba(15,23,42,0.6))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_18px_48px_rgba(15,23,42,0.28)] lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+              <div className="grid gap-3 text-xs text-slate-400 sm:grid-cols-2 xl:grid-cols-4">
+                <StatusLine
+                  icon={
+                    <span
+                      className={[
+                        "h-3 w-3 rounded-full",
+                        sparcForceStatus.connected
+                          ? "bg-emerald-300 shadow-[0_0_18px_rgba(52,211,153,0.65)]"
+                          : "bg-slate-500 shadow-[0_0_14px_rgba(148,163,184,0.28)]",
+                      ].join(" ")}
+                    />
+                  }
+                  label="Status"
+                  value={humanizeStatus(sparcForceStatus.status)}
+                />
+                <StatusLine icon={<User className="h-4 w-4" />} label="User" value={sparcForceStatus.remoteUsername ?? sparcForceStatus.accountEmail ?? "Not connected"} />
+                <StatusLine icon={<CalendarDays className="h-4 w-4" />} label="Last synced" value={sparcForceStatus.lastSyncedAt ? formatTimestamp(sparcForceStatus.lastSyncedAt) : "Not synced yet"} />
+                <StatusLine icon={<Layers className="h-4 w-4" />} label="Imported" value={`${sparcForceStatus.importedCases} cases / ${sparcForceStatus.importedProjects} projects / ${sparcForceStatus.importedTasks} tasks`} />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  disabled={!sparcForceStatus.connected || testSparcForceMutation.isPending}
+                  onClick={() => testSparcForceMutation.mutate()}
+                  className="h-10 min-w-20 rounded-lg border-blue-300/35 bg-slate-950/30 px-4 text-sm"
+                >
+                  {testSparcForceMutation.isPending ? "Testing..." : "Test"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="primary"
+                  disabled={!sparcForceStatus.connected || syncSparcForceMutation.isPending}
+                  onClick={() => syncSparcForceMutation.mutate()}
+                  className="h-10 min-w-28 rounded-lg px-4 text-sm shadow-blue-500/30"
+                >
+                  {syncSparcForceMutation.isPending ? "Syncing..." : "Sync Now"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={!sparcForceStatus.connected || disconnectSparcForceMutation.isPending}
+                  onClick={() => disconnectSparcForceMutation.mutate()}
+                  className="h-10 min-w-28 rounded-lg border-red-300/30 bg-red-500/8 px-4 text-sm text-red-200 hover:border-red-300/45 hover:bg-red-500/14"
+                >
+                  Disconnect
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
+          <details
+            className="group rounded-xl border border-white/10 bg-slate-950/42 px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
+            open={!sparcForceStatus?.connected || sparcForceOtpRequired}
+          >
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-slate-100">
+              <span className="inline-flex items-center gap-3">
+                <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-blue-500/12 text-blue-200">
+                  <LockKeyhole className="h-4 w-4" />
+                </span>
+                {sparcForceStatus?.connected ? "Connection credentials" : "Connect Sparc Force"}
+              </span>
+              <ChevronDown className="h-4 w-4 text-blue-300 transition-transform group-open:rotate-180" />
+            </summary>
+            <div className="mt-3 grid gap-3 lg:grid-cols-2">
+              <Field label="Sparc Force URL">
+                <input
+                  className={inputClass}
+                  type="url"
+                  value={sparcForceBaseUrl}
+                  onChange={(event) => setSparcForceBaseUrl(event.currentTarget.value)}
+                  placeholder="https://your-sparc-force-api-host"
+                  disabled={connectSparcForceMutation.isPending}
+                />
+              </Field>
+              <Field label="Account Email">
+                <input
+                  className={inputClass}
+                  type="email"
+                  value={sparcForceEmail}
+                  onChange={(event) => setSparcForceEmail(event.currentTarget.value)}
+                  placeholder="integration.user@example.com"
+                  disabled={connectSparcForceMutation.isPending}
+                />
+              </Field>
+              <Field label="Password">
+                <input
+                  className={inputClass}
+                  type="password"
+                  value={sparcForcePassword}
+                  onChange={(event) => setSparcForcePassword(event.currentTarget.value)}
+                  placeholder="Enter password to connect or reconnect"
+                  disabled={connectSparcForceMutation.isPending}
+                />
+              </Field>
+              {sparcForceOtpRequired ? (
+                <Field label={`OTP Code${sparcForceStatus?.maskedEmail ? ` (${sparcForceStatus.maskedEmail})` : ""}`}>
+                  <input
+                    className={inputClass}
+                    inputMode="numeric"
+                    value={sparcForceOtp}
+                    onChange={(event) => setSparcForceOtp(event.currentTarget.value)}
+                    placeholder="1234"
+                    disabled={verifySparcForceOtpMutation.isPending}
+                  />
+                </Field>
+              ) : null}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="primary"
+                disabled={
+                  connectSparcForceMutation.isPending ||
+                  !sparcForceBaseUrl.trim() ||
+                  !sparcForceEmail.trim() ||
+                  !sparcForcePassword.trim()
+                }
+                onClick={() => connectSparcForceMutation.mutate()}
+              >
+                {connectSparcForceMutation.isPending
+                  ? "Connecting..."
+                  : sparcForceStatus?.connected
+                    ? "Reconnect"
+                    : "Connect"}
+              </Button>
+              {sparcForceOtpRequired ? (
+                <Button
+                  type="button"
+                  disabled={verifySparcForceOtpMutation.isPending || !sparcForceOtp.trim()}
+                  onClick={() => verifySparcForceOtpMutation.mutate()}
+                >
+                  {verifySparcForceOtpMutation.isPending ? "Verifying..." : "Verify OTP"}
+                </Button>
+              ) : null}
+            </div>
+          </details>
+
+          <SparcForceImportedExplorer connected={Boolean(sparcForceStatus?.connected)} />
+          {sparcForceStatus?.lastError ? (
+            <InlineError error={sparcForceStatus.lastError} fallback="Sparc Force reported an error." />
+          ) : null}
+          {sparcForceIsError ? <InlineError error={sparcForceError} fallback="Sparc Force integration status could not be loaded." /> : null}
         </div>
       ) : null}
 
@@ -1715,15 +2192,1247 @@ function ProviderModelManager({
 function InlineError({ error, fallback }: { error: unknown; fallback: string }) {
   return (
     <div className="rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-xs text-red-100 md:col-span-3">
-      {error instanceof Error ? error.message : fallback}
+      {error instanceof Error ? error.message : typeof error === "string" ? error : fallback}
     </div>
   );
+}
+
+function StatusLine({
+  icon,
+  label,
+  value,
+}: {
+  icon?: ReactNode;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      {icon ? (
+        <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-blue-300/10 bg-blue-400/8 text-blue-200">
+          {icon}
+        </span>
+      ) : null}
+      <div className="min-w-0">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</p>
+        <p className="mt-1 truncate text-sm font-bold text-slate-100">{value}</p>
+      </div>
+    </div>
+  );
+}
+
+type SparcForceImportedKind = "all" | "case" | "project" | "task";
+type SparcForceOwnershipFilter = "all" | "mine" | "created_by_me" | "other" | "unassigned";
+type SparcForceTaskDraft = {
+  title: string;
+  details: string;
+  status: WeeklyTaskStatus;
+  priority: WeeklyTaskPriority;
+  targetDate: string;
+  completedAt: string;
+  includedInReport: boolean;
+  progressPercent: string;
+  estimatedMinutes: string;
+};
+
+const sparcForceImportedTabs: {
+  id: SparcForceImportedKind;
+  label: string;
+  emptyLabel: string;
+}[] = [
+  { id: "all", label: "All", emptyLabel: "No records imported yet." },
+  { id: "case", label: "Cases", emptyLabel: "No cases imported yet." },
+  { id: "project", label: "Projects", emptyLabel: "No projects imported yet." },
+  { id: "task", label: "Tasks", emptyLabel: "No tasks imported yet." },
+];
+
+const sparcForceOwnershipFilters: {
+  id: SparcForceOwnershipFilter;
+  label: string;
+}[] = [
+  { id: "all", label: "All ownership" },
+  { id: "mine", label: "Assigned to me" },
+  { id: "created_by_me", label: "Created by me" },
+  { id: "other", label: "Assigned to others" },
+  { id: "unassigned", label: "Unassigned" },
+];
+
+function SparcForceImportedExplorer({
+  connected,
+}: {
+  connected: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const speech = useSpeech();
+  const [activeKind, setActiveKind] = useState<SparcForceImportedKind>("all");
+  const [selectedKey, setSelectedKey] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [priorityFilter, setPriorityFilter] = useState("all");
+  const [relationshipFilter, setRelationshipFilter] = useState("all");
+  const [ownershipFilter, setOwnershipFilter] = useState<SparcForceOwnershipFilter>("all");
+  const [sortBy, setSortBy] = useState("created");
+  const [sortDirection, setSortDirection] = useState("desc");
+  const [reviewTask, setReviewTask] = useState<SparcForceImportedItem | null>(null);
+  const [taskDraft, setTaskDraft] = useState<SparcForceTaskDraft | null>(null);
+  const recordsQuery = useQuery({
+    queryKey: [
+      "sparcForceRecords",
+      activeKind,
+      searchTerm,
+      statusFilter,
+      priorityFilter,
+      relationshipFilter,
+      ownershipFilter,
+      sortBy,
+      sortDirection,
+    ],
+    queryFn: () =>
+      listSparcForceRecords({
+        kind: activeKind,
+        search: searchTerm || null,
+        statuses: statusFilter === "all" ? null : [statusFilter],
+        priorities: priorityFilter === "all" ? null : [priorityFilter],
+        relationship: activeKind === "task" && relationshipFilter !== "all" ? relationshipFilter : null,
+        ownership:
+          (activeKind === "case" || activeKind === "task") &&
+          ownershipFilter !== "all" &&
+          ownershipFilter !== "created_by_me"
+            ? ownershipFilter
+            : null,
+        createdOwnership:
+          (activeKind === "case" || activeKind === "task") && ownershipFilter === "created_by_me"
+            ? ownershipFilter
+            : null,
+        limit: 100,
+        offset: 0,
+        sortBy,
+        sortDirection,
+      }),
+    enabled: connected,
+  });
+  const counts = recordsQuery.data?.counts;
+  const filteredItems = recordsQuery.data?.records ?? [];
+  const selectedItem =
+    filteredItems.find((item) => sparcForceImportedKey(item) === selectedKey) ??
+    filteredItems[0];
+  const shouldLoadCaseDetail =
+    connected &&
+    selectedItem?.kind === "case" &&
+    !sparcForceDescription("case", parseSparcForceRaw(selectedItem.rawJson));
+  const caseDetailQuery = useQuery({
+    queryKey: ["sparcForceCaseDetail", selectedItem?.externalId],
+    queryFn: () => getSparcForceCaseDetail(selectedItem!.externalId),
+    enabled: shouldLoadCaseDetail,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+  const hydratedSelectedItem =
+    selectedItem?.kind === "case" && caseDetailQuery.data ? caseDetailQuery.data : selectedItem;
+  const activeTab = sparcForceImportedTabs.find((tab) => tab.id === activeKind);
+  const importTaskMutation = useMutation({
+    mutationFn: ({ item, draft }: { item: SparcForceImportedItem; draft: SparcForceTaskDraft }) =>
+      importSparcForceTaskToWeeklyTask({
+        source: item.source ?? "task",
+        externalKind: item.externalKind ?? item.source ?? "task",
+        externalId: item.externalId,
+        weekStartDate: currentWeekRange().from,
+        title: draft.title,
+        details: draft.details || null,
+        status: draft.status,
+        priority: draft.priority,
+        targetDate: draft.targetDate || null,
+        completedAt: draft.completedAt || null,
+        includedInReport: draft.includedInReport,
+        progressPercent: draft.progressPercent.trim() ? Number(draft.progressPercent) : null,
+        estimatedMinutes: draft.estimatedMinutes.trim() ? Number(draft.estimatedMinutes) : null,
+      }),
+    onSuccess: async (outcome) => {
+      await Promise.all([
+        ...weeklyTaskQueryRoots.map((queryKey) => queryClient.invalidateQueries({ queryKey })),
+        queryClient.invalidateQueries({ queryKey: ["sparcForceRecords"] }),
+      ]);
+      toast.success(
+        outcome.alreadyImported ? "Task already exists" : "Task added to WorkTrace",
+        outcome.task.title,
+      );
+      speech.announce(
+        outcome.alreadyImported
+          ? taskAnnouncement("Task already exists in WorkTrace", outcome.task, {
+              projectName: outcome.task.projectName,
+            })
+          : taskAnnouncement("Sparc Force task added to WorkTrace", outcome.task, {
+              projectName: outcome.task.projectName,
+            }),
+        { category: "task" },
+      );
+      setReviewTask(null);
+      setTaskDraft(null);
+    },
+    onError: (error) => {
+      toast.error(
+        "Task import failed",
+        error instanceof Error ? error.message : "The Sparc Force task could not be added.",
+      );
+    },
+  });
+
+  function openTaskReview(item: SparcForceImportedItem) {
+    setReviewTask(item);
+    setTaskDraft(sparcForceTaskDraftFromItem(item));
+  }
+
+  function confirmTaskImport() {
+    if (!reviewTask || !taskDraft || !taskDraft.title.trim()) return;
+    importTaskMutation.mutate({ item: reviewTask, draft: taskDraft });
+  }
+
+  useEffect(() => {
+    if (!selectedItem) {
+      setSelectedKey("");
+      return;
+    }
+    setSelectedKey(sparcForceImportedKey(selectedItem));
+  }, [
+    activeKind,
+    searchTerm,
+    ownershipFilter,
+    selectedItem?.externalId,
+    selectedItem?.externalKind,
+    selectedItem?.kind,
+    selectedItem?.source,
+  ]);
+
+  return (
+    <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(23rem,0.78fr)_minmax(0,1.22fr)]">
+      <div className="flex min-h-[42rem] min-w-0 flex-col rounded-xl border border-blue-300/15 bg-[linear-gradient(180deg,rgba(15,30,58,0.82),rgba(5,13,30,0.9))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_20px_60px_rgba(0,0,0,0.18)] xl:max-h-[calc(100vh-10rem)]">
+        <div className="flex flex-wrap items-center gap-2">
+          {sparcForceImportedTabs.map((tab) => {
+            const count = sparcForceCountForKind(counts, tab.id);
+            const selected = tab.id === activeKind;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                className={[
+                  "inline-flex min-h-10 items-center gap-2 rounded-lg border px-4 text-sm font-semibold transition-transform duration-150 active:scale-[0.96]",
+                  selected
+                    ? "border-blue-300/45 bg-blue-500/20 text-white shadow-[0_0_0_1px_rgba(96,165,250,0.08),0_16px_36px_rgba(37,99,235,0.16)]"
+                    : "border-white/8 bg-slate-950/45 text-slate-400 hover:border-blue-300/25 hover:text-slate-100",
+                ].join(" ")}
+                onClick={() => {
+                  setActiveKind(tab.id);
+                  setSearchTerm("");
+                  setRelationshipFilter("all");
+                  setOwnershipFilter(tab.id === "case" || tab.id === "task" ? "mine" : "all");
+                  setSelectedKey("");
+                }}
+              >
+                {tab.label}
+                <span className="rounded-md bg-white/8 px-2 py-0.5 text-[11px] text-slate-300 tabular-nums">
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mt-3 grid gap-2">
+          <div className="flex min-h-12 items-center gap-3 rounded-xl border border-blue-300/12 bg-slate-950/60 px-3 shadow-inner shadow-black/15">
+            <Search className="h-4 w-4 text-blue-200/70" />
+            <input
+              className="h-11 min-w-0 flex-1 bg-transparent text-sm text-slate-100 outline-none placeholder:text-slate-600"
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.currentTarget.value)}
+              placeholder={`Search ${activeTab?.label.toLowerCase() ?? "records"}...`}
+              disabled={!connected}
+            />
+            {searchTerm ? (
+              <button
+                type="button"
+                className="rounded-md p-1 text-slate-500 transition hover:bg-white/8 hover:text-slate-200 active:scale-[0.96]"
+                onClick={() => setSearchTerm("")}
+                aria-label="Clear search"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
+            <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/8 bg-white/[0.03] text-blue-200/80">
+              <Filter className="h-4 w-4" />
+            </span>
+          </div>
+          <div className="grid min-w-0 gap-2 sm:grid-cols-2">
+            {activeKind === "case" || activeKind === "task" ? (
+              <div className="grid gap-2 rounded-xl border border-blue-300/12 bg-slate-950/45 p-1 sm:col-span-2 sm:grid-cols-5">
+                {sparcForceOwnershipFilters.map((filter) => {
+                  const selected = ownershipFilter === filter.id;
+                  const count = sparcForceOwnershipCount(counts, filter.id, activeKind);
+                  return (
+                    <button
+                      key={filter.id}
+                      type="button"
+                      className={[
+                        "inline-flex min-h-10 items-center justify-center gap-2 rounded-lg px-3 text-xs font-bold transition-[background-color,color,box-shadow,transform] duration-150 active:scale-[0.96]",
+                        selected
+                          ? "bg-blue-500/22 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_10px_24px_rgba(37,99,235,0.14)]"
+                          : "text-slate-400 hover:bg-white/6 hover:text-slate-100",
+                      ].join(" ")}
+                      onClick={() => setOwnershipFilter(filter.id)}
+                      disabled={!connected}
+                    >
+                      {filter.label}
+                      <span className="rounded-md bg-white/8 px-1.5 py-0.5 text-[10px] text-slate-300 tabular-nums">
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+            <select className={filterSelectClass} value={statusFilter} aria-label="Filter by status" onChange={(event) => setStatusFilter(event.currentTarget.value)} disabled={!connected}>
+              <option value="all">All statuses</option>
+              {(counts?.statuses ?? []).map((bucket) => <option key={bucket.label} value={bucket.label}>{bucket.label} ({bucket.count})</option>)}
+            </select>
+            <select className={filterSelectClass} value={priorityFilter} aria-label="Filter by priority" onChange={(event) => setPriorityFilter(event.currentTarget.value)} disabled={!connected}>
+              <option value="all">All priorities</option>
+              {(counts?.priorities ?? []).map((bucket) => <option key={bucket.label} value={bucket.label}>{bucket.label} ({bucket.count})</option>)}
+            </select>
+            <select className={filterSelectClass} value={relationshipFilter} aria-label="Filter by task relationship" onChange={(event) => setRelationshipFilter(event.currentTarget.value)} disabled={!connected || activeKind !== "task"}>
+              <option value="all">All task relationships</option>
+              {(counts?.relationships ?? []).map((bucket) => <option key={bucket.label} value={bucket.label}>{bucket.label} ({bucket.count})</option>)}
+            </select>
+            <select className={filterSelectClass} value={`${sortBy}:${sortDirection}`} aria-label="Sort imported records" onChange={(event) => {
+              const [nextSortBy, nextDirection] = event.currentTarget.value.split(":");
+              setSortBy(nextSortBy);
+              setSortDirection(nextDirection);
+            }} disabled={!connected}>
+              <option value="updated:desc">Recently updated</option>
+              <option value="created:desc">Newest created</option>
+              <option value="created:asc">Oldest created</option>
+              <option value="imported:desc">Recently imported</option>
+              <option value="title:asc">Title A-Z</option>
+              <option value="priority:desc">Priority</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="mt-3 grid flex-1 content-start gap-2 overflow-y-auto pr-1">
+          {!connected ? (
+            <div className="rounded-lg border border-dashed border-white/10 px-3 py-8 text-center text-xs text-slate-500">
+              Connect Sparc Force to search and filter imported records.
+            </div>
+          ) : null}
+          {connected && recordsQuery.isLoading ? (
+            <div className="rounded-lg border border-dashed border-white/10 px-3 py-8 text-center text-xs text-slate-500">
+              Loading imported records...
+            </div>
+          ) : null}
+          {filteredItems.map((item) => {
+            const selected = selectedItem
+              ? sparcForceImportedKey(item) === sparcForceImportedKey(selectedItem)
+              : false;
+            const displayTitle = sparcForceDisplayTitle(item);
+            return (
+              <div key={sparcForceImportedKey(item)} className="grid gap-2">
+                <button
+                  type="button"
+                  className={[
+                    "grid gap-3 rounded-lg border p-3.5 text-left transition-[background-color,border-color,box-shadow,transform] duration-150 active:scale-[0.99]",
+                    selected
+                      ? "border-blue-300/55 bg-blue-500/14 shadow-[0_0_0_1px_rgba(96,165,250,0.12),0_18px_44px_rgba(37,99,235,0.16)]"
+                      : "border-white/8 bg-slate-950/48 hover:border-blue-300/25 hover:bg-slate-900/70 hover:shadow-lg hover:shadow-black/10",
+                  ].join(" ")}
+                  onClick={() => setSelectedKey(sparcForceImportedKey(item))}
+                >
+                  <div className="flex min-w-0 items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-bold text-slate-100">{displayTitle}</p>
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        {humanizeStatus(item.kind)} #{item.externalId}
+                      </p>
+                    </div>
+                    <Badge tone={statusBadgeTone(item.status)}>{item.status ?? "Imported"}</Badge>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                    {item.priority ? <span className="rounded-md bg-red-500/10 px-2 py-0.5 font-semibold text-red-200">{item.priority}</span> : null}
+                    {item.kind === "case" ? sparcForceOwnershipChip(item, parseSparcForceRaw(item.rawJson)) : null}
+                    {item.kind === "task" ? (
+                      <span className="rounded-md bg-blue-500/12 px-2 py-0.5 font-semibold text-blue-200">{sparcForceTaskRelationshipLabel(item, parseSparcForceRaw(item.rawJson))}</span>
+                    ) : item.source ? (
+                      <span>{humanizeStatus(item.source)}</span>
+                    ) : null}
+                    {item.createdAtRemote ? <span>Created {formatTimestamp(item.createdAtRemote)}</span> : null}
+                  </div>
+                </button>
+                {selected ? (
+                  <div className="xl:hidden">
+                    <SparcForceImportedDetails
+                      item={hydratedSelectedItem}
+                      compact
+                      onImportTask={openTaskReview}
+                      isImportingTask={importTaskMutation.isPending}
+                      isLoadingDetail={caseDetailQuery.isFetching}
+                    />
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+          {connected && !recordsQuery.isLoading && !filteredItems.length ? (
+            <div className="rounded-lg border border-dashed border-white/10 px-3 py-8 text-center text-xs text-slate-500">
+              {recordsQuery.data?.counts.total ? "No matching imported records." : activeTab?.emptyLabel}
+            </div>
+          ) : null}
+          {recordsQuery.isError ? (
+            <InlineError error={recordsQuery.error} fallback="Sparc Force records could not be loaded." />
+          ) : null}
+        </div>
+      </div>
+
+      <div className="hidden min-w-0 xl:block">
+        <SparcForceImportedDetails
+          item={hydratedSelectedItem}
+          onImportTask={openTaskReview}
+          isImportingTask={importTaskMutation.isPending}
+          isLoadingDetail={caseDetailQuery.isFetching}
+        />
+      </div>
+      <SparcForceTaskImportReview
+        item={reviewTask}
+        draft={taskDraft}
+        isPending={importTaskMutation.isPending}
+        onChange={setTaskDraft}
+        onCancel={() => {
+          if (importTaskMutation.isPending) return;
+          setReviewTask(null);
+          setTaskDraft(null);
+        }}
+        onConfirm={confirmTaskImport}
+      />
+    </div>
+  );
+}
+
+function SparcForceImportedDetails({
+  item,
+  compact = false,
+  onImportTask,
+  isImportingTask = false,
+}: {
+  item: SparcForceImportedItem | undefined;
+  compact?: boolean;
+  onImportTask?: (item: SparcForceImportedItem) => void;
+  isImportingTask?: boolean;
+}) {
+  if (!item) {
+    return (
+      <div className="rounded-xl border border-dashed border-white/10 bg-slate-950/35 p-6 text-sm text-slate-500 xl:min-h-[42rem]">
+        Select an imported case, project, or task to inspect its synced details.
+      </div>
+    );
+  }
+
+  const raw = parseSparcForceRaw(item.rawJson);
+  const displayTitle = sparcForceDisplayTitle(item, raw);
+  const description = sparcForceDescription(item.kind, raw);
+  const descriptionIsHtml = item.kind === "case" && looksLikeHtml(description);
+  const detailRows = sparcForceDetailRows(item, raw, displayTitle);
+  const sectionTitle = `${humanizeStatus(item.kind)} details`;
+  const ownershipSummary = item.kind === "case" ? sparcForceOwnershipSummary(item, raw) : null;
+
+  return (
+    <div
+      className={[
+        "rounded-xl border border-blue-300/15 bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.16),transparent_34%),linear-gradient(180deg,rgba(15,30,58,0.72),rgba(5,13,30,0.92))] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_20px_60px_rgba(0,0,0,0.18)]",
+        compact ? "" : "xl:min-h-[42rem]",
+      ].join(" ")}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/8 pb-4">
+        <div className="min-w-0">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+            {humanizeStatus(item.kind)} #{item.externalId}
+          </p>
+          <h4 className="mt-2 text-2xl font-bold leading-tight text-white">{displayTitle}</h4>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {ownershipSummary ? (
+            <span className={ownershipSummary.className}>
+              <User className="h-3.5 w-3.5" />
+              {ownershipSummary.label}
+            </span>
+          ) : null}
+          {item.status ? <Badge tone={statusBadgeTone(item.status)}>{item.status}</Badge> : null}
+          {item.priority ? <Badge tone={priorityBadgeTone(item.priority)}>{item.priority}</Badge> : null}
+          <button
+            type="button"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/8 bg-slate-950/35 text-slate-400 transition hover:border-blue-300/25 hover:text-slate-100 active:scale-[0.96]"
+            aria-label="More actions"
+          >
+            <MoreHorizontal className="h-4 w-4" />
+          </button>
+          {item.kind === "task" && onImportTask ? (
+            <Button
+              type="button"
+              className="h-7 px-2 text-xs"
+              disabled={isImportingTask}
+              onClick={() => onImportTask(item)}
+            >
+              {isImportingTask ? "Adding..." : "Add to WorkTrace"}
+            </Button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-3 md:grid-cols-2">
+        {detailRows.map(([label, value]) => (
+          <div key={label} className="flex min-h-[4.15rem] gap-3 rounded-lg border border-white/8 bg-slate-950/42 px-3 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-500/12 text-blue-200">
+              {sparcForceDetailIcon(label)}
+            </span>
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</p>
+              <p className="mt-1 min-h-5 break-words text-sm font-bold leading-5 text-slate-100">{value}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-4 rounded-lg border border-white/8 bg-slate-950/42 p-4">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">{sectionTitle}</p>
+        {description ? (
+          descriptionIsHtml ? (
+            <div
+              className="sparc-force-html mt-3 text-sm leading-6 text-slate-300"
+              dangerouslySetInnerHTML={{ __html: sanitizeSparcForceHtml(description) }}
+            />
+          ) : (
+            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-300">
+              {description}
+            </p>
+          )
+        ) : (
+          <p className="mt-2 text-sm leading-6 text-slate-500">
+            No description was included in the synced record.
+          </p>
+        )}
+      </div>
+
+      <details className="mt-3 rounded-lg border border-white/8 bg-slate-950/42 p-3">
+        <summary className="cursor-pointer text-xs font-semibold text-slate-300">Synced payload</summary>
+        <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-slate-500">
+          {formatRawPayload(item.rawJson)}
+        </pre>
+      </details>
+    </div>
+  );
+}
+
+function SparcForceTaskImportReview({
+  item,
+  draft,
+  isPending,
+  onChange,
+  onCancel,
+  onConfirm,
+}: {
+  item: SparcForceImportedItem | null;
+  draft: SparcForceTaskDraft | null;
+  isPending: boolean;
+  onChange: (draft: SparcForceTaskDraft) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (!item || !draft) return null;
+
+  const titleValid = draft.title.trim().length > 0;
+  const progressValue = draft.progressPercent.trim() ? Number(draft.progressPercent) : null;
+  const progressValid =
+    progressValue === null || (Number.isFinite(progressValue) && progressValue >= 0 && progressValue <= 100);
+  const minutesValue = draft.estimatedMinutes.trim() ? Number(draft.estimatedMinutes) : null;
+  const minutesValid =
+    minutesValue === null || (Number.isFinite(minutesValue) && minutesValue >= 0);
+  const canConfirm = titleValid && progressValid && minutesValid && !isPending;
+  const currentDraft = draft;
+
+  function update(next: Partial<SparcForceTaskDraft>) {
+    onChange({ ...currentDraft, ...next });
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/72 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-3xl rounded-2xl border border-blue-300/20 bg-[radial-gradient(circle_at_top_left,rgba(37,99,235,0.2),transparent_34%),linear-gradient(180deg,rgba(15,30,58,0.98),rgba(4,11,26,0.98))] p-5 shadow-2xl shadow-black/45">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/8 pb-4">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-blue-200/70">
+              Review WorkTrace task
+            </p>
+            <h4 className="mt-2 text-xl font-bold text-white">Confirm before adding</h4>
+            <p className="mt-1 text-sm text-slate-400">
+              Adjust the task fields, then create it in WorkTrace.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-slate-950/35 text-slate-300 transition hover:border-blue-300/30 hover:text-white active:scale-[0.96]"
+            onClick={onCancel}
+            disabled={isPending}
+            aria-label="Close review"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <Field label="Title" error={titleValid ? undefined : "Title is required"}>
+            <input
+              className={inputClass}
+              value={draft.title}
+              onChange={(event) => update({ title: event.currentTarget.value })}
+              disabled={isPending}
+            />
+          </Field>
+          <Field label="Status">
+            <select
+              className={filterSelectClass}
+              value={draft.status}
+              onChange={(event) => update({ status: event.currentTarget.value as WeeklyTaskStatus })}
+              disabled={isPending}
+            >
+              <option value="todo">To do</option>
+              <option value="in_progress">In progress</option>
+              <option value="blocked">Blocked</option>
+              <option value="completed">Completed</option>
+              <option value="dropped">Dropped</option>
+            </select>
+          </Field>
+          <Field label="Priority">
+            <select
+              className={filterSelectClass}
+              value={draft.priority}
+              onChange={(event) => update({ priority: event.currentTarget.value as WeeklyTaskPriority })}
+              disabled={isPending}
+            >
+              <option value="low">Low</option>
+              <option value="normal">Normal</option>
+              <option value="high">High</option>
+            </select>
+          </Field>
+          <Field label="Target date">
+            <input
+              className={inputClass}
+              type="date"
+              value={draft.targetDate}
+              onChange={(event) => update({ targetDate: event.currentTarget.value })}
+              disabled={isPending}
+            />
+          </Field>
+          <Field label="Completed date">
+            <input
+              className={inputClass}
+              type="date"
+              value={draft.completedAt}
+              onChange={(event) => update({ completedAt: event.currentTarget.value })}
+              disabled={isPending}
+            />
+          </Field>
+          <Field label="Progress percent" error={progressValid ? undefined : "Use a value from 0 to 100"}>
+            <input
+              className={inputClass}
+              inputMode="numeric"
+              value={draft.progressPercent}
+              onChange={(event) => update({ progressPercent: event.currentTarget.value })}
+              placeholder="0"
+              disabled={isPending}
+            />
+          </Field>
+          <Field label="Estimated minutes" error={minutesValid ? undefined : "Use 0 or more minutes"}>
+            <input
+              className={inputClass}
+              inputMode="numeric"
+              value={draft.estimatedMinutes}
+              onChange={(event) => update({ estimatedMinutes: event.currentTarget.value })}
+              placeholder="60"
+              disabled={isPending}
+            />
+          </Field>
+          <label className="flex min-h-10 items-center gap-3 rounded-xl border border-white/10 bg-slate-950/45 px-3 text-sm font-semibold text-slate-200">
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-blue-400"
+              checked={draft.includedInReport}
+              onChange={(event) => update({ includedInReport: event.currentTarget.checked })}
+              disabled={isPending}
+            />
+            Include in weekly report
+          </label>
+          <Field label="Details">
+            <textarea
+              className={`${inputClass} min-h-36 resize-y py-3 leading-6 md:col-span-2`}
+              value={draft.details}
+              onChange={(event) => update({ details: event.currentTarget.value })}
+              disabled={isPending}
+            />
+          </Field>
+        </div>
+
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-white/8 pt-4">
+          <p className="text-xs text-slate-500">
+            Source: Sparc Force task #{item.externalId}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="ghost" onClick={onCancel} disabled={isPending}>
+              Cancel
+            </Button>
+            <Button type="button" variant="primary" onClick={onConfirm} disabled={!canConfirm}>
+              {isPending ? "Creating..." : "Create WorkTrace Task"}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function sparcForceCountForKind(
+  counts: SparcForceRecordCounts | undefined,
+  kind: SparcForceImportedKind,
+) {
+  if (!counts) return 0;
+  if (kind === "all") return counts.total;
+  if (kind === "case") return counts.cases;
+  if (kind === "project") return counts.projects;
+  return counts.tasks;
+}
+
+function sparcForceOwnershipCount(
+  counts: SparcForceRecordCounts | undefined,
+  ownership: SparcForceOwnershipFilter,
+  kind: SparcForceImportedKind,
+) {
+  if (!counts) return 0;
+  if (ownership === "all") {
+    if (kind === "task") return counts.tasks;
+    if (kind === "case") return counts.cases;
+    return counts.cases + counts.tasks;
+  }
+  if (ownership === "created_by_me") {
+    const label = sparcForceOwnershipLabel(ownership);
+    return counts.createdOwnerships.find((bucket) => bucket.label === label)?.count ?? 0;
+  }
+  const label = sparcForceOwnershipLabel(ownership);
+  return counts.ownerships.find((bucket) => bucket.label === label)?.count ?? 0;
+}
+
+function sparcForceImportedKey(item: SparcForceImportedItem) {
+  return `${item.kind}-${item.externalKind ?? item.source ?? "record"}-${item.externalId}`;
+}
+
+function sparcForceDisplayTitle(
+  item: SparcForceImportedItem,
+  raw = parseSparcForceRaw(item.rawJson),
+) {
+  const rawTitle = rawString(raw, [
+    "title",
+    "case_Title",
+    "caseTitle",
+    "case_Name",
+    "caseName",
+    "project_Name",
+    "projectName",
+    "task_Name",
+    "taskName",
+    "task_Title",
+    "taskTitle",
+    "name",
+    "summary",
+    "subject",
+  ]);
+
+  if (item.title.trim() && !item.title.toLowerCase().startsWith("untitled ")) {
+    return item.title;
+  }
+
+  return rawTitle ?? item.title;
+}
+
+type SparcForceDetailRow = [string, string];
+
+function sparcForceDetailRows(
+  item: SparcForceImportedItem,
+  raw: Record<string, unknown>,
+  _displayTitle: string,
+): SparcForceDetailRow[] {
+  const common: SparcForceDetailRow[] = [
+    ["External ID", item.externalId],
+    ["Imported", formatTimestamp(item.importedAt)],
+  ];
+
+  if (item.kind === "case") {
+    return [
+      ...common,
+      ["Case number", rawDisplay(raw, ["case_Number", "caseNumber"], item.externalId)],
+      ["Client", rawDisplay(raw, ["client_Name", "clientName"], "Unknown client")],
+      ["Assigned to", rawDisplay(raw, ["assigned_User_Name", "assignedUserName", "assigned_To", "assignedTo"], "Unassigned")],
+      ["Created by", item.createdBy ?? rawDisplay(raw, ["created_By_Name", "createdByName", "created_By", "createdBy"], "Unknown")],
+      ["Department", rawDisplay(raw, ["department_Name", "departmentName"], "None")],
+      ["Team", rawDisplay(raw, ["teamName", "team_Name"], "None")],
+      ["Project", rawDisplay(raw, ["project_Name", "projectName", "project_ID", "projectId"], "None")],
+      ["Contract", rawDisplay(raw, ["contract_Number", "contractNumber", "contract_ID", "contractId"], "None")],
+      ["Created", item.createdAtRemote ? formatTimestamp(item.createdAtRemote) : rawDateDisplay(raw, ["created_At", "createdAt", "created_Date", "createdDate"])],
+      ["Updated", item.updatedAtRemote ? formatTimestamp(item.updatedAtRemote) : rawDateDisplay(raw, ["updated_At", "updatedAt", "lastActivityDate"])],
+      ["Last activity", rawDateDisplay(raw, ["lastActivityDate", "last_Activity_Date"], "Unavailable")],
+      ["SLA status", rawDisplay(raw, ["slaStatus", "slA_Status"], "Unavailable")],
+      ["Days open", rawDisplay(raw, ["daysOpen", "days_Open"], "Unavailable")],
+      ["Comments", rawDisplay(raw, ["commentCount", "comment_Count"], "0")],
+      ["Attachments", rawDisplay(raw, ["attachmentCount", "attachment_Count"], "0")],
+      ["Escalated", rawBoolDisplay(raw, ["is_Escalated", "isEscalated"])],
+    ];
+  }
+
+  if (item.kind === "task") {
+    return [
+      ...common,
+      ["Task source", rawDisplay(raw, ["task_Source", "taskSource"], item.source ? humanizeStatus(item.source) : "Sparc Force")],
+      ["Scope", sparcForceTaskRelationshipLabel(item, raw)],
+      ["Category", rawDisplay(raw, ["task_Category", "taskCategory"], "Uncategorized")],
+      ["Project", rawDisplay(raw, ["project_Name", "projectName", "project_Code", "projectCode", "fk_Project_ID", "fkProjectId"], item.projectExternalId ?? "None")],
+      ["Linked case", rawDisplay(raw, ["case_Title", "caseTitle", "case_Number", "caseNumber", "case_ID", "caseId"], item.caseExternalId ?? "None")],
+      ["Assigned to", rawDisplay(raw, ["assigned_User_Name", "assignedUserName", "assigned_To", "assignedTo"], "Unassigned")],
+      ["Owner", rawDisplay(raw, ["owner_User_Name", "ownerUserName", "owner_User_ID", "ownerUserId"], "None")],
+      ["Created by", item.createdBy ?? rawDisplay(raw, ["created_By_Name", "createdByName", "created_By", "createdBy"], "Unknown")],
+      ["Department", rawDisplay(raw, ["department_Name", "departmentName"], "None")],
+      ["Team", rawDisplay(raw, ["team_Name", "teamName"], "None")],
+      ["Due", rawDateDisplay(raw, ["due_Date", "dueDate"], "No due date")],
+      ["Created", item.createdAtRemote ? formatTimestamp(item.createdAtRemote) : rawDateDisplay(raw, ["created_At", "createdAt", "created_Date", "createdDate"])],
+      ["Completion", rawDateDisplay(raw, ["completion_Date", "completionDate"], "Not completed")],
+      ["Progress", rawPercentDisplay(raw, ["completion_Percentage", "completionPercentage"])],
+      ["Estimated hours", rawDisplay(raw, ["estimated_Hours", "estimatedHours"], "Unavailable")],
+      ["Actual hours", rawDisplay(raw, ["actual_Hours", "actualHours"], "Unavailable")],
+      ["Overdue", rawBoolDisplay(raw, ["is_Overdue", "isOverdue"])],
+      ["Milestone", rawBoolDisplay(raw, ["is_Milestone", "isMilestone"])],
+    ];
+  }
+
+  return [
+    ...common,
+    ["Project code", rawDisplay(raw, ["project_Code", "projectCode"], item.externalId)],
+    ["Client", rawDisplay(raw, ["client_Name", "clientName"], "Unknown client")],
+    ["Manager", rawDisplay(raw, ["project_Manager_Name", "projectManagerName", "project_Manager_ID", "projectManagerId"], "Unassigned")],
+    ["Type", rawDisplay(raw, ["project_Type", "projectType"], "Unspecified")],
+    ["Start date", rawDateDisplay(raw, ["start_Date", "startDate"], "Unavailable")],
+    ["End date", rawDateDisplay(raw, ["end_Date", "endDate"], "Unavailable")],
+    ["Progress", rawPercentDisplay(raw, ["completion_Percentage", "completionPercentage"])],
+    ["Budget", rawMoneyDisplay(raw, ["budget_Amount", "budgetAmount"], rawString(raw, ["currency_Code", "currencyCode"]))],
+    ["Tasks", projectTaskCountDisplay(raw)],
+    ["Overdue", rawBoolDisplay(raw, ["is_Overdue", "isOverdue"])],
+    ["Created", rawDateDisplay(raw, ["created_At", "createdAt", "created_Date", "createdDate"])],
+    ["Updated", item.updatedAtRemote ? formatTimestamp(item.updatedAtRemote) : rawDateDisplay(raw, ["updated_At", "updatedAt"], "Unavailable")],
+  ];
+}
+
+function sparcForceDetailIcon(label: string) {
+  const normalized = label.toLowerCase();
+  const className = "h-4 w-4";
+
+  if (normalized.includes("external") || normalized.includes("number") || normalized.includes("code")) {
+    return <Hash className={className} />;
+  }
+  if (normalized.includes("imported") || normalized.includes("created") || normalized.includes("updated") || normalized.includes("due") || normalized.includes("completion") || normalized.includes("activity") || normalized.includes("start") || normalized.includes("end")) {
+    return <CalendarDays className={className} />;
+  }
+  if (normalized.includes("client") || normalized.includes("department")) {
+    return <Building2 className={className} />;
+  }
+  if (normalized.includes("assigned") || normalized.includes("owner") || normalized.includes("manager") || normalized.includes("created by")) {
+    return <User className={className} />;
+  }
+  if (normalized.includes("team")) {
+    return <Users className={className} />;
+  }
+  if (normalized.includes("project") || normalized.includes("contract")) {
+    return <Folder className={className} />;
+  }
+  if (normalized.includes("case") || normalized.includes("scope")) {
+    return <Link2 className={className} />;
+  }
+  if (normalized.includes("source") || normalized.includes("category") || normalized.includes("type")) {
+    return <Layers className={className} />;
+  }
+  if (normalized.includes("progress") || normalized.includes("sla") || normalized.includes("overdue") || normalized.includes("milestone") || normalized.includes("escalated")) {
+    return <CheckCircle2 className={className} />;
+  }
+  if (normalized.includes("hours") || normalized.includes("days")) {
+    return <Clock3 className={className} />;
+  }
+  if (normalized.includes("budget")) {
+    return <Briefcase className={className} />;
+  }
+  if (normalized.includes("task") || normalized.includes("comment") || normalized.includes("attachment")) {
+    return <FileText className={className} />;
+  }
+
+  return <Database className={className} />;
+}
+
+function sparcForceTaskDraftFromItem(item: SparcForceImportedItem): SparcForceTaskDraft {
+  const raw = parseSparcForceRaw(item.rawJson);
+  const dueDate = rawIsoDate(raw, ["due_Date", "dueDate"]);
+  const completedAt = rawIsoDate(raw, ["completion_Date", "completionDate"]);
+  const estimatedHours = rawNumber(raw, ["estimated_Hours", "estimatedHours"]);
+  const estimatedMinutes =
+    estimatedHours === null ? "" : String(Math.max(0, Math.round(estimatedHours * 60)));
+  const progress = rawNumber(raw, ["completion_Percentage", "completionPercentage"]);
+
+  return {
+    title: sparcForceDisplayTitle(item, raw),
+    details: sparcForceDescription(item.kind, raw) ?? sparcForceTaskDetailsForImport(item, raw),
+    status: weeklyTaskStatusFromSparcForce(item.status),
+    priority: weeklyTaskPriorityFromSparcForce(item.priority),
+    targetDate: dueDate ?? "",
+    completedAt: completedAt ?? "",
+    includedInReport: true,
+    progressPercent: progress === null ? "" : String(progress),
+    estimatedMinutes,
+  };
+}
+
+function sparcForceTaskDetailsForImport(
+  item: SparcForceImportedItem,
+  raw: Record<string, unknown>,
+) {
+  const lines = [
+    rawString(raw, ["task_Description", "taskDescription", "description", "notes"]),
+    rawString(raw, ["case_Title", "caseTitle", "case_Number", "caseNumber"])
+      ? `Sparc Force case: ${rawString(raw, ["case_Title", "caseTitle", "case_Number", "caseNumber"])}`
+      : null,
+    rawString(raw, ["project_Name", "projectName", "project_Code", "projectCode"])
+      ? `Sparc Force project: ${rawString(raw, ["project_Name", "projectName", "project_Code", "projectCode"])}`
+      : null,
+    `Imported from Sparc Force task ${item.externalId} (${item.source ?? "task"})`,
+  ];
+
+  return lines.filter(Boolean).join("\n\n");
+}
+
+function weeklyTaskStatusFromSparcForce(status: string | null | undefined): WeeklyTaskStatus {
+  const value = status?.toLowerCase() ?? "";
+  if (value.includes("complete") || value.includes("resolved") || value.includes("closed")) {
+    return "completed";
+  }
+  if (value.includes("progress")) return "in_progress";
+  if (value.includes("block") || value.includes("hold")) return "blocked";
+  return "todo";
+}
+
+function weeklyTaskPriorityFromSparcForce(priority: string | null | undefined): WeeklyTaskPriority {
+  const value = priority?.toLowerCase() ?? "";
+  if (value.includes("high") || value.includes("critical")) return "high";
+  if (value.includes("low")) return "low";
+  return "normal";
+}
+
+function sparcForceDescription(kind: string, raw: Record<string, unknown>) {
+  if (kind === "case") {
+    return rawString(raw, [
+      "description",
+      "Description",
+      "case_description",
+      "case_Description",
+      "caseDescription",
+      "caseDescriptionHtml",
+      "case_Description_HTML",
+      "htmlDescription",
+      "descriptionHtml",
+      "details",
+      "case_Details",
+      "caseDetails",
+      "resolution_Summary",
+      "resolutionSummary",
+      "resolution_Notes",
+      "resolutionNotes",
+      "root_Cause",
+      "rootCause",
+    ]);
+  }
+
+  if (kind === "task") {
+    return rawString(raw, ["task_Description", "taskDescription", "notes", "description"]);
+  }
+
+  return rawString(raw, ["project_Description", "projectDescription", "description", "notes"]);
+}
+
+function sparcForceTaskRelationshipLabel(
+  item: SparcForceImportedItem,
+  raw: Record<string, unknown>,
+) {
+  const caseReference =
+    item.caseExternalId ??
+    rawString(raw, ["case_ID", "caseId", "case_Number", "caseNumber", "case_Title", "caseTitle"]);
+  if (caseReference) return "Case linked";
+
+  const projectReference =
+    item.projectExternalId ??
+    rawString(raw, ["fk_Project_ID", "fkProjectId", "project_ID", "projectId", "project_Name", "projectName"]);
+  if (projectReference) return "Project task";
+
+  const scope = rawString(raw, ["task_Scope", "taskScope"]);
+  if (scope) return humanizeStatus(scope);
+
+  return item.source ? humanizeStatus(item.source) : "Task";
+}
+
+function sparcForceOwnershipLabel(ownership: string | null | undefined) {
+  if (ownership === "mine") return "Assigned to me";
+  if (ownership === "created_by_me") return "Created by me";
+  if (ownership === "other") return "Assigned to others";
+  if (ownership === "unassigned") return "Unassigned";
+  return "All cases";
+}
+
+function sparcForceAssignedUser(item: SparcForceImportedItem, raw: Record<string, unknown>) {
+  return rawString(raw, ["assigned_User_Name", "assignedUserName"])
+    ?? (item.assignedTo ? `User #${item.assignedTo}` : null)
+    ?? rawString(raw, ["assigned_To", "assignedTo"]);
+}
+
+function sparcForceOwnershipSummary(
+  item: SparcForceImportedItem,
+  raw: Record<string, unknown>,
+) {
+  const assignedUser = sparcForceAssignedUser(item, raw);
+  if (item.ownership === "mine") {
+    return {
+      label: "Assigned to me",
+      className: "inline-flex h-8 items-center gap-1.5 rounded-lg border border-emerald-300/20 bg-emerald-500/14 px-2.5 text-xs font-bold text-emerald-200",
+    };
+  }
+  if (item.ownership === "other") {
+    return {
+      label: assignedUser ? `Other owner: ${assignedUser}` : "Assigned to others",
+      className: "inline-flex h-8 items-center gap-1.5 rounded-lg border border-orange-300/20 bg-orange-500/12 px-2.5 text-xs font-bold text-orange-200",
+    };
+  }
+  return {
+    label: "Unassigned",
+    className: "inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/10 bg-slate-500/10 px-2.5 text-xs font-bold text-slate-300",
+  };
+}
+
+function sparcForceOwnershipChip(
+  item: SparcForceImportedItem,
+  raw: Record<string, unknown>,
+) {
+  const summary = sparcForceOwnershipSummary(item, raw);
+  return (
+    <span className={summary.className.replace("h-8", "min-h-6").replace("text-xs", "text-[11px]")}>
+      <User className="h-3 w-3" />
+      {summary.label}
+    </span>
+  );
+}
+
+function parseSparcForceRaw(rawJson: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(rawJson);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function rawString(raw: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = raw[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number") return String(value);
+  }
+  return null;
+}
+
+function looksLikeHtml(value: string | null | undefined) {
+  return /<\/?[a-z][\s\S]*>/i.test(value ?? "");
+}
+
+function sanitizeSparcForceHtml(html: string) {
+  if (typeof window === "undefined" || typeof DOMParser === "undefined") {
+    return escapeHtml(html);
+  }
+
+  const allowedTags = new Set([
+    "A",
+    "B",
+    "BLOCKQUOTE",
+    "BR",
+    "CODE",
+    "DIV",
+    "EM",
+    "I",
+    "LI",
+    "OL",
+    "P",
+    "PRE",
+    "SPAN",
+    "STRONG",
+    "TABLE",
+    "TBODY",
+    "TD",
+    "TH",
+    "THEAD",
+    "TR",
+    "U",
+    "UL",
+  ]);
+  const allowedAttributes = new Set(["href", "title", "target", "rel"]);
+  const document = new DOMParser().parseFromString(html, "text/html");
+
+  document.body.querySelectorAll("script, style, iframe, object, embed, link, meta").forEach((node) => {
+    node.remove();
+  });
+
+  document.body.querySelectorAll("*").forEach((element) => {
+    if (!allowedTags.has(element.tagName)) {
+      const replacement = document.createTextNode(element.textContent ?? "");
+      element.replaceWith(replacement);
+      return;
+    }
+
+    Array.from(element.attributes).forEach((attribute) => {
+      const name = attribute.name.toLowerCase();
+      const value = attribute.value.trim();
+      if (!allowedAttributes.has(name) || name.startsWith("on")) {
+        element.removeAttribute(attribute.name);
+        return;
+      }
+      if (name === "href" && !/^(https?:|mailto:)/i.test(value)) {
+        element.removeAttribute(attribute.name);
+      }
+    });
+
+    if (element.tagName === "A") {
+      element.setAttribute("target", "_blank");
+      element.setAttribute("rel", "noreferrer");
+    }
+  });
+
+  return document.body.innerHTML;
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function rawDisplay(raw: Record<string, unknown>, keys: string[], fallback: string) {
+  return rawString(raw, keys) ?? fallback;
+}
+
+function rawIsoDate(raw: Record<string, unknown>, keys: string[]) {
+  const value = rawString(raw, keys);
+  return value?.slice(0, 10) ?? null;
+}
+
+function rawNumber(raw: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = raw[key];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number(value.trim());
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return null;
+}
+
+function rawDateDisplay(
+  raw: Record<string, unknown>,
+  keys: string[],
+  fallback = "Unavailable",
+) {
+  const value = rawString(raw, keys);
+  return value ? formatTimestamp(value) : fallback;
+}
+
+function rawBoolDisplay(raw: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = raw[key];
+    if (typeof value === "boolean") return value ? "Yes" : "No";
+    if (typeof value === "string" && value.trim()) {
+      const normalized = value.trim().toLowerCase();
+      if (["true", "yes", "1"].includes(normalized)) return "Yes";
+      if (["false", "no", "0"].includes(normalized)) return "No";
+    }
+    if (typeof value === "number") return value > 0 ? "Yes" : "No";
+  }
+  return "Unavailable";
+}
+
+function rawPercentDisplay(raw: Record<string, unknown>, keys: string[]) {
+  const value = rawString(raw, keys);
+  if (!value) return "Unavailable";
+  return value.endsWith("%") ? value : `${value}%`;
+}
+
+function rawMoneyDisplay(
+  raw: Record<string, unknown>,
+  keys: string[],
+  currency: string | null,
+) {
+  const value = rawString(raw, keys);
+  if (!value) return "Unavailable";
+  return currency ? `${currency} ${value}` : value;
+}
+
+function projectTaskCountDisplay(raw: Record<string, unknown>) {
+  const total = rawString(raw, ["task_Count", "taskCount"]);
+  const completed = rawString(raw, ["completed_Task_Count", "completedTaskCount"]);
+  if (total && completed) return `${completed} / ${total} completed`;
+  return total ?? "Unavailable";
+}
+
+function formatRawPayload(rawJson: string) {
+  try {
+    return JSON.stringify(JSON.parse(rawJson), null, 2);
+  } catch {
+    return rawJson;
+  }
+}
+
+function statusBadgeTone(status: string | null | undefined): "blue" | "green" | "orange" | "slate" {
+  const value = status?.toLowerCase() ?? "";
+  if (value.includes("resolved") || value.includes("complete") || value.includes("closed")) return "green";
+  if (value.includes("progress") || value.includes("new") || value.includes("open")) return "blue";
+  if (value.includes("hold") || value.includes("blocked")) return "orange";
+  return "slate";
+}
+
+function priorityBadgeTone(priority: string | null | undefined): "blue" | "cyan" | "orange" | "slate" {
+  const value = priority?.toLowerCase() ?? "";
+  if (value.includes("critical") || value.includes("high")) return "orange";
+  if (value.includes("medium")) return "blue";
+  if (value.includes("low")) return "slate";
+  return "cyan";
+}
+
+function humanizeStatus(value: string) {
+  return value
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function integrationPanelTitle(panel: Exclude<IntegrationPanel, null>) {
   switch (panel) {
     case "github":
       return "GitHub Connection";
+    case "sparcForce":
+      return "Sparc Force Integration";
     case "git":
       return "Git Repository Settings";
     case "calendar":
@@ -1735,6 +3444,13 @@ function integrationPanelTitle(panel: Exclude<IntegrationPanel, null>) {
     case "groq":
       return "Groq Provider";
   }
+}
+
+function integrationPanelPlacement(panel: IntegrationPanel) {
+  if (!panel) return null;
+  if (["github", "sparcForce", "git"].includes(panel)) return "development";
+  if (panel === "calendar") return "calendar";
+  return "ai";
 }
 
 function Field({
@@ -1784,6 +3500,8 @@ function ToggleField({
 
 const inputClass =
   "h-10 w-full rounded-xl border border-white/10 bg-slate-950/75 px-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-blue-300/50 focus:ring-2 focus:ring-blue-500/15";
+const filterSelectClass =
+  "h-10 w-full min-w-0 max-w-full truncate rounded-lg border border-white/10 bg-slate-950/75 px-3 pr-9 text-sm font-semibold text-slate-200 outline-none transition focus:border-blue-300/50 focus:ring-2 focus:ring-blue-500/15 disabled:cursor-not-allowed disabled:opacity-50";
 
 function isEmailLike(value: string) {
   const trimmed = value.trim();

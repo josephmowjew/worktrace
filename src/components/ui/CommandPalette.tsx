@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Project } from "../../types/project";
 
-type PaletteGroup = "Navigation" | "Capture" | "Focus" | "Review" | "Reporting" | "Sync" | "Projects";
+type PaletteGroup = "Navigation" | "Capture" | "Focus" | "Review" | "Reporting" | "Sync" | "Projects" | "Settings";
 
 export type CommandPaletteAction = {
   id: string;
@@ -247,7 +247,7 @@ function parsePowerCommand(query: string) {
 }
 
 function groupActions(actions: CommandPaletteAction[]) {
-  const groups: PaletteGroup[] = ["Capture", "Focus", "Review", "Reporting", "Sync", "Projects", "Navigation"];
+  const groups: PaletteGroup[] = ["Capture", "Focus", "Review", "Reporting", "Sync", "Settings", "Projects", "Navigation"];
   return groups
     .map((group) => [group, actions.filter((action) => action.group === group)] as const)
     .filter(([, items]) => items.length > 0);
