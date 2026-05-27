@@ -1,6 +1,11 @@
 {
-  "version": "0.1.0",
-  "notes": "Initial WorkTrace release.",
-  "pub_date": "2026-05-27T00:00:00Z",
-  "platforms": {}
+  "version": "0.1.1",
+  "notes": "Adds in-app Help menu with version info, What's New, and update actions.",
+  "pub_date": "2026-05-27T12:00:00Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "REPLACE_WITH_WINDOWS_SIGNATURE",
+      "url": "https://github.com/josephmowjew/worktrace/releases/download/v0.1.1/WorkTrace_0.1.1_x64_en-US.msi.zip"
+    }
+  }
 }
