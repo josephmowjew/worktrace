@@ -30,7 +30,7 @@
     "updater": {
       "active": true,
       "endpoints": [
-        "https://github.com/josephmowjew/worktrace/releases/latest/download/latest.json"
+        "https://raw.githubusercontent.com/josephmowjew/worktrace/main/latest.json"
       ],
       "dialog": false,
       "pubkey": "${TAURI_UPDATER_PUBLIC_KEY}",
