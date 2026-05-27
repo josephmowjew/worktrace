@@ -10,6 +10,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 import type { ActivityItem } from "../../types/activity";
 import type { FocusSession } from "../../types/focusSession";
 import type { ReportNote } from "../../types/report";
@@ -70,18 +71,7 @@ export function EndOfDayReviewModal({
   );
   const [fields, setFields] = useState<ReviewFields>(draftFields);
 
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
+  useEscapeKey(onClose, isOpen);
 
   useEffect(() => {
     if (!isOpen) return;

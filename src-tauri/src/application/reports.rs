@@ -44,6 +44,7 @@ impl ReportService {
                 to: input.end_date.clone(),
                 activity_type: None,
                 project_ids: input.project_ids.clone(),
+                classification: normalize_report_classification(&input.classification),
                 git_refs,
                 worktree_paths,
             })
@@ -55,6 +56,7 @@ impl ReportService {
                     week_start_date: input.start_date.clone(),
                     week_end_date: input.end_date.clone(),
                     project_ids: input.project_ids.clone(),
+                    classification: normalize_report_classification(&input.classification),
                     task_type: None,
                     status: None,
                     included_in_report: None,
@@ -65,7 +67,12 @@ impl ReportService {
             Vec::new()
         };
         let report_notes = report_note_repository
-            .list_by_date_range(&input.start_date, &input.end_date)
+            .list_for_report(
+                &input.start_date,
+                &input.end_date,
+                &input.project_ids,
+                &normalize_report_classification(&input.classification),
+            )
             .await
             .map_err(ReportServiceError::Database)?;
 
@@ -203,6 +210,15 @@ fn validate_range(start_date: &str, end_date: &str) -> Result<(), ReportServiceE
     }
 
     Ok(())
+}
+
+fn normalize_report_classification(value: &Option<String>) -> Option<String> {
+    match value.as_deref().map(str::trim) {
+        Some("work") => Some("work".to_string()),
+        Some("personal") => Some("personal".to_string()),
+        Some("unclassified") => Some("unclassified".to_string()),
+        _ => None,
+    }
 }
 
 async fn resolve_git_focus(
@@ -455,6 +471,7 @@ mod tests {
                 repo_path: None,
                 github_url: None,
                 project_type: Some("Company".to_string()),
+                classification: None,
             })
             .await
             .expect("create project");
@@ -519,6 +536,7 @@ mod tests {
                 end_date: "2026-05-21".to_string(),
                 recipient_name: Some("Manager".to_string()),
                 project_ids: None,
+                classification: None,
                 git_refs: None,
                 worktree_paths: None,
                 use_project_git_focus: Some(false),
@@ -616,6 +634,7 @@ mod tests {
                 end_date: "2026-05-22".to_string(),
                 recipient_name: None,
                 project_ids: None,
+                classification: None,
                 git_refs: None,
                 worktree_paths: None,
                 use_project_git_focus: Some(false),
@@ -631,6 +650,99 @@ mod tests {
         assert!(report.content.contains("## Daily Review Notes"));
         assert!(report.content.contains("Shipped the review workflow"));
         assert!(!report.content.contains("Hidden note"));
+    }
+
+    #[tokio::test]
+    async fn generate_report_filters_by_project_classification() {
+        let pool = test_pool().await;
+        let projects = ProjectRepository::new(&pool);
+        let work_project = projects
+            .create(CreateProjectInput {
+                name: "Work API".to_string(),
+                description: None,
+                repo_path: None,
+                github_url: None,
+                project_type: Some("Backend".to_string()),
+                classification: Some("work".to_string()),
+            })
+            .await
+            .expect("create work project");
+        let personal_project = projects
+            .create(CreateProjectInput {
+                name: "Personal Tool".to_string(),
+                description: None,
+                repo_path: None,
+                github_url: None,
+                project_type: Some("Tools".to_string()),
+                classification: Some("personal".to_string()),
+            })
+            .await
+            .expect("create personal project");
+
+        let logs = ManualLogRepository::new(&pool);
+        logs.create(CreateManualLogInput {
+            project_id: Some(work_project.id.clone()),
+            date: "2026-05-20".to_string(),
+            activity_type: ActivityType::Planning,
+            summary: "Prepared work launch checklist".to_string(),
+            outcome: None,
+            duration_minutes: Some(45),
+            follow_up: None,
+            included_in_report: Some(true),
+        })
+        .await
+        .expect("create work log");
+        logs.create(CreateManualLogInput {
+            project_id: Some(personal_project.id),
+            date: "2026-05-20".to_string(),
+            activity_type: ActivityType::Planning,
+            summary: "Planned personal app feature".to_string(),
+            outcome: None,
+            duration_minutes: Some(30),
+            follow_up: None,
+            included_in_report: Some(true),
+        })
+        .await
+        .expect("create personal log");
+        logs.create(CreateManualLogInput {
+            project_id: None,
+            date: "2026-05-20".to_string(),
+            activity_type: ActivityType::Planning,
+            summary: "General projectless note".to_string(),
+            outcome: None,
+            duration_minutes: Some(15),
+            follow_up: None,
+            included_in_report: Some(true),
+        })
+        .await
+        .expect("create general log");
+
+        let report = ReportService::generate(
+            &ActivityRepository::new(&pool),
+            &WeeklyTaskRepository::new(&pool),
+            &ReportNoteRepository::new(&pool),
+            &GitMetadataRepository::new(&pool),
+            GenerateReportInput {
+                start_date: "2026-05-19".to_string(),
+                end_date: "2026-05-21".to_string(),
+                recipient_name: None,
+                project_ids: None,
+                classification: Some("work".to_string()),
+                git_refs: None,
+                worktree_paths: None,
+                use_project_git_focus: Some(false),
+                include_commits: Some(true),
+                include_manual_logs: Some(true),
+                include_weekly_tasks: Some(true),
+                include_hidden: Some(false),
+            },
+        )
+        .await
+        .expect("generate work report");
+
+        assert!(report.content.contains("Prepared work launch checklist"));
+        assert!(!report.content.contains("Planned personal app feature"));
+        assert!(!report.content.contains("General projectless note"));
     }
 
     async fn test_pool() -> sqlx::SqlitePool {

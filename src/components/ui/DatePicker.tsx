@@ -1,6 +1,7 @@
 import { CalendarDays, Check, ChevronLeft, ChevronRight } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 
 export function DatePicker({
   value,
@@ -26,6 +27,8 @@ export function DatePicker({
   );
   const containerRef = useRef<HTMLDivElement>(null);
   const portalRef = useRef<HTMLDivElement>(null);
+
+  useEscapeKey(() => setOpen(false), open);
 
   useEffect(() => {
     setVisibleMonth(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1));

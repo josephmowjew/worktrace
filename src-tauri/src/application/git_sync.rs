@@ -147,6 +147,7 @@ mod tests {
                 repo_path: Some(repo_path.to_string_lossy().to_string()),
                 github_url: None,
                 project_type: Some("Company".to_string()),
+                classification: None,
             })
             .await
             .expect("create project");
@@ -175,6 +176,7 @@ mod tests {
                 to: "2026-05-21".to_string(),
                 activity_type: Some("commit".to_string()),
                 project_ids: None,
+                classification: None,
                 git_refs: None,
                 worktree_paths: None,
             })
@@ -265,3 +267,5 @@ mod tests {
         );
     }
 }
+
+

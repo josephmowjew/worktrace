@@ -9,6 +9,7 @@ import type {
   ReportReadinessAnalysis,
 } from "../types/report";
 import type { GitRefFilter } from "../types/project";
+import type { ProjectClassification } from "../types/project";
 
 type ReportsWorkspaceState = {
   startDate: string;
@@ -19,6 +20,8 @@ type ReportsWorkspaceState = {
   setRecipientName: (value: string) => void;
   selectedProjectId: string;
   setSelectedProjectId: (value: string) => void;
+  selectedClassification: ProjectClassification | "all";
+  setSelectedClassification: (value: ProjectClassification | "all") => void;
   selectedGitRefs: GitRefFilter[];
   setSelectedGitRefs: (value: GitRefFilter[] | ((current: GitRefFilter[]) => GitRefFilter[])) => void;
   selectedWorktreePaths: string[];
@@ -66,6 +69,8 @@ export function ReportsWorkspaceProvider({ children }: PropsWithChildren) {
   const [endDate, setEndDate] = useState(weekRange.to);
   const [recipientName, setRecipientName] = useState("");
   const [selectedProjectId, setSelectedProjectId] = useState("all");
+  const [selectedClassification, setSelectedClassification] =
+    useState<ProjectClassification | "all">("all");
   const [selectedGitRefs, setSelectedGitRefs] = useState<GitRefFilter[]>([]);
   const [selectedWorktreePaths, setSelectedWorktreePaths] = useState<string[]>([]);
   const [useProjectGitFocus, setUseProjectGitFocus] = useState(true);
@@ -150,6 +155,8 @@ export function ReportsWorkspaceProvider({ children }: PropsWithChildren) {
       setRecipientName,
       selectedProjectId,
       setSelectedProjectId,
+      selectedClassification,
+      setSelectedClassification,
       selectedGitRefs,
       setSelectedGitRefs,
       selectedWorktreePaths,
@@ -221,6 +228,7 @@ export function ReportsWorkspaceProvider({ children }: PropsWithChildren) {
       recipientName,
       report,
       reportAiProvider,
+      selectedClassification,
       selectedProjectId,
       selectedGitRefs,
       selectedWorktreePaths,

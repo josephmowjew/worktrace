@@ -144,6 +144,7 @@ impl DailyPlanService {
                 week_start_date: monday,
                 week_end_date: friday,
                 project_ids: None,
+                classification: None,
                 task_type: None,
                 status: None,
                 included_in_report: None,
@@ -499,3 +500,5 @@ fn compute_distraction_risk(
         reasons,
     }
 }
+
+

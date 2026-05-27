@@ -1,4 +1,5 @@
 import type { GitRefFilter } from "./project";
+import type { ProjectClassification } from "./project";
 
 export type GeneratedReport = {
   title: string;
@@ -27,6 +28,7 @@ export type GenerateReportInput = {
   endDate: string;
   recipientName?: string | null;
   projectIds?: string[] | null;
+  classification?: ProjectClassification | null;
   gitRefs?: GitRefFilter[] | null;
   worktreePaths?: string[] | null;
   useProjectGitFocus?: boolean | null;
@@ -80,6 +82,7 @@ export type ReportPolishInput = {
   endDate: string;
   recipientName?: string | null;
   projectIds?: string[] | null;
+  classification?: ProjectClassification | null;
   gitRefs?: GitRefFilter[] | null;
   worktreePaths?: string[] | null;
   useProjectGitFocus?: boolean | null;
@@ -111,6 +114,7 @@ export type ReportReadinessInput = {
   startDate: string;
   endDate: string;
   projectIds?: string[] | null;
+  classification?: ProjectClassification | null;
   gitRefs?: GitRefFilter[] | null;
   worktreePaths?: string[] | null;
   useProjectGitFocus?: boolean | null;

@@ -13,6 +13,7 @@ import {
   Users,
   FolderOpen,
   LayoutGrid,
+  ListChecks,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Panel } from "../components/ui/Panel";
@@ -23,12 +24,17 @@ import { useToast } from "../components/ui/ToastProvider";
 import { ActivityHeatmap } from "../components/timeline/ActivityHeatmap";
 import { WeekSummary } from "../components/timeline/WeekSummary";
 import { KeyHighlights } from "../components/timeline/KeyHighlights";
-import { TimelineDay } from "../components/timeline/TimelineDay";
+import { TimelineItem } from "../components/timeline/TimelineItem";
+import { TaskDetailModal } from "../components/ui/TaskDetailModal";
+import { Badge } from "../components/ui/Badge";
 import { listActivity, getActivityHeatmap, getWeekSummary, getKeyHighlights } from "../lib/api/activity";
 import { syncCommits } from "../lib/api/gitSync";
 import { listProjects } from "../lib/api/projects";
+import { listWeeklyTasks } from "../lib/api/weeklyTasks";
 import { syncAnnouncement, syncStartedAnnouncement } from "../lib/announcements";
 import { currentWeekRange, shiftWeek } from "../lib/dates";
+import type { ActivityItem } from "../types/activity";
+import type { WeeklyTask } from "../types/weeklyTask";
 
 const activityFilters = [
   { label: "All", value: "all", icon: BarChart3 },
@@ -47,6 +53,7 @@ export function ActivityTimelinePage() {
   const [activityType, setActivityType] = useState("all");
   const [projectId, setProjectId] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [viewingTask, setViewingTask] = useState<WeeklyTask | null>(null);
 
   const weekRange = useMemo(() => currentWeekRange(currentDate), [currentDate]);
 
@@ -67,6 +74,16 @@ export function ActivityTimelinePage() {
         from: weekRange.from,
         to: weekRange.to,
         activityType: activityType === "all" ? null : activityType,
+        projectIds,
+      }),
+  });
+
+  const tasksQuery = useQuery({
+    queryKey: ["weeklyTasks", "activityTimeline", weekRange.from, weekRange.to, projectId],
+    queryFn: () =>
+      listWeeklyTasks({
+        weekStartDate: weekRange.from,
+        weekEndDate: weekRange.to,
         projectIds,
       }),
   });
@@ -132,7 +149,7 @@ export function ActivityTimelinePage() {
   });
 
   const filteredDays = useMemo(() => {
-    let days = activityQuery.data ?? [];
+    let days = combineTimelineDays(activityQuery.data ?? [], activityType === "all" ? tasksQuery.data ?? [] : []);
 
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
@@ -140,17 +157,15 @@ export function ActivityTimelinePage() {
         .map((day) => ({
           ...day,
           items: day.items.filter(
-            (item) =>
-              item.summary.toLowerCase().includes(query) ||
-              item.projectName?.toLowerCase().includes(query) ||
-              item.activityType.toLowerCase().includes(query)
+            (entry) =>
+              entryMatchesSearch(entry, query)
           ),
         }))
         .filter((day) => day.items.length > 0);
     }
 
     return days;
-  }, [activityQuery.data, searchQuery]);
+  }, [activityQuery.data, activityType, searchQuery, tasksQuery.data]);
 
   const handlePrevWeek = () => setCurrentDate((d) => shiftWeek(d, -1));
   const handleNextWeek = () => setCurrentDate((d) => shiftWeek(d, 1));
@@ -293,18 +308,20 @@ export function ActivityTimelinePage() {
           ) : null}
 
           <Panel className="min-h-[520px] overflow-hidden rounded-[18px] border-blue-200/10 bg-slate-950/36 p-5 shadow-[0_24px_70px_rgba(2,6,23,0.34),inset_0_1px_0_rgba(255,255,255,0.045)]">
-            {activityQuery.isLoading ? (
+            {activityQuery.isLoading || (activityType === "all" && tasksQuery.isLoading) ? (
               <TimelineSkeleton />
-            ) : activityQuery.isError ? (
+            ) : activityQuery.isError || tasksQuery.isError ? (
               <div className="rounded-xl border border-red-400/20 bg-red-500/10 p-4 text-sm text-red-100">
                 {activityQuery.error instanceof Error
                   ? activityQuery.error.message
-                  : "Activity could not be loaded."}
+                  : tasksQuery.error instanceof Error
+                    ? tasksQuery.error.message
+                    : "Activity could not be loaded."}
               </div>
             ) : filteredDays.length > 0 ? (
               <div className="space-y-7">
                 {filteredDays.map((day) => (
-                  <TimelineDay key={day.date} day={day} />
+                  <MixedTimelineDay key={day.date} day={day} onViewTask={setViewingTask} />
                 ))}
               </div>
             ) : (
@@ -341,8 +358,176 @@ export function ActivityTimelinePage() {
           </Panel>
         </div>
       </div>
+      <TaskDetailModal
+        isOpen={Boolean(viewingTask)}
+        task={viewingTask}
+        onClose={() => setViewingTask(null)}
+      />
     </div>
   );
+}
+
+type TimelineEntry =
+  | { kind: "activity"; id: string; occurredAt: string; item: ActivityItem }
+  | { kind: "task"; id: string; occurredAt: string; task: WeeklyTask };
+
+type MixedTimelineDay = {
+  date: string;
+  items: TimelineEntry[];
+};
+
+function MixedTimelineDay({
+  day,
+  onViewTask,
+}: {
+  day: MixedTimelineDay;
+  onViewTask: (task: WeeklyTask) => void;
+}) {
+  return (
+    <section className="relative">
+      <div className="mb-5 flex items-center gap-4">
+        <div className="h-px flex-1 bg-blue-200/10" />
+        <div className="flex items-center gap-3">
+          <span className="flex h-6 w-6 items-center justify-center rounded-lg border border-blue-300/20 bg-blue-500/10 text-blue-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+            <CalendarDays className="h-3.5 w-3.5" />
+          </span>
+          <span className="text-sm font-semibold text-slate-100">{formatDayLabel(day.date)}</span>
+          <span className="text-xs tabular-nums text-slate-500">{day.items.length} items</span>
+        </div>
+        <div className="h-px flex-1 bg-blue-200/10" />
+      </div>
+
+      <div className="relative pl-[104px] max-sm:pl-0">
+        <div className="pointer-events-none absolute bottom-0 left-8 top-2 z-0 w-px bg-gradient-to-b from-blue-300/35 via-blue-300/20 to-transparent max-sm:hidden" />
+
+        <div className="space-y-3">
+          {day.items.map((entry) => (
+            <div key={`${entry.kind}-${entry.id}`} className="relative">
+              <div className="pointer-events-none absolute -left-[72px] top-9 z-20 h-4 w-4 -translate-x-1/2 rounded-full border border-blue-100/40 bg-blue-500 shadow-[0_0_0_6px_rgba(15,23,42,0.92),0_0_26px_rgba(59,130,246,0.42)] max-sm:hidden" />
+              {entry.kind === "activity" ? (
+                <TimelineItem item={entry.item} />
+              ) : (
+                <TaskTimelineItem task={entry.task} occurredAt={entry.occurredAt} onView={() => onViewTask(entry.task)} />
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function TaskTimelineItem({
+  task,
+  occurredAt,
+  onView,
+}: {
+  task: WeeklyTask;
+  occurredAt: string;
+  onView: () => void;
+}) {
+  return (
+    <article className="group relative z-10 rounded-2xl border border-blue-100/8 bg-slate-950/36 shadow-[0_14px_40px_rgba(2,6,23,0.22),inset_0_1px_0_rgba(255,255,255,0.04)] transition-[background-color,border-color,box-shadow,transform] duration-150 hover:border-blue-200/16 hover:bg-slate-950/48 hover:shadow-[0_18px_48px_rgba(2,6,23,0.3),inset_0_1px_0_rgba(255,255,255,0.055)]">
+      <button type="button" onClick={onView} className="flex w-full items-start gap-4 p-4 text-left">
+        <span className="absolute left-0 mt-1 w-16 -translate-x-[56px] text-left text-sm tabular-nums text-slate-400 max-sm:static max-sm:w-auto max-sm:translate-x-0 max-sm:text-xs">
+          {formatActivityTime(occurredAt)}
+        </span>
+
+        <div className="relative z-10 flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-cyan-300/15 bg-cyan-500/10 text-cyan-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+          <ListChecks className="h-5 w-5 shrink-0 stroke-[2.35]" />
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-md border border-cyan-200/10 bg-cyan-400/10 px-2 py-0.5 text-[11px] font-semibold text-cyan-100">
+              Task
+            </span>
+            <Badge tone={task.status === "blocked" ? "orange" : task.status === "completed" ? "green" : "blue"}>
+              {task.status.replace("_", " ")}
+            </Badge>
+            {task.projectName ? (
+              <span className="rounded-md border border-white/8 bg-white/5 px-2 py-0.5 text-[10px] font-semibold text-slate-400">
+                {task.projectName}
+              </span>
+            ) : null}
+          </div>
+          <p className="mt-2 text-[15px] font-semibold leading-6 text-slate-50 [text-wrap:pretty]">{task.title}</p>
+          {task.details ? <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{task.details}</p> : null}
+        </div>
+      </button>
+    </article>
+  );
+}
+
+function combineTimelineDays(activityDays: Array<{ date: string; items: ActivityItem[] }>, tasks: WeeklyTask[]): MixedTimelineDay[] {
+  const grouped = new Map<string, TimelineEntry[]>();
+
+  for (const day of activityDays) {
+    const entries = grouped.get(day.date) ?? [];
+    entries.push(
+      ...day.items.map((item) => ({
+        kind: "activity" as const,
+        id: item.id,
+        occurredAt: item.occurredAt,
+        item,
+      })),
+    );
+    grouped.set(day.date, entries);
+  }
+
+  for (const task of tasks) {
+    const occurredAt = task.completedAt ?? task.targetDate ?? task.weekStartDate;
+    const date = occurredAt.slice(0, 10);
+    const entries = grouped.get(date) ?? [];
+    entries.push({ kind: "task", id: task.id, occurredAt, task });
+    grouped.set(date, entries);
+  }
+
+  return Array.from(grouped.entries())
+    .map(([date, items]) => ({
+      date,
+      items: items.sort((left, right) => right.occurredAt.localeCompare(left.occurredAt)),
+    }))
+    .sort((left, right) => right.date.localeCompare(left.date));
+}
+
+function entryMatchesSearch(entry: TimelineEntry, query: string) {
+  if (entry.kind === "activity") {
+    return (
+      entry.item.summary.toLowerCase().includes(query) ||
+      Boolean(entry.item.projectName?.toLowerCase().includes(query)) ||
+      entry.item.activityType.toLowerCase().includes(query)
+    );
+  }
+
+  return (
+    entry.task.title.toLowerCase().includes(query) ||
+    Boolean(entry.task.details?.toLowerCase().includes(query)) ||
+    Boolean(entry.task.projectName?.toLowerCase().includes(query)) ||
+    entry.task.status.toLowerCase().includes(query) ||
+    entry.task.taskType.toLowerCase().includes(query)
+  );
+}
+
+function formatDayLabel(value: string) {
+  const date = new Date(`${value}T00:00:00`);
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(date);
+}
+
+function formatActivityTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function TimelineSkeleton() {

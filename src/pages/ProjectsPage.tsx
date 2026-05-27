@@ -1,5 +1,4 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { QueryClient } from "@tanstack/react-query";
 import {
@@ -16,32 +15,29 @@ import {
   Search,
   ShieldCheck,
   RefreshCw,
-  X,
   LayoutGrid,
 } from "lucide-react";
 import { useMemo, useState, useEffect, useRef } from "react";
 import type { InputHTMLAttributes } from "react";
-import { useForm } from "react-hook-form";
 import { useLocation, useNavigate } from "react-router-dom";
-import { z } from "zod";
 import { Button } from "../components/ui/Button";
 import { Panel } from "../components/ui/Panel";
 import { Select } from "../components/ui/Select";
-import { SelectField } from "../components/ui/SelectField";
 import { ProjectCard } from "../components/ui/ProjectCard";
+import { ProjectFormPanel } from "../components/ui/ProjectFormPanel";
 import { DonutChart, CategoryLegend } from "../components/ui/DonutChart";
 import { RepositoriesTable } from "../components/ui/RepositoriesTable";
 import { ContributorsList } from "../components/ui/ContributorsList";
 import { Pagination } from "../components/ui/Pagination";
 import { useSpeech } from "../components/ui/SpeechProvider";
 import { useToast } from "../components/ui/ToastProvider";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 import { syncCommits } from "../lib/api/gitSync";
 import {
   archiveProject,
   createProject,
   listProjects,
   updateProject,
-  validateRepoPath,
   getProjectStats,
   getCategoryDistribution,
   getRecentCommits,
@@ -55,38 +51,17 @@ import {
   listWorkspaces,
   scanWorkspace,
   unignoreWorkspaceRepository,
+  updateWorkspace,
 } from "../lib/api/workspaces";
 import { syncAnnouncement, syncStartedAnnouncement } from "../lib/announcements";
 import type {
+  CreateProjectInput,
   Project,
   ProjectStats,
 } from "../types/project";
 import type { WorkspaceRepoDiscovery } from "../types/workspace";
 
-const projectSchema = z.object({
-  name: z.string().trim().min(1, "Project name is required"),
-  description: z.string().trim().optional(),
-  repoPath: z.string().trim().optional(),
-  githubUrl: z
-    .string()
-    .trim()
-    .optional()
-    .refine((value) => !value || /^https?:\/\/.+/.test(value), {
-      message: "Use a valid http or https URL",
-    }),
-  projectType: z.string().trim().optional(),
-});
-
-type ProjectFormValues = z.infer<typeof projectSchema>;
 type ProjectsLocationState = { openWorkspaceScan?: boolean } | null;
-
-const emptyValues: ProjectFormValues = {
-  name: "",
-  description: "",
-  repoPath: "",
-  githubUrl: "",
-  projectType: "Backend",
-};
 
 const ITEMS_PER_PAGE = 6;
 
@@ -100,16 +75,18 @@ export function ProjectsPage() {
   const [viewMode, setViewMode] = useState<"workspaces" | "projects">("workspaces");
   const [statusFilter, setStatusFilter] = useState<"active" | "archived" | "all">("active");
   const [sourceFilter, setSourceFilter] = useState<"all" | "workspace" | "personal">("all");
+  const [classificationFilter, setClassificationFilter] = useState<"all" | "work" | "personal" | "unclassified">("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [sortBy, setSortBy] = useState<"recentlyUpdated" | "name" | "commits">("recentlyUpdated");
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
-  const [repoValidation, setRepoValidation] = useState<ValidationState | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [recentCommitLimit, setRecentCommitLimit] = useState(5);
   const [isWorkspaceFormOpen, setIsWorkspaceFormOpen] = useState(false);
   const [workspaceName, setWorkspaceName] = useState("");
   const [workspaceRootPath, setWorkspaceRootPath] = useState("");
+  const [workspaceClassification, setWorkspaceClassification] =
+    useState<"work" | "personal" | "unclassified">("unclassified");
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [workspaceStatusFilter, setWorkspaceStatusFilter] = useState<"active" | "archived" | "all">("active");
   const [workspaceDiscoveries, setWorkspaceDiscoveries] = useState<WorkspaceRepoDiscovery[]>([]);
@@ -126,20 +103,13 @@ export function ProjectsPage() {
     }
   }, [isFormOpen]);
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        if (isFormOpen) {
-          closeForm();
-        } else if (isWorkspaceFormOpen) {
-          setIsWorkspaceFormOpen(false);
-        }
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isFormOpen, isWorkspaceFormOpen]);
+  useEscapeKey(() => {
+    if (isFormOpen) {
+      closeForm();
+    } else if (isWorkspaceFormOpen) {
+      setIsWorkspaceFormOpen(false);
+    }
+  }, isFormOpen || isWorkspaceFormOpen);
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -172,11 +142,6 @@ export function ProjectsPage() {
   const workspacesQuery = useQuery({
     queryKey: ["workspaces"],
     queryFn: listWorkspaces,
-  });
-
-  const form = useForm<ProjectFormValues>({
-    resolver: zodResolver(projectSchema),
-    defaultValues: emptyValues,
   });
 
   const autoSyncMutation = useMutation({
@@ -242,22 +207,7 @@ export function ProjectsPage() {
   });
 
   const saveMutation = useMutation({
-    mutationFn: async (values: ProjectFormValues) => {
-      const input = {
-        name: values.name,
-        description: normalizeOptional(values.description),
-        repoPath: normalizeOptional(values.repoPath),
-        githubUrl: normalizeOptional(values.githubUrl),
-        projectType: normalizeOptional(values.projectType),
-      };
-
-      if (input.repoPath) {
-        const isValidRepo = await validateRepoPath(input.repoPath);
-        if (!isValidRepo) {
-          throw new Error("That path does not look like a Git repository.");
-        }
-      }
-
+    mutationFn: async (input: CreateProjectInput) => {
       if (editingProject) {
         return updateProject(editingProject.id, input);
       }
@@ -309,6 +259,7 @@ export function ProjectsPage() {
       createWorkspace({
         name: workspaceName,
         rootPath: workspaceRootPath,
+        classification: workspaceClassification,
       }),
     onSuccess: async (workspace) => {
       await queryClient.invalidateQueries({ queryKey: ["workspaces"] });
@@ -423,6 +374,21 @@ export function ProjectsPage() {
     onError: (error) => toast.error("Archive workspace failed", toMessage(error)),
   });
 
+  const updateWorkspaceMutation = useMutation({
+    mutationFn: ({
+      id,
+      classification,
+    }: {
+      id: string;
+      classification: "work" | "personal" | "unclassified";
+    }) => updateWorkspace(id, { classification }),
+    onSuccess: async (workspace) => {
+      await queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+      toast.success("Workspace updated", `${workspace.name} classification is saved.`);
+    },
+    onError: (error) => toast.error("Workspace update failed", toMessage(error)),
+  });
+
   const projects = projectsQuery.data ?? [];
   const statsMap = useMemo(() => {
     const map = new Map<string, ProjectStats>();
@@ -440,6 +406,8 @@ export function ProjectsPage() {
       const matchesStatus = statusFilter === "all" || project.status === statusFilter;
       const matchesCategory =
         categoryFilter === "all" || project.projectType === categoryFilter;
+      const matchesClassification =
+        classificationFilter === "all" || project.classification === classificationFilter;
       const matchesSource =
         sourceFilter === "all" ||
         (sourceFilter === "workspace" && Boolean(project.workspaceId)) ||
@@ -451,9 +419,9 @@ export function ProjectsPage() {
         project.repoPath?.toLowerCase().includes(needle) ||
         project.githubUrl?.toLowerCase().includes(needle);
 
-      return matchesStatus && matchesCategory && matchesSource && matchesSearch;
+      return matchesStatus && matchesCategory && matchesClassification && matchesSource && matchesSearch;
     });
-  }, [projects, search, statusFilter, categoryFilter, sourceFilter]);
+  }, [projects, search, statusFilter, categoryFilter, classificationFilter, sourceFilter]);
 
   const sortedProjects = useMemo(() => {
     const sorted = [...filteredProjects];
@@ -535,14 +503,14 @@ export function ProjectsPage() {
 
   function openCreateForm() {
     setEditingProject(null);
-    setRepoValidation(null);
-    form.reset(emptyValues);
+    saveMutation.reset();
     setIsFormOpen(true);
   }
 
   function openWorkspaceForm() {
     setWorkspaceName("");
     setWorkspaceRootPath("");
+    setWorkspaceClassification("unclassified");
     setIsWorkspaceFormOpen(true);
   }
 
@@ -579,79 +547,14 @@ export function ProjectsPage() {
 
   function openEditForm(project: Project) {
     setEditingProject(project);
-    setRepoValidation(null);
-    form.reset({
-      name: project.name,
-      description: project.description ?? "",
-      repoPath: project.repoPath ?? "",
-      githubUrl: project.githubUrl ?? "",
-      projectType: project.projectType ?? "Backend",
-    });
+    saveMutation.reset();
     setIsFormOpen(true);
   }
 
   function closeForm() {
     setIsFormOpen(false);
     setEditingProject(null);
-    setRepoValidation(null);
     saveMutation.reset();
-    form.reset(emptyValues);
-  }
-
-  async function chooseRepoPath() {
-    try {
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        title: "Choose a Git repository folder",
-      });
-
-      if (typeof selected === "string") {
-        form.setValue("repoPath", selected, {
-          shouldDirty: true,
-          shouldTouch: true,
-          shouldValidate: true,
-        });
-        setRepoValidation(null);
-      }
-    } catch (error) {
-      setRepoValidation({ tone: "error", message: toMessage(error) });
-    }
-  }
-
-  async function checkRepoPath() {
-    const path = form.getValues("repoPath")?.trim();
-    if (!path) {
-      setRepoValidation({
-        tone: "warning",
-        message: "Add or choose a repository path first.",
-      });
-      return;
-    }
-
-    setRepoValidation({ tone: "pending", message: "Checking repository..." });
-
-    try {
-      const isValidRepo = await validateRepoPath(path);
-      setRepoValidation(
-        isValidRepo
-          ? {
-              tone: "success",
-              message: "Repository path is valid and ready to sync.",
-            }
-          : {
-              tone: "error",
-              message: "This path does not contain Git metadata.",
-            },
-      );
-      toast[isValidRepo ? "success" : "error"](
-        isValidRepo ? "Repository validated" : "Repository invalid",
-        isValidRepo ? "This folder is ready to sync." : "That path does not contain Git metadata.",
-      );
-    } catch (error) {
-      setRepoValidation({ tone: "error", message: toMessage(error) });
-      toast.error("Validation failed", toMessage(error));
-    }
   }
 
   function handlePageChange(page: number) {
@@ -718,125 +621,14 @@ export function ProjectsPage() {
             : "max-h-0 opacity-0 -translate-y-4 pointer-events-none"
         }`}
       >
-        <Panel className="relative overflow-hidden border-blue-300/20 bg-blue-500/5">
-          <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 via-transparent to-cyan-500/10 opacity-50" />
-          <div className="relative">
-            <div className="flex items-start justify-between gap-3 border-b border-white/8 px-5 py-4">
-              <div>
-                <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-blue-300/15 bg-blue-300/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-blue-200">
-                  <FolderKanban className="h-3.5 w-3.5" />
-                  {editingProject ? "Edit Project" : "New Project"}
-                </div>
-                <h2 className="text-lg font-semibold text-white">
-                  {editingProject ? "Modify Project Details" : "Register a New Source"}
-                </h2>
-                <p className="mt-1 text-xs text-slate-400">
-                  {editingProject
-                    ? "Update project settings and repository configuration."
-                    : "Use the native picker or paste a local repository path. Git-backed projects auto-sync on save."}
-                </p>
-              </div>
-              <Button variant="ghost" onClick={closeForm} aria-label="Close form" className="shrink-0">
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-
-            <form
-              className="space-y-4 p-5"
-              onSubmit={form.handleSubmit((values) => saveMutation.mutate(values))}
-            >
-              <div className="grid gap-4 sm:grid-cols-2">
-                <TextField
-                  label="Project Name"
-                  placeholder="Sparc Force API"
-                  error={form.formState.errors.name?.message}
-                  {...form.register("name")}
-                />
-
-                <TextField
-                  label="Description"
-                  placeholder="Backend REST API for platform..."
-                  error={form.formState.errors.description?.message}
-                  {...form.register("description")}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <TextField
-                  label="Local Repository Path"
-                  placeholder="C:\\Users\\Sparc\\Documents\\projects\\repo"
-                  error={form.formState.errors.repoPath?.message}
-                  {...form.register("repoPath")}
-                />
-                <div className="grid grid-cols-2 gap-2">
-                  <Button type="button" variant="secondary" onClick={chooseRepoPath}>
-                    <FolderOpen className="h-4 w-4" />
-                    Choose Folder
-                  </Button>
-                  <Button type="button" variant="secondary" onClick={checkRepoPath}>
-                    <GitBranch className="h-4 w-4" />
-                    Validate
-                  </Button>
-                </div>
-                {repoValidation ? <ValidationMessage state={repoValidation} /> : null}
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <TextField
-                  label="GitHub Repository URL"
-                  placeholder="https://github.com/company/repo"
-                  error={form.formState.errors.githubUrl?.message}
-                  {...form.register("githubUrl")}
-                />
-
-                <label className="grid gap-2 text-xs font-semibold text-slate-300">
-                  Project Type
-                  <SelectField
-                    control={form.control}
-                    name="projectType"
-                    options={[
-                      { value: "Backend", label: "Backend", icon: FolderKanban },
-                      { value: "Frontend", label: "Frontend", icon: FolderKanban },
-                      { value: "Marketing", label: "Marketing", icon: FolderKanban },
-                      { value: "Tools", label: "Tools", icon: FolderKanban },
-                      { value: "Service", label: "Service", icon: FolderKanban },
-                      { value: "Company", label: "Company", icon: FolderKanban },
-                      { value: "Client", label: "Client", icon: FolderKanban },
-                      { value: "Internal", label: "Internal", icon: FolderKanban },
-                      { value: "Personal", label: "Personal", icon: FolderKanban },
-                      { value: "Manual Only", label: "Manual Only", icon: FolderKanban },
-                    ]}
-                    size="sm"
-                  />
-                </label>
-              </div>
-
-              {saveMutation.isError ? (
-                <div className="rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-xs text-red-100">
-                  {toMessage(saveMutation.error)}
-                </div>
-              ) : null}
-
-              <div className="flex gap-2 pt-2">
-                <Button type="button" variant="secondary" onClick={closeForm} className="flex-1">
-                  Cancel
-                </Button>
-                <Button
-                  type="submit"
-                  variant="primary"
-                  className="flex-1 py-2.5"
-                  disabled={saveMutation.isPending}
-                >
-                  {saveMutation.isPending
-                    ? "Saving..."
-                    : editingProject
-                      ? "Save Changes"
-                      : "Create Project"}
-                </Button>
-              </div>
-            </form>
-          </div>
-        </Panel>
+        <ProjectFormPanel
+          mode={editingProject ? "edit" : "create"}
+          project={editingProject ?? undefined}
+          isSaving={saveMutation.isPending}
+          error={saveMutation.error}
+          onSubmit={(input) => saveMutation.mutate(input)}
+          onCancel={closeForm}
+        />
       </div>
 
       <Panel className="flex flex-wrap items-center justify-between gap-3 p-2">
@@ -903,6 +695,16 @@ export function ProjectsPage() {
                     value={workspaceRootPath}
                     onChange={(event) => setWorkspaceRootPath(event.currentTarget.value)}
                   />
+                  <label className="grid gap-2 text-xs font-semibold text-slate-300">
+                    Classification
+                    <FilterSelect
+                      value={workspaceClassification}
+                      onChange={(value) =>
+                        setWorkspaceClassification(value as typeof workspaceClassification)
+                      }
+                      options={classificationOptions}
+                    />
+                  </label>
                   <div className="grid grid-cols-2 gap-2">
                     <Button type="button" variant="secondary" onClick={chooseWorkspaceRoot}>
                       <FolderOpen className="h-4 w-4" />
@@ -974,6 +776,9 @@ export function ProjectsPage() {
                           <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] text-slate-400">
                             {workspace.status}
                           </span>
+                          <span className="rounded-md border border-white/10 bg-slate-500/10 px-2 py-0.5 text-[10px] font-semibold text-slate-300">
+                            {classificationLabel(workspace.classification)}
+                          </span>
                         </div>
                         <p className="mt-1 truncate text-[11px] text-slate-500">
                           {workspace.rootPath}
@@ -1009,7 +814,12 @@ export function ProjectsPage() {
                       <div className="mb-2 inline-flex rounded-full border border-cyan-300/15 bg-cyan-300/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-200">
                         Workspace Registry
                       </div>
-                      <h2 className="text-xl font-semibold text-white">{selectedWorkspace.name}</h2>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="text-xl font-semibold text-white">{selectedWorkspace.name}</h2>
+                        <span className="rounded-md border border-white/10 bg-slate-500/10 px-2 py-0.5 text-[10px] font-semibold text-slate-300">
+                          {classificationLabel(selectedWorkspace.classification)}
+                        </span>
+                      </div>
                       <p className="mt-1 max-w-3xl break-all text-xs leading-5 text-slate-400">
                         {selectedWorkspace.rootPath}
                       </p>
@@ -1051,6 +861,25 @@ export function ProjectsPage() {
                     <WorkspaceMetric label="Active" value={workspaceActiveProjects.length} tone="success" />
                     <WorkspaceMetric label="Archived" value={workspaceArchivedProjects.length} tone="warning" />
                   </div>
+
+                  <section className="rounded-2xl border border-white/8 bg-slate-950/35 p-4">
+                    <label className="grid max-w-xs gap-2 text-xs font-semibold text-slate-300">
+                      Workspace classification
+                      <FilterSelect
+                        value={selectedWorkspace.classification}
+                        onChange={(value) =>
+                          updateWorkspaceMutation.mutate({
+                            id: selectedWorkspace.id,
+                            classification: value as "work" | "personal" | "unclassified",
+                          })
+                        }
+                        options={classificationOptions}
+                      />
+                    </label>
+                    <p className="mt-2 text-[11px] leading-5 text-slate-500">
+                      New imports inherit this value. Existing project overrides stay unchanged.
+                    </p>
+                  </section>
 
                   <section className="rounded-2xl border border-white/8 bg-slate-950/35">
                     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/8 px-4 py-3">
@@ -1254,6 +1083,18 @@ export function ProjectsPage() {
               />
 
               <FilterSelect
+                value={classificationFilter}
+                onChange={(v) => {
+                  setClassificationFilter(v as typeof classificationFilter);
+                  setCurrentPage(1);
+                }}
+                options={[
+                  { value: "all", label: "All Classes" },
+                  ...classificationOptions,
+                ]}
+              />
+
+              <FilterSelect
                 value={sortBy}
                 onChange={(v) => {
                   setSortBy(v as typeof sortBy);
@@ -1266,13 +1107,14 @@ export function ProjectsPage() {
                 ]}
               />
 
-              {(search || statusFilter !== "active" || sourceFilter !== "all" || categoryFilter !== "all") && (
+              {(search || statusFilter !== "active" || sourceFilter !== "all" || categoryFilter !== "all" || classificationFilter !== "all") && (
                 <button
                   onClick={() => {
                     setSearch("");
                     setStatusFilter("active");
                     setSourceFilter("all");
                     setCategoryFilter("all");
+                    setClassificationFilter("all");
                     setCurrentPage(1);
                   }}
                   className="rounded-lg px-3 py-2 text-xs font-medium text-blue-300 transition-colors hover:bg-white/10"
@@ -1389,6 +1231,16 @@ export function ProjectsPage() {
                     value={workspaceRootPath}
                     onChange={(event) => setWorkspaceRootPath(event.currentTarget.value)}
                   />
+                  <label className="grid gap-2 text-xs font-semibold text-slate-300">
+                    Classification
+                    <FilterSelect
+                      value={workspaceClassification}
+                      onChange={(value) =>
+                        setWorkspaceClassification(value as typeof workspaceClassification)
+                      }
+                      options={classificationOptions}
+                    />
+                  </label>
                   <div className="grid grid-cols-2 gap-2">
                     <Button type="button" variant="secondary" onClick={chooseWorkspaceRoot}>
                       <FolderOpen className="h-4 w-4" />
@@ -1689,6 +1541,16 @@ function FilterSelect({
   );
 }
 
+const classificationOptions = [
+  { value: "unclassified", label: "Unclassified" },
+  { value: "work", label: "Work" },
+  { value: "personal", label: "Personal" },
+];
+
+function classificationLabel(value: "work" | "personal" | "unclassified") {
+  return value === "work" ? "Work" : value === "personal" ? "Personal" : "Unclassified";
+}
+
 function StatusRow({
   label,
   count,
@@ -1873,31 +1735,6 @@ function WorkspaceDiscoveryList({
       })}
     </div>
   );
-}
-
-type ValidationState = {
-  tone: "pending" | "success" | "warning" | "error";
-  message: string;
-};
-
-function ValidationMessage({ state }: { state: ValidationState }) {
-  const classes = {
-    pending: "border-blue-300/20 bg-blue-500/10 text-blue-100",
-    success: "border-emerald-300/20 bg-emerald-500/10 text-emerald-100",
-    warning: "border-orange-300/20 bg-orange-500/10 text-orange-100",
-    error: "border-red-300/20 bg-red-500/10 text-red-100",
-  }[state.tone];
-
-  return (
-    <div className={`rounded-xl border px-3 py-2 text-xs ${classes}`}>
-      {state.message}
-    </div>
-  );
-}
-
-function normalizeOptional(value?: string) {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : null;
 }
 
 async function invalidateProjectViews(queryClient: QueryClient) {

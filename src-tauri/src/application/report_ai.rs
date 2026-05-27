@@ -158,6 +158,7 @@ impl ReportAiService {
             &input.start_date,
             &input.end_date,
             input.project_ids.clone(),
+            input.classification.clone(),
             input.git_refs.clone(),
             input.worktree_paths.clone(),
             input.use_project_git_focus.unwrap_or(true),
@@ -246,6 +247,7 @@ impl ReportAiService {
             &input.start_date,
             &input.end_date,
             input.project_ids,
+            input.classification,
             input.git_refs,
             input.worktree_paths,
             input.use_project_git_focus.unwrap_or(true),
@@ -943,6 +945,7 @@ async fn build_context(
     start_date: &str,
     end_date: &str,
     project_ids: Option<Vec<String>>,
+    classification: Option<String>,
     git_refs: Option<Vec<crate::domain::git_metadata::GitRefFilter>>,
     worktree_paths: Option<Vec<String>>,
     use_project_git_focus: bool,
@@ -962,6 +965,7 @@ async fn build_context(
             to: end_date.to_string(),
             activity_type: None,
             project_ids: project_ids.clone(),
+            classification: normalize_context_classification(&classification),
             git_refs,
             worktree_paths,
         })
@@ -972,6 +976,7 @@ async fn build_context(
             week_start_date: start_date.to_string(),
             week_end_date: end_date.to_string(),
             project_ids: project_ids.clone(),
+            classification: normalize_context_classification(&classification),
             task_type: None,
             status: None,
             included_in_report: None,
@@ -979,7 +984,12 @@ async fn build_context(
         .await
         .map_err(ReportAiError::Database)?;
     let notes = report_note_repository
-        .list_by_date_range(start_date, end_date)
+        .list_for_report(
+            start_date,
+            end_date,
+            &project_ids,
+            &normalize_context_classification(&classification),
+        )
         .await
         .map_err(ReportAiError::Database)?;
     let projects = project_repository
@@ -992,6 +1002,10 @@ async fn build_context(
                 && project_ids
                     .as_ref()
                     .map(|ids| ids.contains(&project.id))
+                    .unwrap_or(true)
+                && normalize_context_classification(&classification)
+                    .as_deref()
+                    .map(|value| project.classification == value)
                     .unwrap_or(true)
         })
         .collect::<Vec<_>>();
@@ -1059,6 +1073,7 @@ async fn build_context(
                 "name": project.name,
                 "description": project.description,
                 "type": project.project_type,
+                "classification": project.classification,
                 "github_url": project.github_url,
             })
         })
@@ -1109,6 +1124,15 @@ async fn resolve_context_git_focus(
     }
 
     Ok((None, None))
+}
+
+fn normalize_context_classification(value: &Option<String>) -> Option<String> {
+    match value.as_deref().map(str::trim) {
+        Some("work") => Some("work".to_string()),
+        Some("personal") => Some("personal".to_string()),
+        Some("unclassified") => Some("unclassified".to_string()),
+        _ => None,
+    }
 }
 
 fn deterministic_readiness(

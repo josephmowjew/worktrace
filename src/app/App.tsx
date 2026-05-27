@@ -12,6 +12,7 @@ import { ReportsPage } from "../pages/ReportsPage";
 import { SettingsPage } from "../pages/SettingsPage";
 import { TodayPage } from "../pages/TodayPage";
 import { WeeklyPlanPage } from "../pages/WeeklyPlanPage";
+import { ReportsWorkspaceProvider } from "../pages/reportsWorkspace";
 import { AppProviders } from "./providers";
 
 export default function App() {
@@ -32,7 +33,14 @@ export default function App() {
                 <Route path="/backup" element={<BackupPage />} />
                 <Route path="/manual-log" element={<ManualLogPage />} />
                 <Route path="/weekly-plan" element={<WeeklyPlanPage />} />
-                <Route path="/reports" element={<ReportsPage />} />
+                <Route
+                  path="/reports"
+                  element={
+                    <ReportsWorkspaceProvider>
+                      <ReportsPage />
+                    </ReportsWorkspaceProvider>
+                  }
+                />
                 <Route path="/guide" element={<GuidePage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />

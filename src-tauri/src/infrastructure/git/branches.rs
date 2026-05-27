@@ -1,7 +1,8 @@
 use std::path::Path;
-use std::process::Command;
 
 use serde::Serialize;
+
+use crate::infrastructure::git::runner;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -91,11 +92,7 @@ fn parse_branch_line(
 }
 
 fn run_git(repo_path: &str, args: &[&str]) -> Result<String, GitBranchListError> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo_path)
-        .args(args)
-        .output()
+    let output = runner::run_git(repo_path, args)
         .map_err(|source| GitBranchListError::CommandFailed(source.to_string()))?;
 
     if !output.status.success() {

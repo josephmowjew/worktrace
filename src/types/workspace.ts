@@ -1,11 +1,13 @@
 import type { Project } from "./project";
 
 export type WorkspaceStatus = "active" | "archived";
+export type WorkspaceClassification = "work" | "personal" | "unclassified";
 
 export type Workspace = {
   id: string;
   name: string;
   rootPath: string;
+  classification: WorkspaceClassification;
   status: WorkspaceStatus;
   lastScannedAt?: string | null;
   createdAt: string;
@@ -15,6 +17,7 @@ export type Workspace = {
 export type CreateWorkspaceInput = {
   name: string;
   rootPath: string;
+  classification?: WorkspaceClassification | null;
 };
 
 export type UpdateWorkspaceInput = Partial<CreateWorkspaceInput> & {

@@ -2,6 +2,7 @@ import { createPortal } from "react-dom";
 import { useController } from "react-hook-form";
 import { useEffect, useRef, useState } from "react";
 import type { FieldValues, UseControllerProps } from "react-hook-form";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 import type { SelectOption, SelectSize } from "./Select";
 
 interface SelectFieldProps<TFieldValues extends FieldValues = FieldValues>
@@ -69,6 +70,8 @@ export function SelectField<TFieldValues extends FieldValues = FieldValues>({
   const selectedOption = options.find((opt) => opt.value === field.value);
   const Icon = selectedOption?.icon;
   const classes = sizeClasses[size];
+
+  useEscapeKey(() => setIsOpen(false), isOpen);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {

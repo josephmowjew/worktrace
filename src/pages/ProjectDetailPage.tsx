@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { QueryClient } from "@tanstack/react-query";
 import { useParams, useNavigate } from "react-router-dom";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { ProjectDetailHeader } from "../components/ui/ProjectDetailHeader";
+import { ProjectFormPanel } from "../components/ui/ProjectFormPanel";
 import { ProjectDetailTabs, type ProjectDetailTab } from "../components/ui/ProjectDetailTabs";
 import { CommitList } from "../components/ui/CommitList";
 import { TaskList } from "../components/ui/TaskList";
@@ -14,6 +16,7 @@ import { Button } from "../components/ui/Button";
 import { useSpeech } from "../components/ui/SpeechProvider";
 import { useToast } from "../components/ui/ToastProvider";
 import { WeekRangePicker } from "../components/ui/WeekRangePicker";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 import {
   getProjectById,
   getProjectStats,
@@ -23,6 +26,7 @@ import {
   listGitWorktrees,
   getProjectGitFocus,
   saveProjectGitFocus,
+  updateProject,
 } from "../lib/api/projects";
 import { syncCommits } from "../lib/api/gitSync";
 import { listActivity, getWeekSummary } from "../lib/api/activity";
@@ -30,7 +34,7 @@ import { listWeeklyTasks } from "../lib/api/weeklyTasks";
 import { listManualLogs } from "../lib/api/manualLogs";
 import { syncAnnouncement, syncStartedAnnouncement } from "../lib/announcements";
 import { currentWeekRange, shiftWeek } from "../lib/dates";
-import type { GitRef, GitRefFilter, GitWorktree, ProjectGitFocus } from "../types/project";
+import type { CreateProjectInput, GitRef, GitRefFilter, GitWorktree, ProjectGitFocus } from "../types/project";
 
 export function ProjectDetailPage() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -42,8 +46,23 @@ export function ProjectDetailPage() {
   const [weekAnchor, setWeekAnchor] = useState(() => new Date());
   const [selectedCommitIds, setSelectedCommitIds] = useState<Set<string>>(() => new Set());
   const [isPrBuilderOpen, setIsPrBuilderOpen] = useState(false);
+  const [isEditFormOpen, setIsEditFormOpen] = useState(false);
+  const editFormRef = useRef<HTMLDivElement>(null);
 
   const weekRange = useMemo(() => currentWeekRange(weekAnchor), [weekAnchor]);
+
+  useEffect(() => {
+    if (isEditFormOpen && editFormRef.current) {
+      setTimeout(() => {
+        editFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 100);
+    }
+  }, [isEditFormOpen]);
+
+  useEscapeKey(() => {
+    saveProjectMutation.reset();
+    setIsEditFormOpen(false);
+  }, isEditFormOpen);
 
   const projectQuery = useQuery({
     queryKey: ["project", projectId],
@@ -140,6 +159,18 @@ export function ProjectDetailPage() {
     },
     onError: (error) => {
       toast.error("Archive failed", error instanceof Error ? error.message : "Could not archive project.");
+    },
+  });
+
+  const saveProjectMutation = useMutation({
+    mutationFn: (input: CreateProjectInput) => updateProject(projectId!, input),
+    onSuccess: async (updatedProject) => {
+      await invalidateProjectViews(queryClient, projectId);
+      toast.success("Project updated", `${updatedProject.name} is saved.`);
+      setIsEditFormOpen(false);
+    },
+    onError: (error) => {
+      toast.error("Update failed", error instanceof Error ? error.message : "Could not update project.");
     },
   });
 
@@ -261,9 +292,33 @@ export function ProjectDetailPage() {
         stats={projectStats}
         isSyncing={syncMutation.isPending}
         onSync={() => syncMutation.mutate()}
-        onEdit={() => navigate("/projects")}
+        onEdit={() => {
+          saveProjectMutation.reset();
+          setIsEditFormOpen(true);
+        }}
         onArchive={() => archiveMutation.mutate()}
       />
+
+      <div
+        ref={editFormRef}
+        className={`transition-all duration-300 ease-out overflow-hidden ${
+          isEditFormOpen
+            ? "max-h-[1200px] opacity-100 translate-y-0"
+            : "max-h-0 opacity-0 -translate-y-4 pointer-events-none"
+        }`}
+      >
+        <ProjectFormPanel
+          mode="edit"
+          project={project}
+          isSaving={saveProjectMutation.isPending}
+          error={saveProjectMutation.error}
+          onSubmit={(input) => saveProjectMutation.mutate(input)}
+          onCancel={() => {
+            saveProjectMutation.reset();
+            setIsEditFormOpen(false);
+          }}
+        />
+      </div>
 
       <div className="flex items-center justify-between gap-3">
         <WeekRangePicker
@@ -545,4 +600,18 @@ function formatContextDate(value: string) {
   }
 
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+async function invalidateProjectViews(queryClient: QueryClient, projectId?: string) {
+  await queryClient.invalidateQueries({ queryKey: ["projects"] });
+  await queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+  await queryClient.invalidateQueries({ queryKey: ["projectStats"] });
+  await queryClient.invalidateQueries({ queryKey: ["categoryDistribution"] });
+  await queryClient.invalidateQueries({ queryKey: ["recentCommits"] });
+  await queryClient.invalidateQueries({ queryKey: ["topContributors"] });
+  await queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
+  await queryClient.invalidateQueries({ queryKey: ["dashboard-activity-hours"] });
+  await queryClient.invalidateQueries({ queryKey: ["dashboard-breakdown"] });
+  await queryClient.invalidateQueries({ queryKey: ["activity"] });
+  await queryClient.invalidateQueries({ queryKey: ["reports"] });
 }

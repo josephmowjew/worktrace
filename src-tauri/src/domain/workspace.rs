@@ -6,6 +6,7 @@ pub struct Workspace {
     pub id: String,
     pub name: String,
     pub root_path: String,
+    pub classification: String,
     pub status: String,
     pub last_scanned_at: Option<String>,
     pub created_at: String,
@@ -17,6 +18,7 @@ pub struct Workspace {
 pub struct CreateWorkspaceInput {
     pub name: String,
     pub root_path: String,
+    pub classification: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -24,6 +26,7 @@ pub struct CreateWorkspaceInput {
 pub struct UpdateWorkspaceInput {
     pub name: Option<String>,
     pub root_path: Option<String>,
+    pub classification: Option<String>,
     pub status: Option<String>,
 }
 

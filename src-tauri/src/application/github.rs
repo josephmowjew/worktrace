@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::process::Command;
 
 use chrono::Utc;
 use keyring::Entry;
@@ -14,6 +13,7 @@ use crate::domain::github::{
 };
 use crate::domain::settings::UpdateSettingsInput;
 use crate::infrastructure::database::repositories::{ProjectRepository, SettingsRepository};
+use crate::infrastructure::git::runner;
 
 const KEYRING_SERVICE: &str = "WorkTrace";
 const KEYRING_USER: &str = "github_pat";
@@ -383,11 +383,7 @@ fn delete_github_token() -> Result<(), GitHubServiceError> {
 }
 
 fn run_git(repo_path: &str, args: &[&str]) -> Result<String, GitHubServiceError> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo_path)
-        .args(args)
-        .output()
+    let output = runner::run_git(repo_path, args)
         .map_err(|source| GitHubServiceError::Git(source.to_string()))?;
 
     if !output.status.success() {

@@ -35,6 +35,7 @@ function getInitials(title: string): string {
 export function TaskCard({
   task,
   onToggleComplete,
+  onView,
   onEdit,
   onDelete,
   onDragStart,
@@ -42,6 +43,7 @@ export function TaskCard({
 }: {
   task: WeeklyTask;
   onToggleComplete: () => void;
+  onView: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onDragStart: (taskId: string) => void;
@@ -57,6 +59,7 @@ export function TaskCard({
   const dragStartPos = useRef({ x: 0, y: 0 });
   const originalRect = useRef<DOMRect | null>(null);
   const hasMoved = useRef(false);
+  const suppressClick = useRef(false);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
@@ -124,12 +127,16 @@ export function TaskCard({
         placeholderRef.current = null;
       }
       if (hasMoved.current) {
+        suppressClick.current = true;
         const el = document.elementFromPoint(e.clientX, e.clientY);
         const column = el?.closest("[data-column-id]");
         if (column) {
           (column as HTMLElement).click();
         }
         onDragEnd();
+        window.setTimeout(() => {
+          suppressClick.current = false;
+        }, 0);
       }
       hasMoved.current = false;
       originalRect.current = null;
@@ -151,10 +158,16 @@ export function TaskCard({
   return (
     <div
       ref={cardRef}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (!isDragging && !hasMoved.current && !suppressClick.current) {
+          onView();
+        }
+      }}
       className={`group rounded-xl border border-white/8 bg-slate-950/45 p-3 transition-colors hover:bg-white/5 ${
-        isDragging ? "cursor-grabbing" : "cursor-grab"
+        isDragging ? "cursor-grabbing" : "cursor-pointer"
       }`}
-      style={{ transition: isDragging ? "none" : "all 0.15s" }}
+      style={{ transition: isDragging ? "none" : "background-color 0.15s, border-color 0.15s, transform 0.15s" }}
     >
       <div className="flex items-start gap-2.5">
         <div

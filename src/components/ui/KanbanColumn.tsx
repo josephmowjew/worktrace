@@ -9,6 +9,7 @@ export function KanbanColumn({
   count,
   onAdd,
   onToggleComplete,
+  onView,
   onEdit,
   onDelete,
   columnId,
@@ -23,6 +24,7 @@ export function KanbanColumn({
   count: number;
   onAdd: () => void;
   onToggleComplete: (task: WeeklyTask) => void;
+  onView: (task: WeeklyTask) => void;
   onEdit: (task: WeeklyTask) => void;
   onDelete: (task: WeeklyTask) => void;
   columnId: string;
@@ -59,6 +61,7 @@ export function KanbanColumn({
             key={task.id}
             task={task}
             onToggleComplete={() => onToggleComplete(task)}
+            onView={() => onView(task)}
             onEdit={() => onEdit(task)}
             onDelete={() => onDelete(task)}
             onDragStart={onDragStart}

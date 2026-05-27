@@ -9,6 +9,7 @@ pub struct ListActivityInput {
     pub to: String,
     pub activity_type: Option<String>,
     pub project_ids: Option<Vec<String>>,
+    pub classification: Option<String>,
     pub git_refs: Option<Vec<GitRefFilter>>,
     pub worktree_paths: Option<Vec<String>>,
 }

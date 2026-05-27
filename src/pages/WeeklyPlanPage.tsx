@@ -18,6 +18,7 @@ import { RecentlyCompletedList } from "../components/ui/RecentlyCompletedList";
 import { AddItemBar } from "../components/ui/AddItemBar";
 import { AddTaskModal } from "../components/ui/AddTaskModal";
 import { Select } from "../components/ui/Select";
+import { TaskDetailModal } from "../components/ui/TaskDetailModal";
 import { useSpeech } from "../components/ui/SpeechProvider";
 import { useToast } from "../components/ui/ToastProvider";
 import { getWeekCapacity } from "../lib/api/calendar";
@@ -64,6 +65,7 @@ export function WeeklyPlanPage() {
   const [projectFilter, setProjectFilter] = useState("all");
   const [modalOpen, setModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<WeeklyTask | null>(null);
+  const [viewingTask, setViewingTask] = useState<WeeklyTask | null>(null);
   const [prefillData, setPrefillData] = useState<{
     title: string;
     priority: WeeklyTaskPriority;
@@ -350,8 +352,13 @@ export function WeeklyPlanPage() {
   }
 
   const handleEditTask = useCallback((task: WeeklyTask) => {
+    setViewingTask(null);
     setEditingTask(task);
     setModalOpen(true);
+  }, []);
+
+  const handleViewTask = useCallback((task: WeeklyTask) => {
+    setViewingTask(task);
   }, []);
 
   const handleToggleComplete = useCallback((task: WeeklyTask) => {
@@ -480,6 +487,7 @@ export function WeeklyPlanPage() {
             columnId="planned"
             onAdd={() => handleAddItem("", "normal")}
             onToggleComplete={handleToggleComplete}
+            onView={handleViewTask}
             onEdit={handleEditTask}
             onDelete={handleDeleteTask}
             onDragOverColumn={handleDragOverColumn}
@@ -495,6 +503,7 @@ export function WeeklyPlanPage() {
             columnId="in-progress"
             onAdd={() => handleAddItem("", "normal")}
             onToggleComplete={handleToggleComplete}
+            onView={handleViewTask}
             onEdit={handleEditTask}
             onDelete={handleDeleteTask}
             onDragOverColumn={handleDragOverColumn}
@@ -510,6 +519,7 @@ export function WeeklyPlanPage() {
             columnId="done"
             onAdd={() => handleAddItem("", "normal")}
             onToggleComplete={handleToggleComplete}
+            onView={handleViewTask}
             onEdit={handleEditTask}
             onDelete={handleDeleteTask}
             onDragOverColumn={handleDragOverColumn}
@@ -525,6 +535,7 @@ export function WeeklyPlanPage() {
             columnId="carry-forward"
             onAdd={() => handleAddItem("", "normal")}
             onToggleComplete={handleToggleComplete}
+            onView={handleViewTask}
             onEdit={handleEditTask}
             onDelete={handleDeleteTask}
             onDragOverColumn={handleDragOverColumn}
@@ -629,6 +640,12 @@ export function WeeklyPlanPage() {
         editingTask={editingTask}
         isPending={saveMutation.isPending}
         error={saveMutation.error instanceof Error ? saveMutation.error.message : undefined}
+      />
+      <TaskDetailModal
+        isOpen={Boolean(viewingTask)}
+        task={viewingTask}
+        onClose={() => setViewingTask(null)}
+        onEdit={handleEditTask}
       />
     </div>
   );

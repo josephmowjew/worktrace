@@ -1,1 +1,1 @@
-export const weeklyTaskQueryRoots = [["weeklyTasks"], ["weekly-tasks"]] as const;
+export const weeklyTaskQueryRoots = [["weeklyTasks"]] as const;

@@ -1,6 +1,7 @@
 import { Check, ChevronDown } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 
 export type SelectOption<T = string> = {
   value: T;
@@ -74,6 +75,8 @@ export function Select<T extends string = string>({
   const selectedOption = options.find((opt) => opt.value === value);
   const Icon = selectedOption?.icon;
   const classes = sizeClasses[size];
+
+  useEscapeKey(() => setIsOpen(false), isOpen);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {

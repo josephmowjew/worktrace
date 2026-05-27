@@ -1,6 +1,7 @@
 import { Activity, BarChart3, BookOpen, ClipboardEdit, FileText, Focus, FolderKanban, Home, ListChecks, ListTodo, Mic, RefreshCw, Search, Settings, Square, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 import type { Project } from "../../types/project";
 
 type PaletteGroup = "Navigation" | "Capture" | "Focus" | "Review" | "Reporting" | "Sync" | "Projects" | "Settings";
@@ -90,16 +91,7 @@ export function CommandPalette({
     window.setTimeout(() => inputRef.current?.focus(), 0);
   }, [isOpen]);
 
-  useEffect(() => {
-    if (!isOpen) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [isOpen, onClose]);
+  useEscapeKey(onClose, isOpen);
 
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase();

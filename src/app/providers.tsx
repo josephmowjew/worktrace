@@ -3,13 +3,18 @@ import { BrowserRouter } from "react-router-dom";
 import type { PropsWithChildren } from "react";
 import { SpeechProvider } from "../components/ui/SpeechProvider";
 import { ToastProvider } from "../components/ui/ToastProvider";
-import { ReportsWorkspaceProvider } from "../pages/reportsWorkspace";
+import { WorkTraceCommandError } from "../lib/api/client";
+
+export function shouldRetryQueryError(failureCount: number, error: unknown) {
+  return !(error instanceof WorkTraceCommandError && error.code === "TAURI_RUNTIME_UNAVAILABLE") &&
+    failureCount < 1;
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
-      retry: 1,
+      retry: shouldRetryQueryError,
       staleTime: 30_000,
     },
   },
@@ -21,7 +26,7 @@ export function AppProviders({ children }: PropsWithChildren) {
       <BrowserRouter>
         <SpeechProvider>
           <ToastProvider>
-            <ReportsWorkspaceProvider>{children}</ReportsWorkspaceProvider>
+            {children}
           </ToastProvider>
         </SpeechProvider>
       </BrowserRouter>

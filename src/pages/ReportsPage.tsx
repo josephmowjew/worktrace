@@ -51,6 +51,8 @@ export function ReportsPage() {
     setRecipientName,
     selectedProjectId,
     setSelectedProjectId,
+    selectedClassification,
+    setSelectedClassification,
     selectedGitRefs,
     setSelectedGitRefs,
     selectedWorktreePaths,
@@ -134,6 +136,12 @@ export function ReportsPage() {
       ? "All projects"
       : activeProjects.find((project) => project.id === selectedProjectId)?.name ??
         "Selected project";
+  const selectedClassificationValue =
+    selectedClassification === "all" ? null : selectedClassification;
+  const selectedSourceLabel =
+    selectedClassification === "all"
+      ? selectedProjectLabel
+      : `${selectedProjectLabel} / ${classificationLabel(selectedClassification)}`;
   const contentStats = getContentStats(content);
 
   useEffect(() => {
@@ -167,6 +175,7 @@ export function ReportsPage() {
         recipientName:
           recipientName.trim() || settingsQuery.data?.defaultManagerName || null,
         projectIds: selectedProjectId === "all" ? null : [selectedProjectId],
+        classification: selectedClassificationValue,
         gitRefs: reportGitRefs,
         worktreePaths: reportWorktreePaths,
         useProjectGitFocus,
@@ -197,6 +206,7 @@ export function ReportsPage() {
         recipientName:
           recipientName.trim() || settingsQuery.data?.defaultManagerName || null,
         projectIds: selectedProjectId === "all" ? null : [selectedProjectId],
+        classification: selectedClassificationValue,
         gitRefs: reportGitRefs,
         worktreePaths: reportWorktreePaths,
         useProjectGitFocus,
@@ -254,6 +264,7 @@ export function ReportsPage() {
         startDate,
         endDate,
         projectIds: selectedProjectId === "all" ? null : [selectedProjectId],
+        classification: selectedClassificationValue,
         gitRefs: reportGitRefs,
         worktreePaths: reportWorktreePaths,
         useProjectGitFocus,
@@ -416,6 +427,21 @@ export function ReportsPage() {
                 size="md"
               />
             </Field>
+            <Field label="Classification">
+              <Select
+                value={selectedClassification}
+                onChange={(value) =>
+                  setSelectedClassification(value as typeof selectedClassification)
+                }
+                options={[
+                  { value: "all", label: "All classifications", icon: FolderKanban },
+                  { value: "work", label: "Work", icon: FolderKanban },
+                  { value: "personal", label: "Personal", icon: FolderKanban },
+                  { value: "unclassified", label: "Unclassified", icon: FolderKanban },
+                ]}
+                size="md"
+              />
+            </Field>
 
             <ReportGitFocusPanel
               selectedProjectId={selectedProjectId}
@@ -558,7 +584,7 @@ export function ReportsPage() {
         <div className="grid gap-3 border-b border-white/8 px-5 py-3 sm:grid-cols-3">
           <PreviewStat label="Range" value={`${compactDate(startDate)} - ${compactDate(endDate)}`} />
           <PreviewStat label="Audience" value={recipientName.trim() || settingsQuery.data?.defaultManagerName || "Manager"} />
-          <PreviewStat label="Sources" value={selectedProjectLabel} />
+          <PreviewStat label="Sources" value={selectedSourceLabel} />
         </div>
 
         <div className="p-5">
@@ -1070,6 +1096,10 @@ function providerStatus(
   provider: ReportAiProvider,
 ) {
   return status?.providers.find((item) => item.provider === provider)?.message ?? "Status unavailable.";
+}
+
+function classificationLabel(value: "work" | "personal" | "unclassified") {
+  return value === "work" ? "Work" : value === "personal" ? "Personal" : "Unclassified";
 }
 
 function isReportAiProvider(value: string): value is ReportAiProvider {

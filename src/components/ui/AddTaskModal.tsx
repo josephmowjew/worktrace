@@ -3,6 +3,7 @@ import { Save, X, ListTodo, AlertCircle, CheckCircle2, Clock, FolderKanban, Flag
 import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 import type { Project } from "../../types/project";
 import type {
   WeeklyTask,
@@ -130,18 +131,7 @@ export function AddTaskModal({
     }
   }, [isOpen, weekStartDate, form]);
 
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
+  useEscapeKey(onClose, isOpen);
 
   if (!isOpen) return null;
 

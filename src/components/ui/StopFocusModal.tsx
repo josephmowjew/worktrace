@@ -1,5 +1,6 @@
 import { Save, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 import type { FocusSession, StopFocusSessionInput } from "../../types/focusSession";
 import { Button } from "./Button";
 import { Panel } from "./Panel";
@@ -34,18 +35,7 @@ export function StopFocusModal({
     setProgressPercent(75);
   }, [isOpen, session]);
 
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
+  useEscapeKey(onClose, isOpen);
 
   if (!isOpen || !session) return null;
 

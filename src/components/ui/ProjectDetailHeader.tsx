@@ -73,6 +73,9 @@ export function ProjectDetailHeader({
                 <h1 className="text-2xl font-semibold tracking-tight text-white">{project.name}</h1>
                 <Badge tone={project.status === "active" ? "green" : "orange"}>{project.status}</Badge>
                 <Badge tone="blue">{project.projectType || "Company"}</Badge>
+                <Badge tone={project.classification === "work" ? "blue" : project.classification === "personal" ? "green" : "slate"}>
+                  {classificationLabel(project.classification)}
+                </Badge>
               </div>
 
               {project.description && (
@@ -135,6 +138,10 @@ export function ProjectDetailHeader({
       </div>
     </Panel>
   );
+}
+
+function classificationLabel(value: Project["classification"]) {
+  return value === "work" ? "Work" : value === "personal" ? "Personal" : "Unclassified";
 }
 
 function formatTimeAgo(dateString: string): string {

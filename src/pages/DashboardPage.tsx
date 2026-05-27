@@ -196,7 +196,7 @@ export function DashboardPage() {
   });
 
   const tasksQuery = useQuery({
-    queryKey: ["weekly-tasks", weekRange.from, weekRange.to],
+    queryKey: ["weeklyTasks", weekRange.from, weekRange.to],
     queryFn: () =>
       listWeeklyTasks({
         weekStartDate: weekRange.from,
@@ -224,7 +224,6 @@ export function DashboardPage() {
       queryClient.invalidateQueries({ queryKey: ["dashboard-activity-hours"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-breakdown"] });
       queryClient.invalidateQueries({ queryKey: ["activity"] });
-      queryClient.invalidateQueries({ queryKey: ["weekly-tasks"] });
       queryClient.invalidateQueries({ queryKey: ["weeklyTasks"] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       toast.success(

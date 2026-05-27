@@ -1,4 +1,5 @@
 export type ProjectStatus = "active" | "archived";
+export type ProjectClassification = "work" | "personal" | "unclassified";
 
 export type Project = {
   id: string;
@@ -9,6 +10,7 @@ export type Project = {
   projectType?: string | null;
   workspaceId?: string | null;
   workspaceRelativePath?: string | null;
+  classification: ProjectClassification;
   status: ProjectStatus;
   createdAt: string;
   updatedAt: string;
@@ -20,6 +22,7 @@ export type CreateProjectInput = {
   repoPath?: string | null;
   githubUrl?: string | null;
   projectType?: string | null;
+  classification?: ProjectClassification | null;
 };
 
 export type UpdateProjectInput = Partial<CreateProjectInput> & {

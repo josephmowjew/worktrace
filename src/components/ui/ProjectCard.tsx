@@ -138,6 +138,9 @@ export function ProjectCard({
                 <Badge tone={project.status === "active" ? "green" : "orange"}>
                   {project.status}
                 </Badge>
+                <Badge tone={project.classification === "work" ? "blue" : project.classification === "personal" ? "green" : "slate"}>
+                  {classificationLabel(project.classification)}
+                </Badge>
               </div>
 
               {project.description && (
@@ -217,4 +220,8 @@ export function ProjectCard({
       </div>
     </Panel>
   );
+}
+
+function classificationLabel(value: Project["classification"]) {
+  return value === "work" ? "Work" : value === "personal" ? "Personal" : "Unclassified";
 }

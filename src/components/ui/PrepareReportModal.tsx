@@ -1,5 +1,5 @@
 import { AlertTriangle, CheckCircle2, FileText, ListChecks, RefreshCw, X } from "lucide-react";
-import { useEffect } from "react";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 import type { ActivityItem } from "../../types/activity";
 import type { WeeklyTask } from "../../types/weeklyTask";
 import { Button } from "./Button";
@@ -30,18 +30,7 @@ export function PrepareReportModal({
   onIncludeTask: (task: WeeklyTask) => void;
   onOpenReports: () => void;
 }) {
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
+  useEscapeKey(onClose, isOpen);
 
   if (!isOpen) return null;
 

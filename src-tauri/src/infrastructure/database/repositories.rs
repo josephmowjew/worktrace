@@ -66,7 +66,7 @@ impl<'a> ProjectRepository<'a> {
     pub async fn list(&self) -> Result<Vec<Project>, sqlx::Error> {
         let rows = sqlx::query(
             r#"
-            SELECT id, name, description, repo_path, github_url, type, workspace_id, workspace_relative_path, status, created_at, updated_at
+            SELECT id, name, description, repo_path, github_url, type, workspace_id, workspace_relative_path, classification, status, created_at, updated_at
             FROM projects
             ORDER BY status ASC, updated_at DESC, name ASC
             "#,
@@ -80,7 +80,7 @@ impl<'a> ProjectRepository<'a> {
     pub async fn list_active(&self) -> Result<Vec<Project>, sqlx::Error> {
         let rows = sqlx::query(
             r#"
-            SELECT id, name, description, repo_path, github_url, type, workspace_id, workspace_relative_path, status, created_at, updated_at
+            SELECT id, name, description, repo_path, github_url, type, workspace_id, workspace_relative_path, classification, status, created_at, updated_at
             FROM projects
             WHERE status = 'active'
             ORDER BY updated_at DESC, name ASC
@@ -103,6 +103,7 @@ impl<'a> ProjectRepository<'a> {
             project_type: normalize_optional(input.project_type),
             workspace_id: None,
             workspace_relative_path: None,
+            classification: normalize_classification(input.classification),
             status: "active".to_string(),
             created_at: now.clone(),
             updated_at: now,
@@ -110,8 +111,8 @@ impl<'a> ProjectRepository<'a> {
 
         sqlx::query(
             r#"
-            INSERT INTO projects (id, name, description, repo_path, github_url, type, workspace_id, workspace_relative_path, status, created_at, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            INSERT INTO projects (id, name, description, repo_path, github_url, type, workspace_id, workspace_relative_path, classification, status, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
             "#,
         )
         .bind(&project.id)
@@ -122,6 +123,7 @@ impl<'a> ProjectRepository<'a> {
         .bind(&project.project_type)
         .bind(&project.workspace_id)
         .bind(&project.workspace_relative_path)
+        .bind(&project.classification)
         .bind(&project.status)
         .bind(&project.created_at)
         .bind(&project.updated_at)
@@ -168,6 +170,10 @@ impl<'a> ProjectRepository<'a> {
             project.workspace_relative_path = normalize_optional(input.workspace_relative_path);
         }
 
+        if input.classification.is_some() {
+            project.classification = normalize_classification(input.classification);
+        }
+
         if let Some(status) = input.status {
             project.status = status;
         }
@@ -184,8 +190,9 @@ impl<'a> ProjectRepository<'a> {
                 type = ?6,
                 workspace_id = ?7,
                 workspace_relative_path = ?8,
-                status = ?9,
-                updated_at = ?10
+                classification = ?9,
+                status = ?10,
+                updated_at = ?11
             WHERE id = ?1
             "#,
         )
@@ -197,6 +204,7 @@ impl<'a> ProjectRepository<'a> {
         .bind(&project.project_type)
         .bind(&project.workspace_id)
         .bind(&project.workspace_relative_path)
+        .bind(&project.classification)
         .bind(&project.status)
         .bind(&project.updated_at)
         .execute(self.pool)
@@ -216,6 +224,7 @@ impl<'a> ProjectRepository<'a> {
                 project_type: None,
                 workspace_id: None,
                 workspace_relative_path: None,
+                classification: None,
                 status: Some("archived".to_string()),
             },
         )
@@ -225,7 +234,7 @@ impl<'a> ProjectRepository<'a> {
     pub async fn find(&self, id: &str) -> Result<Option<Project>, sqlx::Error> {
         let row = sqlx::query(
             r#"
-            SELECT id, name, description, repo_path, github_url, type, workspace_id, workspace_relative_path, status, created_at, updated_at
+            SELECT id, name, description, repo_path, github_url, type, workspace_id, workspace_relative_path, classification, status, created_at, updated_at
             FROM projects
             WHERE id = ?1
             "#,
@@ -277,7 +286,7 @@ impl<'a> WorkspaceRepository<'a> {
     pub async fn list(&self) -> Result<Vec<Workspace>, sqlx::Error> {
         let rows = sqlx::query(
             r#"
-            SELECT id, name, root_path, status, last_scanned_at, created_at, updated_at
+            SELECT id, name, root_path, classification, status, last_scanned_at, created_at, updated_at
             FROM workspaces
             ORDER BY status ASC, updated_at DESC, name ASC
             "#,
@@ -294,6 +303,7 @@ impl<'a> WorkspaceRepository<'a> {
             id: generate_id("workspace"),
             name: input.name.trim().to_string(),
             root_path: input.root_path.trim().to_string(),
+            classification: normalize_classification(input.classification),
             status: "active".to_string(),
             last_scanned_at: None,
             created_at: now.clone(),
@@ -302,13 +312,14 @@ impl<'a> WorkspaceRepository<'a> {
 
         sqlx::query(
             r#"
-            INSERT INTO workspaces (id, name, root_path, status, last_scanned_at, created_at, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            INSERT INTO workspaces (id, name, root_path, classification, status, last_scanned_at, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
             "#,
         )
         .bind(&workspace.id)
         .bind(&workspace.name)
         .bind(&workspace.root_path)
+        .bind(&workspace.classification)
         .bind(&workspace.status)
         .bind(&workspace.last_scanned_at)
         .bind(&workspace.created_at)
@@ -334,6 +345,9 @@ impl<'a> WorkspaceRepository<'a> {
         if let Some(root_path) = input.root_path {
             workspace.root_path = root_path.trim().to_string();
         }
+        if input.classification.is_some() {
+            workspace.classification = normalize_classification(input.classification);
+        }
         if let Some(status) = input.status {
             workspace.status = status;
         }
@@ -344,15 +358,17 @@ impl<'a> WorkspaceRepository<'a> {
             UPDATE workspaces
             SET name = ?2,
                 root_path = ?3,
-                status = ?4,
-                last_scanned_at = ?5,
-                updated_at = ?6
+                classification = ?4,
+                status = ?5,
+                last_scanned_at = ?6,
+                updated_at = ?7
             WHERE id = ?1
             "#,
         )
         .bind(&workspace.id)
         .bind(&workspace.name)
         .bind(&workspace.root_path)
+        .bind(&workspace.classification)
         .bind(&workspace.status)
         .bind(&workspace.last_scanned_at)
         .bind(&workspace.updated_at)
@@ -368,6 +384,7 @@ impl<'a> WorkspaceRepository<'a> {
             UpdateWorkspaceInput {
                 name: None,
                 root_path: None,
+                classification: None,
                 status: Some("archived".to_string()),
             },
         )
@@ -377,7 +394,7 @@ impl<'a> WorkspaceRepository<'a> {
     pub async fn find(&self, id: &str) -> Result<Option<Workspace>, sqlx::Error> {
         let row = sqlx::query(
             r#"
-            SELECT id, name, root_path, status, last_scanned_at, created_at, updated_at
+            SELECT id, name, root_path, classification, status, last_scanned_at, created_at, updated_at
             FROM workspaces
             WHERE id = ?1
             "#,
@@ -448,7 +465,12 @@ impl<'a> WorkspaceRepository<'a> {
 
             if let Some(project) = self.find_project_by_repo_path(&repo_path).await? {
                 let attached = self
-                    .attach_project_to_workspace(&project.id, &workspace.id, &relative)
+                    .attach_project_to_workspace(
+                        &project.id,
+                        &workspace.id,
+                        &relative,
+                        &workspace.classification,
+                    )
                     .await?;
                 imported.push(attached.unwrap_or(project));
                 continue;
@@ -467,6 +489,7 @@ impl<'a> WorkspaceRepository<'a> {
                 project_type: normalize_optional(repo.project_type),
                 workspace_id: Some(workspace.id.clone()),
                 workspace_relative_path: Some(relative),
+                classification: workspace.classification.clone(),
                 status: "active".to_string(),
                 created_at: now.clone(),
                 updated_at: now,
@@ -474,8 +497,8 @@ impl<'a> WorkspaceRepository<'a> {
 
             sqlx::query(
                 r#"
-                INSERT INTO projects (id, name, description, repo_path, github_url, type, workspace_id, workspace_relative_path, status, created_at, updated_at)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                INSERT INTO projects (id, name, description, repo_path, github_url, type, workspace_id, workspace_relative_path, classification, status, created_at, updated_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                 "#,
             )
             .bind(&project.id)
@@ -486,6 +509,7 @@ impl<'a> WorkspaceRepository<'a> {
             .bind(&project.project_type)
             .bind(&project.workspace_id)
             .bind(&project.workspace_relative_path)
+            .bind(&project.classification)
             .bind(&project.status)
             .bind(&project.created_at)
             .bind(&project.updated_at)
@@ -579,7 +603,7 @@ impl<'a> WorkspaceRepository<'a> {
     ) -> Result<Option<Project>, sqlx::Error> {
         let rows = sqlx::query(
             r#"
-            SELECT id, name, description, repo_path, github_url, type, workspace_id, workspace_relative_path, status, created_at, updated_at
+            SELECT id, name, description, repo_path, github_url, type, workspace_id, workspace_relative_path, classification, status, created_at, updated_at
             FROM projects
             "#,
         )
@@ -598,7 +622,7 @@ impl<'a> WorkspaceRepository<'a> {
     async fn find_project_by_id(&self, project_id: &str) -> Result<Option<Project>, sqlx::Error> {
         let row = sqlx::query(
             r#"
-            SELECT id, name, description, repo_path, github_url, type, workspace_id, workspace_relative_path, status, created_at, updated_at
+            SELECT id, name, description, repo_path, github_url, type, workspace_id, workspace_relative_path, classification, status, created_at, updated_at
             FROM projects
             WHERE id = ?1
             "#,
@@ -615,6 +639,7 @@ impl<'a> WorkspaceRepository<'a> {
         project_id: &str,
         workspace_id: &str,
         workspace_relative_path: &str,
+        workspace_classification: &str,
     ) -> Result<Option<Project>, sqlx::Error> {
         let now = current_timestamp();
         sqlx::query(
@@ -623,20 +648,25 @@ impl<'a> WorkspaceRepository<'a> {
             SET workspace_id = ?2,
                 workspace_relative_path = ?3,
                 status = 'active',
-                updated_at = ?4
+                classification = CASE
+                  WHEN classification = 'unclassified' THEN ?4
+                  ELSE classification
+                END,
+                updated_at = ?5
             WHERE id = ?1
             "#,
         )
         .bind(project_id)
         .bind(workspace_id)
         .bind(workspace_relative_path)
+        .bind(workspace_classification)
         .bind(now)
         .execute(self.pool)
         .await?;
 
         let row = sqlx::query(
             r#"
-            SELECT id, name, description, repo_path, github_url, type, workspace_id, workspace_relative_path, status, created_at, updated_at
+            SELECT id, name, description, repo_path, github_url, type, workspace_id, workspace_relative_path, classification, status, created_at, updated_at
             FROM projects
             WHERE id = ?1
             "#,
@@ -1231,6 +1261,7 @@ impl<'a> ActivityRepository<'a> {
                 SELECT commits.id,
                        commits.project_id,
                        projects.name AS project_name,
+                       projects.classification AS project_classification,
                        commits.message,
                        commits.committed_at,
                        commits.included_in_report,
@@ -1257,6 +1288,10 @@ impl<'a> ActivityRepository<'a> {
             for row in rows {
                 let project_id: String = row.get("project_id");
                 if !project_filter_matches(&input.project_ids, &project_id) {
+                    continue;
+                }
+                let project_classification: String = row.get("project_classification");
+                if !classification_filter_matches(&input.classification, Some(&project_classification)) {
                     continue;
                 }
                 let commit_hash: String = row.get("commit_hash");
@@ -1302,6 +1337,7 @@ impl<'a> ActivityRepository<'a> {
                 SELECT manual_logs.id,
                        manual_logs.project_id,
                        projects.name AS project_name,
+                       projects.classification AS project_classification,
                        manual_logs.activity_type,
                        manual_logs.summary,
                        manual_logs.date,
@@ -1328,7 +1364,16 @@ impl<'a> ActivityRepository<'a> {
                     if !project_filter_matches(&input.project_ids, project_id) {
                         continue;
                     }
+                    let project_classification: Option<String> = row.get("project_classification");
+                    if !classification_filter_matches(
+                        &input.classification,
+                        project_classification.as_deref(),
+                    ) {
+                        continue;
+                    }
                 } else if input.project_ids.is_some() {
+                    continue;
+                } else if input.classification.is_some() {
                     continue;
                 }
 
@@ -2203,6 +2248,62 @@ impl<'a> ReportNoteRepository<'a> {
         Ok(rows.into_iter().map(report_note_from_row).collect())
     }
 
+    pub async fn list_for_report(
+        &self,
+        from: &str,
+        to: &str,
+        project_ids: &Option<Vec<String>>,
+        classification: &Option<String>,
+    ) -> Result<Vec<ReportNote>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT report_notes.id,
+                   report_notes.project_id,
+                   projects.classification AS project_classification,
+                   report_notes.note_type,
+                   report_notes.date,
+                   report_notes.content,
+                   report_notes.included_in_report,
+                   report_notes.created_at,
+                   report_notes.updated_at
+            FROM report_notes
+            LEFT JOIN projects ON projects.id = report_notes.project_id
+            WHERE report_notes.date >= ?1
+              AND report_notes.date <= ?2
+              AND (
+                report_notes.project_id IS NULL
+                OR projects.status = 'active'
+              )
+            ORDER BY report_notes.date ASC, report_notes.created_at ASC
+            "#,
+        )
+        .bind(from)
+        .bind(to)
+        .fetch_all(self.pool)
+        .await?;
+
+        let mut notes = Vec::new();
+        for row in rows {
+            let project_id: Option<String> = row.get("project_id");
+            if let Some(project_id) = &project_id {
+                if !project_filter_matches(project_ids, project_id) {
+                    continue;
+                }
+                let project_classification: Option<String> = row.get("project_classification");
+                if !classification_filter_matches(classification, project_classification.as_deref())
+                {
+                    continue;
+                }
+            } else if project_ids.is_some() || classification.is_some() {
+                continue;
+            }
+
+            notes.push(report_note_from_row(row));
+        }
+
+        Ok(notes)
+    }
+
     pub async fn find_daily_review_by_date(
         &self,
         date: &str,
@@ -2944,6 +3045,7 @@ impl<'a> WeeklyTaskRepository<'a> {
             SELECT weekly_tasks.id,
                    weekly_tasks.project_id,
                    projects.name AS project_name,
+                   projects.classification AS project_classification,
                    weekly_tasks.task_type,
                    weekly_tasks.status,
                    weekly_tasks.title,
@@ -2999,6 +3101,21 @@ impl<'a> WeeklyTaskRepository<'a> {
                     Some(project_id) if project_ids.iter().any(|id| id == project_id) => {}
                     _ => continue,
                 }
+            }
+            if let Some(project_id) = &task.project_id {
+                let project_classification: Option<String> =
+                    sqlx::query_scalar("SELECT classification FROM projects WHERE id = ?1")
+                        .bind(project_id)
+                        .fetch_optional(self.pool)
+                        .await?;
+                if !classification_filter_matches(
+                    &input.classification,
+                    project_classification.as_deref(),
+                ) {
+                    continue;
+                }
+            } else if input.classification.is_some() {
+                continue;
             }
 
             if input
@@ -3424,6 +3541,7 @@ impl<'a> CalendarEventRepository<'a> {
                 week_start_date: input.week_start_date.clone(),
                 week_end_date: input.week_end_date.clone(),
                 project_ids: None,
+                classification: None,
                 task_type: None,
                 status: None,
                 included_in_report: None,
@@ -5567,6 +5685,7 @@ fn project_from_row(row: sqlx::sqlite::SqliteRow) -> Project {
         project_type: row.get("type"),
         workspace_id: row.get("workspace_id"),
         workspace_relative_path: row.get("workspace_relative_path"),
+        classification: row.get("classification"),
         status: row.get("status"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
@@ -5578,6 +5697,7 @@ fn workspace_from_row(row: sqlx::sqlite::SqliteRow) -> Workspace {
         id: row.get("id"),
         name: row.get("name"),
         root_path: row.get("root_path"),
+        classification: row.get("classification"),
         status: row.get("status"),
         last_scanned_at: row.get("last_scanned_at"),
         created_at: row.get("created_at"),
@@ -5820,10 +5940,28 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn normalize_classification(value: Option<String>) -> String {
+    match value.as_deref().map(str::trim) {
+        Some("work") => "work".to_string(),
+        Some("personal") => "personal".to_string(),
+        _ => "unclassified".to_string(),
+    }
+}
+
 fn project_filter_matches(project_ids: &Option<Vec<String>>, project_id: &str) -> bool {
     project_ids
         .as_ref()
         .map(|ids| ids.iter().any(|id| id == project_id))
+        .unwrap_or(true)
+}
+
+fn classification_filter_matches(
+    classification_filter: &Option<String>,
+    project_classification: Option<&str>,
+) -> bool {
+    classification_filter
+        .as_deref()
+        .map(|filter| project_classification == Some(filter))
         .unwrap_or(true)
 }
 
@@ -5943,6 +6081,7 @@ mod tests {
                 repo_path: Some("C:\\repo\\sparc-force-api".to_string()),
                 github_url: Some("https://github.com/company/api".to_string()),
                 project_type: Some("Company".to_string()),
+                classification: None,
             })
             .await
             .expect("create project")
@@ -5991,6 +6130,7 @@ mod tests {
                 repo_path: Some("C:\\repo\\website".to_string()),
                 github_url: None,
                 project_type: Some("Client".to_string()),
+                classification: None,
             })
             .await
             .expect("create project");
@@ -6008,6 +6148,7 @@ mod tests {
                     project_type: None,
                     workspace_id: None,
                     workspace_relative_path: None,
+                    classification: None,
                     status: None,
                 },
             )
@@ -6358,6 +6499,7 @@ mod tests {
             .create(CreateWorkspaceInput {
                 name: "Documents Projects".to_string(),
                 root_path: "C:\\Users\\Sparc\\Documents\\projects".to_string(),
+                classification: None,
             })
             .await
             .expect("create workspace");
@@ -6449,6 +6591,7 @@ mod tests {
                 repo_path: Some("C:\\repo\\existing-api".to_string()),
                 github_url: None,
                 project_type: Some("Backend".to_string()),
+                classification: None,
             })
             .await
             .expect("create existing project");
@@ -6457,6 +6600,7 @@ mod tests {
             .create(CreateWorkspaceInput {
                 name: "Repo Root".to_string(),
                 root_path: "C:\\repo".to_string(),
+                classification: Some("work".to_string()),
             })
             .await
             .expect("create workspace");
@@ -6481,6 +6625,7 @@ mod tests {
             imported[0].workspace_id.as_deref(),
             Some(workspace.id.as_str())
         );
+        assert_eq!(imported[0].classification, "work");
     }
 
     #[tokio::test]
@@ -6559,6 +6704,7 @@ mod tests {
                 to: "2026-05-20".to_string(),
                 activity_type: None,
                 project_ids: None,
+                classification: None,
                 git_refs: None,
                 worktree_paths: None,
             })
@@ -6583,6 +6729,7 @@ mod tests {
                 to: "2026-05-20".to_string(),
                 activity_type: Some("commit".to_string()),
                 project_ids: None,
+                classification: None,
                 git_refs: None,
                 worktree_paths: None,
             })
@@ -6598,6 +6745,7 @@ mod tests {
                 to: "2026-05-20".to_string(),
                 activity_type: Some("Testing".to_string()),
                 project_ids: None,
+                classification: None,
                 git_refs: None,
                 worktree_paths: None,
             })
@@ -6613,6 +6761,7 @@ mod tests {
                 to: "2026-05-20".to_string(),
                 activity_type: None,
                 project_ids: Some(vec!["missing_project".to_string()]),
+                classification: None,
                 git_refs: None,
                 worktree_paths: None,
             })
@@ -6697,6 +6846,7 @@ mod tests {
                 to: "2026-05-20".to_string(),
                 activity_type: None,
                 project_ids: None,
+                classification: None,
                 git_refs: None,
                 worktree_paths: None,
             })
@@ -6790,6 +6940,7 @@ mod tests {
                 to: "2026-05-19".to_string(),
                 activity_type: Some("commit".to_string()),
                 project_ids: Some(vec![project.id.clone()]),
+                classification: None,
                 git_refs: Some(vec![GitRefFilter {
                     project_id: Some(project.id.clone()),
                     name: "main".to_string(),
@@ -6808,6 +6959,7 @@ mod tests {
                 to: "2026-05-19".to_string(),
                 activity_type: Some("commit".to_string()),
                 project_ids: Some(vec![project.id.clone()]),
+                classification: None,
                 git_refs: None,
                 worktree_paths: Some(vec!["C:\\repo\\sparc-force-api-feature".to_string()]),
             })
@@ -7031,6 +7183,7 @@ mod tests {
                 week_start_date: "2026-05-18".to_string(),
                 week_end_date: "2026-05-22".to_string(),
                 project_ids: None,
+                classification: None,
                 task_type: None,
                 status: None,
                 included_in_report: None,
@@ -7126,6 +7279,7 @@ mod tests {
                 week_start_date: "2026-05-18".to_string(),
                 week_end_date: "2026-05-22".to_string(),
                 project_ids: None,
+                classification: None,
                 task_type: None,
                 status: None,
                 included_in_report: None,
@@ -7352,3 +7506,5 @@ mod tests {
         );
     }
 }
+
+

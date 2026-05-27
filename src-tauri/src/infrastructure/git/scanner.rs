@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::process::Command;
 
 use chrono::Utc;
 
@@ -9,6 +8,7 @@ use crate::domain::git_metadata::{CommitRef, CommitWorktreeRef, GitRef, GitRefKi
 use crate::infrastructure::git::parser::{
     parse_git_log, with_project, ParsedGitCommit, GIT_FIELD_SEPARATOR, GIT_RECORD_SEPARATOR,
 };
+use crate::infrastructure::git::runner;
 
 pub struct GitScanner;
 
@@ -187,17 +187,16 @@ fn discover_refs(
         .ok()
         .map(|branch| branch.trim().to_string())
         .filter(|branch| !branch.is_empty());
-    let output = Command::new("git")
-        .args([
-            "-C",
-            repo_path,
+    let output = runner::run_git(
+        repo_path,
+        &[
             "for-each-ref",
             "--format=%(refname)\u{1f}%(refname:short)\u{1f}%(objectname)\u{1f}%(HEAD)",
             "refs/heads",
             "refs/remotes",
-        ])
-        .output()
-        .map_err(|source| GitScanError::CommandFailed(source.to_string()))?;
+        ],
+    )
+    .map_err(|source| GitScanError::CommandFailed(source.to_string()))?;
 
     if !output.status.success() {
         return Err(GitScanError::CommandFailed(
@@ -264,8 +263,6 @@ fn run_git_log(
     author_email: Option<&str>,
 ) -> Result<String, GitScanError> {
     let mut args = vec![
-        "-C".to_string(),
-        repo_path.to_string(),
         "log".to_string(),
         "--date=iso-strict".to_string(),
         format!(
@@ -278,9 +275,7 @@ fn run_git_log(
     append_filters(&mut args, from, to, author_email);
     args.push(rev.to_string());
 
-    let output = Command::new("git")
-        .args(args)
-        .output()
+    let output = runner::run_git_owned(repo_path, &args)
         .map_err(|source| GitScanError::CommandFailed(source.to_string()))?;
 
     if !output.status.success() {
@@ -293,9 +288,7 @@ fn run_git_log(
 }
 
 fn current_branch(repo_path: &str) -> Result<String, GitScanError> {
-    let output = Command::new("git")
-        .args(["-C", repo_path, "branch", "--show-current"])
-        .output()
+    let output = runner::run_git(repo_path, &["branch", "--show-current"])
         .map_err(|source| GitScanError::CommandFailed(source.to_string()))?;
 
     if !output.status.success() {
@@ -315,8 +308,6 @@ fn load_commit_stats(
     author_email: Option<&str>,
 ) -> Result<std::collections::HashMap<String, CommitStats>, GitScanError> {
     let mut args = vec![
-        "-C".to_string(),
-        repo_path.to_string(),
         "log".to_string(),
         "--numstat".to_string(),
         format!("--pretty=format:%H{rs}", rs = GIT_RECORD_SEPARATOR),
@@ -325,9 +316,7 @@ fn load_commit_stats(
     append_filters(&mut args, from, to, author_email);
     args.push(rev.to_string());
 
-    let output = Command::new("git")
-        .args(args)
-        .output()
+    let output = runner::run_git_owned(repo_path, &args)
         .map_err(|source| GitScanError::CommandFailed(source.to_string()))?;
     if !output.status.success() {
         return Err(GitScanError::CommandFailed(
@@ -369,9 +358,7 @@ fn discover_worktrees(
     repo_path: &str,
     scanned_at: &str,
 ) -> Result<Vec<GitWorktree>, GitScanError> {
-    let output = Command::new("git")
-        .args(["-C", repo_path, "worktree", "list", "--porcelain"])
-        .output()
+    let output = runner::run_git(repo_path, &["worktree", "list", "--porcelain"])
         .map_err(|source| GitScanError::CommandFailed(source.to_string()))?;
 
     if !output.status.success() {
@@ -484,9 +471,7 @@ fn scan_worktree_commits(
 }
 
 fn worktree_clean(path: &str) -> Result<bool, GitScanError> {
-    let output = Command::new("git")
-        .args(["-C", path, "status", "--porcelain"])
-        .output()
+    let output = runner::run_git(path, &["status", "--porcelain"])
         .map_err(|source| GitScanError::CommandFailed(source.to_string()))?;
 
     if !output.status.success() {

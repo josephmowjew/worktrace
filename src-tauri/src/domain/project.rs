@@ -13,6 +13,7 @@ pub struct Project {
     pub project_type: Option<String>,
     pub workspace_id: Option<String>,
     pub workspace_relative_path: Option<String>,
+    pub classification: String,
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
@@ -26,6 +27,7 @@ pub struct CreateProjectInput {
     pub repo_path: Option<String>,
     pub github_url: Option<String>,
     pub project_type: Option<String>,
+    pub classification: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -38,6 +40,7 @@ pub struct UpdateProjectInput {
     pub project_type: Option<String>,
     pub workspace_id: Option<String>,
     pub workspace_relative_path: Option<String>,
+    pub classification: Option<String>,
     pub status: Option<String>,
 }
 

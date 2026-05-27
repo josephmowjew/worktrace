@@ -33,7 +33,23 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .await
     .ok();
 
+    sqlx::query("ALTER TABLE projects ADD COLUMN classification TEXT NOT NULL DEFAULT 'unclassified';")
+        .execute(pool)
+        .await
+        .ok();
+
+    sqlx::query("ALTER TABLE workspaces ADD COLUMN classification TEXT NOT NULL DEFAULT 'unclassified';")
+        .execute(pool)
+        .await
+        .ok();
+
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_projects_workspace ON projects(workspace_id);")
+        .execute(pool)
+        .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_projects_classification ON projects(classification);")
+        .execute(pool)
+        .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_workspaces_classification ON workspaces(classification);")
         .execute(pool)
         .await?;
 
@@ -490,17 +506,20 @@ CREATE TABLE IF NOT EXISTS projects (
   type TEXT,
   workspace_id TEXT,
   workspace_relative_path TEXT,
+  classification TEXT NOT NULL DEFAULT 'unclassified',
   status TEXT NOT NULL DEFAULT 'active',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
+CREATE INDEX IF NOT EXISTS idx_projects_classification ON projects(classification);
 
 CREATE TABLE IF NOT EXISTS workspaces (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   root_path TEXT NOT NULL,
+  classification TEXT NOT NULL DEFAULT 'unclassified',
   status TEXT NOT NULL DEFAULT 'active',
   last_scanned_at TEXT,
   created_at TEXT NOT NULL,
@@ -508,6 +527,7 @@ CREATE TABLE IF NOT EXISTS workspaces (
 );
 
 CREATE INDEX IF NOT EXISTS idx_workspaces_status ON workspaces(status);
+CREATE INDEX IF NOT EXISTS idx_workspaces_classification ON workspaces(classification);
 
 CREATE TABLE IF NOT EXISTS workspace_repo_ignores (
   id TEXT PRIMARY KEY,

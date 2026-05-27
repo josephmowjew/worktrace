@@ -55,6 +55,7 @@ pub struct ListWeeklyTasksInput {
     pub week_start_date: String,
     pub week_end_date: String,
     pub project_ids: Option<Vec<String>>,
+    pub classification: Option<String>,
     pub task_type: Option<WeeklyTaskType>,
     pub status: Option<WeeklyTaskStatus>,
     pub included_in_report: Option<bool>,

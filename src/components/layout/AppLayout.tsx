@@ -192,7 +192,6 @@ export function AppLayout({ children }: PropsWithChildren) {
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
       await queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
       await queryClient.invalidateQueries({ queryKey: ["weeklyTasks"] });
-      await queryClient.invalidateQueries({ queryKey: ["weekly-tasks"] });
       toast.success(
         "Sync complete",
         `Added ${result.newCommits} commits and updated ${result.updatedCommits}.`,
