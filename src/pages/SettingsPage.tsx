@@ -1,6 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Briefcase, Building2, CalendarDays, Check, CheckCircle2, ChevronDown, Clock3, Database, Download, ExternalLink, FileJson, FileText, Filter, Folder, Hash, Layers, Link2, LockKeyhole, Mail, Mic, Monitor, MoreHorizontal, Palette, PlugZap, Save, Search, Settings as SettingsIcon, Sparkles, Upload, User, Users, Volume2, X } from "lucide-react";
+import { Briefcase, Building2, CalendarDays, Check, CheckCircle2, ChevronDown, Clock3, Database, Download, ExternalLink, FileJson, FileText, Filter, Folder, Hash, Layers, Link2, LockKeyhole, Mail, Mic, Monitor, MoreHorizontal, PlugZap, Save, Search, Settings as SettingsIcon, Sparkles, Upload, User, Users, Volume2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { SimpleIcon } from "simple-icons";
@@ -18,6 +18,7 @@ import { z } from "zod";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Panel } from "../components/ui/Panel";
+import { SegmentedTabs } from "../components/ui/SegmentedTabs";
 import { SelectField } from "../components/ui/SelectField";
 import { useSpeech } from "../components/ui/SpeechProvider";
 import { useToast } from "../components/ui/ToastProvider";
@@ -771,26 +772,12 @@ export function SettingsPage() {
       </Panel>
 
       <Panel className="p-2">
-        <div className="flex flex-wrap gap-2">
-          {settingsTabs.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              className={[
-                "relative rounded-xl px-4 py-2.5 text-sm font-semibold transition",
-                activeTab === tab.id
-                  ? "bg-blue-500/20 text-white shadow-lg shadow-blue-500/15"
-                  : "text-slate-400 hover:bg-white/8 hover:text-slate-100",
-              ].join(" ")}
-            >
-              {tab.label}
-              {activeTab === tab.id ? (
-                <span className="absolute inset-x-4 -bottom-2 h-0.5 rounded-full bg-cyan-300" />
-              ) : null}
-            </button>
-          ))}
-        </div>
+        <SegmentedTabs
+          items={settingsTabs}
+          value={activeTab}
+          onChange={setActiveTab}
+          fullWidth
+        />
       </Panel>
 
       <form
@@ -1489,12 +1476,19 @@ export function SettingsPage() {
 
         {activeTab === "work" ? (
         <div className="space-y-4">
-          <Panel>
-            <div className="mb-4 flex items-center gap-2 text-base font-semibold text-white">
-              <Palette className="h-4 w-4 text-cyan-300" />
-              Working Days
+          <Panel className="border-blue-300/15 bg-gradient-to-r from-[#08162f] via-[#0a1a38] to-[#09162f] p-6">
+            <div className="mb-5 flex items-start gap-3">
+              <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-blue-300/20 bg-blue-500/14">
+                <CalendarDays className="h-5 w-5 text-cyan-200" />
+              </div>
+              <div>
+                <div className="text-[1.65rem] font-semibold tracking-tight text-white">Working Days</div>
+                <p className="mt-1 text-sm text-slate-400">
+                  Select the days of the week you typically work.
+                </p>
+              </div>
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-7">
               {workingDays.map((day) => (
                 <button
                   key={day.value}
@@ -1502,13 +1496,23 @@ export function SettingsPage() {
                   disabled={settingsQuery.isLoading}
                   onClick={() => toggleWorkingDay(day.value)}
                   className={[
-                    "rounded-xl border px-3 py-2 text-sm font-semibold transition-all",
+                    "flex items-center justify-between rounded-xl border px-4 py-3 text-base font-medium transition-all",
                     selectedWorkingDays.includes(day.value)
-                      ? "border-blue-300/25 bg-blue-500 text-white shadow-lg shadow-blue-500/20"
-                      : "border-white/10 bg-slate-950/45 text-slate-400 hover:bg-white/10 hover:text-slate-200",
+                      ? "border-blue-300/45 bg-blue-500/20 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_10px_22px_rgba(37,99,235,0.18)]"
+                      : "border-white/12 bg-slate-950/45 text-slate-400 hover:border-white/20 hover:bg-white/8 hover:text-slate-200",
                   ].join(" ")}
                 >
-                  {day.label}
+                  <span>{day.label}</span>
+                  <span
+                    className={[
+                      "grid h-6 w-6 place-items-center rounded-full border transition",
+                      selectedWorkingDays.includes(day.value)
+                        ? "border-blue-200/60 bg-blue-500 text-white"
+                        : "border-white/15 text-transparent",
+                    ].join(" ")}
+                  >
+                    <Check className="h-4 w-4" />
+                  </span>
                 </button>
               ))}
             </div>
@@ -1519,62 +1523,88 @@ export function SettingsPage() {
             ) : null}
           </Panel>
 
-          <Panel>
-            <div className="mb-4 flex items-center gap-2 text-base font-semibold text-white">
-              <CalendarDays className="h-4 w-4 text-cyan-300" />
-              Daily Capacity
+          <Panel className="border-blue-300/15 bg-gradient-to-r from-[#08162f] via-[#0a1a38] to-[#09162f] p-6">
+            <div className="mb-5 flex items-start gap-3">
+              <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-blue-300/20 bg-blue-500/14">
+                <Clock3 className="h-5 w-5 text-cyan-200" />
+              </div>
+              <div>
+                <div className="text-[1.65rem] font-semibold tracking-tight text-white">Daily Capacity</div>
+                <p className="mt-1 text-sm text-slate-400">Set your daily work capacity.</p>
+              </div>
             </div>
             <Field
               label="Work Capacity (minutes/day)"
               error={form.formState.errors.dailyWorkMinutes?.message}
             >
-              <input
-                type="number"
-                min={60}
-                max={960}
-                step={15}
-                className={inputClass}
-                disabled={settingsQuery.isLoading}
-                {...form.register("dailyWorkMinutes", { valueAsNumber: true })}
-              />
+              <div className="flex overflow-hidden rounded-xl border border-white/12 bg-slate-950/55">
+                <div className="flex w-full items-center gap-3 px-4 py-2">
+                  <span className="text-sm text-slate-300">Work Capacity (minutes/day)</span>
+                  <input
+                    type="number"
+                    min={60}
+                    max={960}
+                    step={15}
+                    className="h-10 min-w-0 flex-1 rounded-lg border border-white/8 bg-slate-950/80 px-3 text-lg font-semibold tabular-nums text-slate-100 outline-none transition focus:border-blue-300/50 focus:ring-2 focus:ring-blue-500/15"
+                    disabled={settingsQuery.isLoading}
+                    {...form.register("dailyWorkMinutes", { valueAsNumber: true })}
+                  />
+                </div>
+              </div>
             </Field>
           </Panel>
 
-          <Panel className="space-y-3">
-            <h2 className="text-base font-semibold text-white">Save Preferences</h2>
-            <p className="text-xs leading-5 text-slate-400">
-              Settings stay on this machine and are used as defaults for reports and
-              local Git workflows.
-            </p>
+          <Panel className="border-blue-300/15 bg-gradient-to-r from-[#08162f] via-[#0a1a38] to-[#09162f] p-6">
+            <div className="flex flex-wrap items-center justify-between gap-5">
+              <div className="min-w-[240px] flex-1">
+                <div className="mb-2 flex items-center gap-3">
+                  <div className="grid h-11 w-11 place-items-center rounded-full border border-blue-300/20 bg-blue-500/14">
+                    <CheckCircle2 className="h-5 w-5 text-cyan-200" />
+                  </div>
+                  <h2 className="text-[1.65rem] font-semibold tracking-tight text-white">Save Preferences</h2>
+                </div>
+                <p className="text-sm leading-6 text-slate-400">
+                  Settings stay on this machine and are used as defaults for reports and local Git workflows.
+                </p>
+              </div>
+              <div className="w-full max-w-[340px]">
+                <Button
+                  type="submit"
+                  variant="primary"
+                  className="h-12 w-full text-base"
+                  disabled={saveMutation.isPending || settingsQuery.isLoading}
+                >
+                  <Save className="h-4 w-4" />
+                  {saveMutation.isPending ? "Saving..." : "Save Changes"}
+                </Button>
+                <p className="mt-2 text-center text-sm text-slate-400">Preferences are saved locally</p>
+              </div>
+            </div>
             {settingsQuery.isError ? (
-              <div className="rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-xs text-red-100">
+              <div className="mt-4 rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-xs text-red-100">
                 {settingsQuery.error instanceof Error
                   ? settingsQuery.error.message
                   : "Settings could not be loaded."}
               </div>
             ) : null}
             {settingsQuery.isLoading ? (
-              <div className="rounded-xl border border-white/8 bg-white/[0.03] p-3 text-xs text-slate-400">
+              <div className="mt-4 rounded-xl border border-white/8 bg-white/[0.03] p-3 text-xs text-slate-400">
                 Loading saved preferences...
               </div>
             ) : null}
             {saveMutation.isError ? (
-              <div className="rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-xs text-red-100">
+              <div className="mt-4 rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-xs text-red-100">
                 {saveMutation.error instanceof Error
                   ? saveMutation.error.message
                   : "Settings could not be saved."}
               </div>
             ) : null}
-            <Button
-              type="submit"
-              variant="primary"
-              className="w-full"
-              disabled={saveMutation.isPending || settingsQuery.isLoading}
-            >
-              <Save className="h-4 w-4" />
-              {saveMutation.isPending ? "Saving..." : "Save Changes"}
-            </Button>
           </Panel>
+
+          <div className="flex items-center justify-center gap-2 py-1 text-sm text-slate-400">
+            <LockKeyhole className="h-4 w-4 text-slate-500" />
+            <span>All preferences are stored locally on this device.</span>
+          </div>
         </div>
         ) : null}
       </form>

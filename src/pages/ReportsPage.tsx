@@ -234,10 +234,20 @@ export function ReportsPage() {
       markPolishStreamCancelled();
       return cancelReportAiStream({ streamId: activePolishStreamId });
     },
+    onSuccess: () => {
+      toast.success("Cancellation requested", "Stopping AI polish...");
+    },
     onError: (error) => {
       toast.error("Cancel failed", error instanceof Error ? error.message : "The report polish could not be cancelled.");
     },
   });
+
+  useEffect(() => {
+    if (!polishMutation.isPending && !activePolishStreamId) {
+      polishCancelledRef.current = false;
+      finishPolishStream();
+    }
+  }, [activePolishStreamId, finishPolishStream, polishMutation.isPending]);
   const readinessMutation = useMutation({
     mutationFn: () =>
       analyzeReportReadiness({

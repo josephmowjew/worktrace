@@ -6,6 +6,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager};
+use tokio::time::{timeout, Duration};
 
 use crate::domain::activity::ListActivityInput;
 use crate::domain::report::{
@@ -33,6 +34,8 @@ const GROQ_URL: &str = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_MODELS_URL: &str = "https://api.groq.com/openai/v1/models";
 const NVIDIA_BUILD_URL: &str = "https://integrate.api.nvidia.com/v1/chat/completions";
 const NVIDIA_BUILD_MODELS_URL: &str = "https://integrate.api.nvidia.com/v1/models";
+const PROVIDER_REQUEST_TIMEOUT_SECONDS: u64 = 120;
+const STREAM_CHUNK_POLL_TIMEOUT_SECONDS: u64 = 2;
 
 pub struct ReportAiService;
 
@@ -576,6 +579,7 @@ async fn call_openai_compatible_non_stream(
             "temperature": 0.2,
             "max_tokens": max_tokens,
         }))
+        .timeout(Duration::from_secs(PROVIDER_REQUEST_TIMEOUT_SECONDS))
         .send()
         .await
         .map_err(|error| ReportAiError::Provider(error.to_string()))?;
@@ -640,6 +644,7 @@ async fn call_openai_compatible_streaming(
             "max_tokens": max_tokens,
             "stream": true,
         }))
+        .timeout(Duration::from_secs(PROVIDER_REQUEST_TIMEOUT_SECONDS))
         .send()
         .await
         .map_err(|error| ReportAiError::Provider(error.to_string()))?;
@@ -666,7 +671,7 @@ async fn call_openai_compatible_streaming(
     let mut reasoning_delta_count = 0usize;
     let mut finish_reasons: Vec<String> = Vec::new();
 
-    while let Some(chunk) = chunks.next().await {
+    loop {
         if stream.is_cancelled() {
             stream.emit(
                 "cancelled",
@@ -679,6 +684,22 @@ async fn call_openai_compatible_streaming(
             ));
         }
 
+        let next_chunk = match timeout(
+            Duration::from_secs(STREAM_CHUNK_POLL_TIMEOUT_SECONDS),
+            chunks.next(),
+        )
+        .await
+        {
+            Ok(value) => value,
+            Err(_) => {
+                // No chunk yet; continue looping so cancellation can be observed quickly.
+                continue;
+            }
+        };
+
+        let Some(chunk) = next_chunk else {
+            break;
+        };
         let chunk = chunk.map_err(|error| ReportAiError::Provider(error.to_string()))?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
 

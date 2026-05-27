@@ -113,12 +113,14 @@ export function ReportsWorkspaceProvider({ children }: PropsWithChildren) {
 
       if (payload.eventType === "done") {
         setPolishStreamStatus("Finalizing report...");
+        setPolishCancelled(false);
         activePolishStreamIdRef.current = null;
         setActivePolishStreamId(null);
       }
 
       if (payload.eventType === "error") {
         setPolishStreamStatus(payload.message ?? "AI stream ended with an error.");
+        setPolishCancelled(false);
         activePolishStreamIdRef.current = null;
         setActivePolishStreamId(null);
       }
@@ -193,6 +195,7 @@ export function ReportsWorkspaceProvider({ children }: PropsWithChildren) {
       finishPolishStream: () => {
         activePolishStreamIdRef.current = null;
         setActivePolishStreamId(null);
+        setPolishCancelled(false);
         setPolishStreamStatus(null);
       },
       markPolishStreamCancelled: () => {
