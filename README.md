@@ -134,7 +134,7 @@ npm run tauri:dev
 
 WorkTrace is designed as a local-first app. The main application database is created in the platform app data directory as `worktrace.sqlite`. Sensitive integration tokens are stored through the OS keyring where supported.
 
-The app can connect to external services only when a user configures those integrations, such as GitHub, Sparc Force, calendar sources, or an AI report provider. Local Git scanning reads repositories from paths the user adds or imports.
+The app can connect to external services only when a user configures those integrations, such as GitHub, calendar sources, or an AI report provider. Local Git scanning reads repositories from paths the user adds or imports.
 
 ## Main Screens
 
