@@ -4,7 +4,7 @@
   "pub_date": "2026-05-27T12:00:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "REPLACE_WITH_WINDOWS_SIGNATURE",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUbndnaUhWc2ZhVUppWDNHcmpaUzBOeEhicitmNDVhU3AyWjRIMHR5QWYvaEtMR0EzMlhGaU95ZEhsNXJvV1VxRXF5NWZGdUhVOUFsM3BsaWhLakxmUFdiYjFjczA4VEFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc5ODgyODA2CWZpbGU6V29ya1RyYWNlXzAuMS4xX3g2NF9lbi1VUy5tc2kuemlwCmxYYnFmR1BRNHg0OEZKQlpZeXpUTWVKNnFRWTVTa1ZBQWpOMnRxdEdrVXFNZW9EaDhwRzZnRDFhdVc1UHRGY1pMRHIrT2lvRzFId0diNkN4WUhhekRnPT0K",
       "url": "https://github.com/josephmowjew/worktrace/releases/download/v0.1.1/WorkTrace_0.1.1_x64_en-US.msi.zip"
     }
   }
