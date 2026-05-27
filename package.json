@@ -12,10 +12,14 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "test": "vitest --environment jsdom src/test",
+    "test:run": "vitest run --environment jsdom src/test",
     "tauri": "tauri",
     "tauri:dev": "powershell -ExecutionPolicy Bypass -File ./scripts/tauri-dev.ps1",
     "tauri:build": "powershell -ExecutionPolicy Bypass -File ./scripts/tauri-build.ps1",
-    "check:version-sync": "node ./scripts/check-version-sync.mjs"
+    "tauri:test": "powershell -ExecutionPolicy Bypass -File ./scripts/tauri-test.ps1",
+    "check:version-sync": "node ./scripts/check-version-sync.mjs",
+    "check:command-parity": "node ./scripts/check-command-parity.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -36,10 +40,14 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
+    "jsdom": "^29.1.1",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4"
+    "vite": "^7.0.4",
+    "vitest": "^4.1.7"
   }
 }
