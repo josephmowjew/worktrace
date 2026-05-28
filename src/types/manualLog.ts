@@ -9,7 +9,10 @@ export type ActivityType =
   | "Planning"
   | "Support"
   | "CodeReview"
-  | "ClientFeedback";
+  | "ClientFeedback"
+  | "Debugging"
+  | "ClientCall"
+  | "AdminTask";
 
 export type ManualLog = {
   id: string;
@@ -37,6 +40,14 @@ export type CreateManualLogInput = {
   outcome?: string | null;
   durationMinutes?: number | null;
   followUp?: string | null;
+  includedInReport?: boolean | null;
+};
+
+export type QuickCaptureLogInput = {
+  projectId?: string | null;
+  activityType: ActivityType;
+  summary: string;
+  durationMinutes?: number | null;
   includedInReport?: boolean | null;
 };
 

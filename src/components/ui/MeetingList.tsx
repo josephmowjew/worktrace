@@ -15,14 +15,19 @@ const activityTypeIcons: Record<string, typeof ClipboardEdit> = {
   Support: ClipboardEdit,
   CodeReview: ClipboardEdit,
   ClientFeedback: ClipboardEdit,
+  Debugging: ClipboardEdit,
+  ClientCall: Users,
+  AdminTask: ClipboardEdit,
 };
 
 export function MeetingList({
   meetings,
   isLoading,
+  onMeetingClick,
 }: {
   meetings: ManualLog[];
   isLoading: boolean;
+  onMeetingClick?: (meeting: ManualLog) => void;
 }) {
   if (isLoading) {
     return (
@@ -55,9 +60,8 @@ export function MeetingList({
       <div className="divide-y divide-white/8">
         {meetings.map((meeting) => {
           const Icon = activityTypeIcons[meeting.activityType] || ClipboardEdit;
-
-          return (
-            <div key={meeting.id} className="flex items-start gap-3 px-4 py-3 transition-colors hover:bg-white/5">
+          const content = (
+            <>
               <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-purple-300/20 bg-purple-500/10 text-purple-200">
                 <Icon className="h-4 w-4" />
               </div>
@@ -76,6 +80,25 @@ export function MeetingList({
                   )}
                 </div>
               </div>
+            </>
+          );
+
+          if (onMeetingClick) {
+            return (
+              <button
+                key={meeting.id}
+                type="button"
+                onClick={() => onMeetingClick(meeting)}
+                className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-white/5 focus:outline-none focus-visible:bg-white/5 focus-visible:ring-2 focus-visible:ring-blue-300/40"
+              >
+                {content}
+              </button>
+            );
+          }
+
+          return (
+            <div key={meeting.id} className="flex items-start gap-3 px-4 py-3 transition-colors hover:bg-white/5">
+              {content}
             </div>
           );
         })}

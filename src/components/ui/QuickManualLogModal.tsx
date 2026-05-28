@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Save, FolderKanban, Users, Code, Bug, FlaskConical, Rocket, Eye, FileText, CalendarDays, Headphones, MessageSquare } from "lucide-react";
+import { Save, FolderKanban, Users, Code, Bug, FlaskConical, Rocket, Eye, FileText, CalendarDays, Headphones, MessageSquare, Wrench, BriefcaseBusiness } from "lucide-react";
 import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -22,6 +22,9 @@ const activityTypes: Array<{ value: ActivityType; label: string; icon: React.Ele
   { value: "Support", label: "Support", icon: Headphones },
   { value: "CodeReview", label: "Code Review", icon: Eye },
   { value: "ClientFeedback", label: "Client Feedback", icon: MessageSquare },
+  { value: "Debugging", label: "Debugging", icon: Wrench },
+  { value: "ClientCall", label: "Client Call", icon: Users },
+  { value: "AdminTask", label: "Admin Task", icon: BriefcaseBusiness },
 ];
 
 const schema = z.object({
@@ -39,6 +42,9 @@ const schema = z.object({
     "Support",
     "CodeReview",
     "ClientFeedback",
+    "Debugging",
+    "ClientCall",
+    "AdminTask",
   ]),
   summary: z.string().trim().min(1, "Summary is required"),
   outcome: z.string().optional(),

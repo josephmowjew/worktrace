@@ -28,9 +28,11 @@ const priorityColors: Record<string, "slate" | "blue" | "orange"> = {
 export function TaskList({
   tasks,
   isLoading,
+  onTaskClick,
 }: {
   tasks: WeeklyTask[];
   isLoading: boolean;
+  onTaskClick?: (task: WeeklyTask) => void;
 }) {
   if (isLoading) {
     return (
@@ -63,8 +65,8 @@ export function TaskList({
       <div className="divide-y divide-white/8">
         {tasks.map((task) => {
           const StatusIcon = statusIcons[task.status] || ListTodo;
-          return (
-            <div key={task.id} className="flex items-start gap-3 px-4 py-3 transition-colors hover:bg-white/5">
+          const content = (
+            <>
               <div className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border ${getStatusBorder(task.status)} ${getStatusBg(task.status)} ${getStatusText(task.status)}`}>
                 <StatusIcon className="h-4 w-4" />
               </div>
@@ -92,6 +94,25 @@ export function TaskList({
                   </div>
                 )}
               </div>
+            </>
+          );
+
+          if (onTaskClick) {
+            return (
+              <button
+                key={task.id}
+                type="button"
+                onClick={() => onTaskClick(task)}
+                className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-white/5 focus:outline-none focus-visible:bg-white/5 focus-visible:ring-2 focus-visible:ring-blue-300/40"
+              >
+                {content}
+              </button>
+            );
+          }
+
+          return (
+            <div key={task.id} className="flex items-start gap-3 px-4 py-3 transition-colors hover:bg-white/5">
+              {content}
             </div>
           );
         })}

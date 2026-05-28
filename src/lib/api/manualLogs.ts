@@ -3,6 +3,7 @@ import type {
   CreateManualLogInput,
   ListManualLogsInput,
   ManualLog,
+  QuickCaptureLogInput,
   UpdateManualLogInput,
 } from "../../types/manualLog";
 
@@ -12,6 +13,10 @@ export function listManualLogs(input: ListManualLogsInput) {
 
 export function createManualLog(input: CreateManualLogInput) {
   return callCommand<ManualLog>("create_manual_log", { input });
+}
+
+export function quickCaptureLog(input: QuickCaptureLogInput) {
+  return callCommand<ManualLog>("quick_capture_log", { input });
 }
 
 export function updateManualLog(id: string, input: UpdateManualLogInput) {

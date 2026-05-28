@@ -14,6 +14,9 @@ pub enum ActivityType {
     Support,
     CodeReview,
     ClientFeedback,
+    Debugging,
+    ClientCall,
+    AdminTask,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -53,6 +56,16 @@ pub struct CreateManualLogInput {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct QuickCaptureLogInput {
+    pub project_id: Option<String>,
+    pub activity_type: ActivityType,
+    pub summary: String,
+    pub duration_minutes: Option<i64>,
+    pub included_in_report: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UpdateManualLogInput {
     pub project_id: Option<String>,
     pub date: Option<String>,
@@ -78,6 +91,9 @@ impl ActivityType {
             Self::Support => "Support",
             Self::CodeReview => "Code Review",
             Self::ClientFeedback => "Client Feedback",
+            Self::Debugging => "Debugging",
+            Self::ClientCall => "Client Call",
+            Self::AdminTask => "Admin Task",
         }
     }
 }
@@ -98,6 +114,9 @@ impl TryFrom<String> for ActivityType {
             "Support" => Ok(Self::Support),
             "Code Review" => Ok(Self::CodeReview),
             "Client Feedback" => Ok(Self::ClientFeedback),
+            "Debugging" => Ok(Self::Debugging),
+            "Client Call" => Ok(Self::ClientCall),
+            "Admin Task" => Ok(Self::AdminTask),
             _ => Err(format!("unknown activity type: {value}")),
         }
     }

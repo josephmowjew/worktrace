@@ -22,6 +22,9 @@ const activityIcons: Record<string, LucideIcon> = {
   Support: Calendar,
   CodeReview: GitBranch,
   ClientFeedback: Calendar,
+  Debugging: FlaskConical,
+  ClientCall: Calendar,
+  AdminTask: GitBranch,
 };
 
 const activityColors: Record<string, string> = {
@@ -37,6 +40,9 @@ const activityColors: Record<string, string> = {
   Support: "bg-pink-500/15 text-pink-200",
   CodeReview: "bg-indigo-500/15 text-indigo-200",
   ClientFeedback: "bg-rose-500/15 text-rose-200",
+  Debugging: "bg-orange-500/15 text-orange-200",
+  ClientCall: "bg-blue-500/15 text-blue-200",
+  AdminTask: "bg-slate-500/15 text-slate-200",
 };
 
 function formatTimeAgo(dateString: string): string {

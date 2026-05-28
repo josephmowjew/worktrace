@@ -9,7 +9,9 @@ import { ProjectFormPanel } from "../components/ui/ProjectFormPanel";
 import { ProjectDetailTabs, type ProjectDetailTab } from "../components/ui/ProjectDetailTabs";
 import { CommitList } from "../components/ui/CommitList";
 import { TaskList } from "../components/ui/TaskList";
+import { TaskDetailModal } from "../components/ui/TaskDetailModal";
 import { MeetingList } from "../components/ui/MeetingList";
+import { ManualLogDetailModal } from "../components/ui/ManualLogDetailModal";
 import { ProjectSidebar } from "../components/ui/ProjectSidebar";
 import { PrBuilderPanel } from "../components/ui/PrBuilderPanel";
 import { Panel } from "../components/ui/Panel";
@@ -41,6 +43,8 @@ import { currentWeekRange, shiftWeek } from "../lib/dates";
 import type { CreateProjectInput, GitRef, GitRefFilter, GitWorktree, ProjectGitFocus } from "../types/project";
 import type { ActivityItem } from "../types/activity";
 import type { ActivityGroup } from "../types/activityGroup";
+import type { WeeklyTask } from "../types/weeklyTask";
+import type { ManualLog } from "../types/manualLog";
 import type { PrPackageGroupContext } from "../lib/prBuilder";
 
 export function ProjectDetailPage() {
@@ -56,6 +60,8 @@ export function ProjectDetailPage() {
   const [isPrBuilderOpen, setIsPrBuilderOpen] = useState(false);
   const [isEditFormOpen, setIsEditFormOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<ActivityGroup | null>(null);
+  const [viewingTask, setViewingTask] = useState<WeeklyTask | null>(null);
+  const [viewingMeeting, setViewingMeeting] = useState<ManualLog | null>(null);
   const [organizeStatus, setOrganizeStatus] = useState<string | null>(null);
   const [currentOrganizedGroupIds, setCurrentOrganizedGroupIds] = useState<Set<string>>(() => new Set());
   const editFormRef = useRef<HTMLDivElement>(null);
@@ -79,6 +85,8 @@ export function ProjectDetailPage() {
     setSelectedCommitIds(new Set());
     setSelectedGroupIds(new Set());
     setIsPrBuilderOpen(false);
+    setViewingTask(null);
+    setViewingMeeting(null);
     setCurrentOrganizedGroupIds(new Set());
     setOrganizeStatus(null);
   }, [projectId, weekRange.from, weekRange.to]);
@@ -338,9 +346,7 @@ export function ProjectDetailPage() {
     return [...activityItems, ...logs].sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime());
   }, [activityItems, logsQuery.data, project?.name]);
 
-  const tasks = useMemo(() => {
-    return (tasksQuery.data ?? []).filter((task) => task.status !== "completed" && task.status !== "dropped");
-  }, [tasksQuery.data]);
+  const tasks = tasksQuery.data ?? [];
 
   function toggleCommitSelection(commitId: string) {
     setSelectedCommitIds((current) => {
@@ -561,10 +567,10 @@ export function ProjectDetailPage() {
             />
           )}
           {activeTab === "tasks" && (
-            <TaskList tasks={tasks} isLoading={tasksQuery.isLoading} />
+            <TaskList tasks={tasks} isLoading={tasksQuery.isLoading} onTaskClick={setViewingTask} />
           )}
           {activeTab === "meetings" && (
-            <MeetingList meetings={meetings} isLoading={activityQuery.isLoading || logsQuery.isLoading} />
+            <MeetingList meetings={meetings} isLoading={logsQuery.isLoading} onMeetingClick={setViewingMeeting} />
           )}
       {activeTab === "all" && (
             <CommitList commits={allActivity} isLoading={activityQuery.isLoading || logsQuery.isLoading} />
@@ -587,6 +593,16 @@ export function ProjectDetailPage() {
           onSave={(values) => updateGroupMutation.mutate({ id: editingGroup.id, group: values })}
         />
       ) : null}
+      <TaskDetailModal
+        isOpen={Boolean(viewingTask)}
+        task={viewingTask}
+        onClose={() => setViewingTask(null)}
+      />
+      <ManualLogDetailModal
+        isOpen={Boolean(viewingMeeting)}
+        log={viewingMeeting}
+        onClose={() => setViewingMeeting(null)}
+      />
     </div>
   );
 }

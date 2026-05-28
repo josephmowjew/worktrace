@@ -26,7 +26,10 @@ body,
 
 html.todo-widget-window,
 html.todo-widget-window body,
-html.todo-widget-window #root {
+html.todo-widget-window #root,
+html.quick-capture-window,
+html.quick-capture-window body,
+html.quick-capture-window #root {
   background: transparent;
 }
 

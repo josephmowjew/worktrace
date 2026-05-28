@@ -1,8 +1,9 @@
-use tauri::State;
+use tauri::{Emitter, State};
 
 use crate::application::manual_logs::{ManualLogService, ManualLogServiceError};
 use crate::domain::manual_log::{
-    CreateManualLogInput, ListManualLogsInput, ManualLog, UpdateManualLogInput,
+    CreateManualLogInput, ListManualLogsInput, ManualLog, QuickCaptureLogInput,
+    UpdateManualLogInput,
 };
 use crate::infrastructure::database::repositories::ManualLogRepository;
 use crate::interface::dto::app_result::AppResult;
@@ -35,6 +36,49 @@ pub async fn create_manual_log(
 
     Ok(match ManualLogService::create(&repository, input).await {
         Ok(log) => AppResult::ok(log),
+        Err(ManualLogServiceError::Validation(message)) => {
+            AppResult::err("VALIDATION_ERROR", message)
+        }
+        Err(ManualLogServiceError::Database(error)) => {
+            AppResult::err("DATABASE_ERROR", error.to_string())
+        }
+    })
+}
+
+#[tauri::command]
+pub async fn quick_capture_log(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    input: QuickCaptureLogInput,
+) -> Result<AppResult<ManualLog>, String> {
+    let repository = ManualLogRepository::new(state.database.pool());
+    let settings_repository =
+        crate::infrastructure::database::repositories::SettingsRepository::new(state.database.pool());
+    let settings = match settings_repository.get().await {
+        Ok(settings) => settings,
+        Err(error) => return Ok(AppResult::err("DATABASE_ERROR", error.to_string())),
+    };
+
+    let create_input = CreateManualLogInput {
+        project_id: input.project_id,
+        date: chrono::Local::now().date_naive().to_string(),
+        activity_type: input.activity_type,
+        summary: input.summary,
+        outcome: None,
+        duration_minutes: input.duration_minutes,
+        follow_up: None,
+        included_in_report: Some(
+            input
+                .included_in_report
+                .unwrap_or(settings.quick_capture_include_in_report),
+        ),
+    };
+
+    Ok(match ManualLogService::create(&repository, create_input).await {
+        Ok(log) => {
+            let _ = app.emit("quick-capture://created", &log);
+            AppResult::ok(log)
+        }
         Err(ManualLogServiceError::Validation(message)) => {
             AppResult::err("VALIDATION_ERROR", message)
         }

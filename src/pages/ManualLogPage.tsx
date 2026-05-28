@@ -8,6 +8,7 @@ import {
   ClipboardCheck,
   Clock3,
   Code,
+  BriefcaseBusiness,
   Edit3,
   Eraser,
   Eye,
@@ -64,6 +65,9 @@ const activityTypes: Array<{
   { value: "Support", label: "Support", icon: Headphones, tone: "orange" },
   { value: "CodeReview", label: "Code Review", icon: Eye, tone: "cyan" },
   { value: "ClientFeedback", label: "Client Feedback", icon: MessageSquare, tone: "green" },
+  { value: "Debugging", label: "Debugging", icon: Bug, tone: "orange" },
+  { value: "ClientCall", label: "Client Call", icon: Users, tone: "purple" },
+  { value: "AdminTask", label: "Admin Task", icon: BriefcaseBusiness, tone: "slate" },
 ];
 
 const manualLogSchema = z.object({
@@ -81,6 +85,9 @@ const manualLogSchema = z.object({
     "Support",
     "CodeReview",
     "ClientFeedback",
+    "Debugging",
+    "ClientCall",
+    "AdminTask",
   ]),
   summary: z.string().trim().min(1, "Summary is required"),
   outcome: z.string().optional(),

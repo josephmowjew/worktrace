@@ -25,6 +25,7 @@ import type { PropsWithChildren } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listActivity } from "../../lib/api/activity";
@@ -410,6 +411,22 @@ export function AppLayout({ children }: PropsWithChildren) {
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen("quick-capture://created", () => {
+      queryClient.invalidateQueries({ queryKey: ["manualLogs"] });
+      queryClient.invalidateQueries({ queryKey: ["activity"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboardStats"] });
+      queryClient.invalidateQueries({ queryKey: ["projectStats"] });
+      queryClient.invalidateQueries({ queryKey: ["weekSummary"] });
+      queryClient.invalidateQueries({ queryKey: ["reports"] });
+    }).then((dispose) => {
+      unlisten = dispose;
+    }).catch(() => {});
+
+    return () => unlisten?.();
+  }, [queryClient]);
 
   useEffect(() => {
     if (!hasSyncableProjects) {

@@ -35,6 +35,9 @@ const activityTypeConfig: Record<string, { icon: React.ElementType; color: strin
   Development: { icon: Code, color: "blue", label: "Development" },
   development: { icon: Code, color: "blue", label: "Development" },
   Support: { icon: Headphones, color: "slate", label: "Support" },
+  Debugging: { icon: Bug, color: "red", label: "Debugging" },
+  ClientCall: { icon: Users, color: "green", label: "Client Call" },
+  AdminTask: { icon: FileText, color: "slate", label: "Admin Task" },
 };
 
 const colorClasses: Record<string, { bg: string; border: string; text: string }> = {
