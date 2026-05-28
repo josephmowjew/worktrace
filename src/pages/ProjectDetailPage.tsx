@@ -112,7 +112,7 @@ export function ProjectDetailPage() {
       listActivityGroups({
         from: weekRange.from,
         to: weekRange.to,
-        projectIds: null,
+        projectIds: [projectId!],
         includeHidden: true,
       }),
     enabled: !!projectId,
@@ -292,12 +292,12 @@ export function ProjectDetailPage() {
   const visibleGroups = useMemo(
     () => (activityGroupsQuery.data ?? [])
       .filter((group) => shouldDisplayActivityGroup(group, currentOrganizedGroupIds))
-      .filter((group) => groupHasProjectCommit(group, commitsById, projectId)),
+      .filter((group) => groupHasProjectCommit(group, projectId, commitsById)),
     [activityGroupsQuery.data, commitsById, currentOrganizedGroupIds, projectId],
   );
   const groupedCommitIds = useMemo(
-    () => new Set(visibleGroups.flatMap((group) => group.items.map((item) => item.sourceId))),
-    [visibleGroups],
+    () => new Set(visibleGroups.flatMap((group) => commitsForGroup(group, projectId, commitsById).map((commit) => commit.id))),
+    [commitsById, projectId, visibleGroups],
   );
   const visibleRawCommits = useMemo(
     () => commits.filter((commit) => !groupedCommitIds.has(commit.id)),
@@ -309,14 +309,14 @@ export function ProjectDetailPage() {
   );
   const selectedCommits = useMemo(
     () => dedupeCommitsByHash([
-      ...selectedGroups.flatMap((group) => commitsForGroup(group, commitsById)),
+      ...selectedGroups.flatMap((group) => commitsForGroup(group, projectId, commitsById)),
       ...commits.filter((commit) => selectedCommitIds.has(commit.id)),
     ]),
-    [commits, commitsById, selectedCommitIds, selectedGroups],
+    [commits, commitsById, projectId, selectedCommitIds, selectedGroups],
   );
   const selectedPrGroups = useMemo(
-    () => selectedGroups.map((group) => groupToPrContext(group, commitsById)),
-    [commitsById, selectedGroups],
+    () => selectedGroups.map((group) => groupToPrContext(group, projectId, commitsById)),
+    [commitsById, projectId, selectedGroups],
   );
   const selectedUnitCount = selectedGroupIds.size + selectedCommitIds.size;
   const meetings = useMemo(() => {
@@ -533,6 +533,7 @@ export function ProjectDetailPage() {
                 groups={visibleGroups}
                 rawCommits={visibleRawCommits}
                 isLoading={activityQuery.isLoading || activityGroupsQuery.isLoading}
+                projectId={projectId}
                 commitsById={commitsById}
                 selectedGroupIds={selectedGroupIds}
                 selectedCommitIds={selectedCommitIds}
@@ -594,6 +595,7 @@ function ProjectWorkStream({
   groups,
   rawCommits,
   isLoading,
+  projectId,
   commitsById,
   selectedGroupIds,
   selectedCommitIds,
@@ -605,6 +607,7 @@ function ProjectWorkStream({
   groups: ActivityGroup[];
   rawCommits: ActivityItem[];
   isLoading: boolean;
+  projectId?: string;
   commitsById: Map<string, ActivityItem>;
   selectedGroupIds: Set<string>;
   selectedCommitIds: Set<string>;
@@ -639,27 +642,45 @@ function ProjectWorkStream({
     );
   }
 
+  const rows = [
+    ...groups.map((group) => ({
+      kind: "group" as const,
+      id: group.id,
+      occurredAt: latestGroupOccurredAt(group),
+      group,
+    })),
+    ...rawCommits.map((commit) => ({
+      kind: "commit" as const,
+      id: commit.id,
+      occurredAt: commit.occurredAt,
+      commit,
+    })),
+  ].sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
+
   return (
     <div className="space-y-3">
-      {groups.map((group) => (
-        <ProjectWorkItemRow
-          key={group.id}
-          group={group}
-          isSelected={selectedGroupIds.has(group.id)}
-          onToggle={() => onToggleGroup(group.id)}
-          onEdit={() => onEditGroup(group)}
-          onBuildPr={() => onBuildGroupPr(group)}
-          commits={commitsForGroup(group, commitsById)}
-        />
-      ))}
-      {rawCommits.length ? (
-        <CommitList
-          commits={rawCommits}
-          isLoading={false}
-          selectedCommitIds={selectedCommitIds}
-          onToggleCommit={onToggleCommit}
-        />
-      ) : null}
+      {rows.map((row) =>
+        row.kind === "group" ? (
+          <ProjectWorkItemRow
+            key={row.id}
+            group={row.group}
+            isSelected={selectedGroupIds.has(row.group.id)}
+            onToggle={() => onToggleGroup(row.group.id)}
+            onEdit={() => onEditGroup(row.group)}
+            onBuildPr={() => onBuildGroupPr(row.group)}
+            commits={commitsForGroup(row.group, projectId, commitsById)}
+            totalCommitCount={commitEvidenceCount(row.group)}
+          />
+        ) : (
+          <CommitList
+            key={row.id}
+            commits={[row.commit]}
+            isLoading={false}
+            selectedCommitIds={selectedCommitIds}
+            onToggleCommit={onToggleCommit}
+          />
+        ),
+      )}
     </div>
   );
 }
@@ -667,6 +688,7 @@ function ProjectWorkStream({
 function ProjectWorkItemRow({
   group,
   commits,
+  totalCommitCount,
   isSelected,
   onToggle,
   onEdit,
@@ -674,6 +696,7 @@ function ProjectWorkItemRow({
 }: {
   group: ActivityGroup;
   commits: ActivityItem[];
+  totalCommitCount: number;
   isSelected: boolean;
   onToggle: () => void;
   onEdit: () => void;
@@ -710,7 +733,7 @@ function ProjectWorkItemRow({
             <span className="rounded-md border border-white/8 bg-white/5 px-2 py-0.5 text-[10px] font-semibold text-slate-400">
               {commits.length === group.items.length
                 ? `${commits.length} commit${commits.length === 1 ? "" : "s"}`
-                : `${commits.length} of ${group.items.length} commits here`}
+                : `${commits.length} of ${totalCommitCount} commits here`}
             </span>
             {group.projectCount > 1 ? (
               <span className="rounded-md border border-violet-300/15 bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold text-violet-100">
@@ -1071,16 +1094,29 @@ function isCommitActivity(item: ActivityItem | null | undefined): item is Activi
   return Boolean(item && item.activityType === "commit");
 }
 
-function commitsForGroup(group: ActivityGroup, commitsById: Map<string, ActivityItem>) {
+function commitsForGroup(group: ActivityGroup, projectId: string | undefined, commitsById: Map<string, ActivityItem>) {
   return group.items
     .map((item) => item.activity && isCommitActivity(item.activity) ? item.activity : commitsById.get(item.sourceId))
-    .filter(isCommitActivity);
+    .filter(isCommitActivity)
+    .filter((commit) => !projectId || commit.projectId === projectId);
+}
+
+function commitEvidenceCount(group: ActivityGroup) {
+  return group.items.filter((item) => item.sourceType === "commit").length;
+}
+
+function latestGroupOccurredAt(group: ActivityGroup) {
+  const timestamps = group.items
+    .map((item) => item.occurredAt)
+    .filter(Boolean)
+    .sort();
+  return timestamps[timestamps.length - 1] ?? group.endDate;
 }
 
 function groupHasProjectCommit(
   group: ActivityGroup,
-  commitsById: Map<string, ActivityItem>,
   projectId?: string,
+  commitsById?: Map<string, ActivityItem>,
 ) {
   if (!projectId) {
     return false;
@@ -1088,7 +1124,15 @@ function groupHasProjectCommit(
   if (group.projectId === projectId) {
     return true;
   }
-  return group.items.some((item) => commitsById.has(item.sourceId));
+  if (group.projects.some((project) => project.projectId === projectId)) {
+    return true;
+  }
+  return group.items.some((item) => {
+    if (item.activity?.projectId === projectId) {
+      return true;
+    }
+    return commitsById?.get(item.sourceId)?.projectId === projectId;
+  });
 }
 
 function dedupeCommitsByHash(commits: ActivityItem[]) {
@@ -1107,6 +1151,7 @@ function dedupeCommitsByHash(commits: ActivityItem[]) {
 
 function groupToPrContext(
   group: ActivityGroup,
+  projectId: string | undefined,
   commitsById: Map<string, ActivityItem>,
 ): PrPackageGroupContext {
   return {
@@ -1116,7 +1161,7 @@ function groupToPrContext(
     reportSummary: group.reportSummary,
     workspaceName: group.workspaceName,
     projectCount: group.projectCount,
-    commitIds: commitsForGroup(group, commitsById).map((commit) => commit.id),
+    commitIds: commitsForGroup(group, projectId, commitsById).map((commit) => commit.id),
   };
 }
 
