@@ -21,11 +21,35 @@ export type RefreshActivityEmbeddingsInput = {
   classification?: string | null;
 };
 
+export type QueueActivityEmbeddingRefreshInput = RefreshActivityEmbeddingsInput;
+
 export type RefreshActivityEmbeddingsResult = {
   indexed: number;
   skipped: number;
   provider: string;
   model: string;
+};
+
+export type BackgroundJobStatusInput = {
+  kind?: string | null;
+};
+
+export type BackgroundJobStatus = {
+  queued: number;
+  running: number;
+  failed: number;
+  completed: number;
+};
+
+export type QueueBackgroundJobResult = {
+  queued: boolean;
+  jobId?: string | null;
+};
+
+export type RunBackgroundJobsResult = {
+  processed: number;
+  succeeded: number;
+  failed: number;
 };
 
 export type SemanticActivitySearchInput = RefreshActivityEmbeddingsInput & {

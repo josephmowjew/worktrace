@@ -78,6 +78,7 @@ impl ActivityGroupService {
             from: input.from.clone(),
             to: input.to.clone(),
             project_ids: input.project_ids.clone(),
+            workspace_ids: input.workspace_ids.clone(),
             classification: input.classification.clone(),
             git_refs: input.git_refs.clone(),
             worktree_paths: input.worktree_paths.clone(),
@@ -87,6 +88,7 @@ impl ActivityGroupService {
             from: input.from.clone(),
             to: input.to.clone(),
             project_ids: input.project_ids.clone(),
+            workspace_ids: input.workspace_ids.clone(),
             classification: input.classification.clone(),
             git_refs: input.git_refs.clone(),
             worktree_paths: input.worktree_paths.clone(),
@@ -320,6 +322,7 @@ impl ActivityGroupService {
         repository
             .create(CreateActivityGroupInput {
                 project_id: group.project_id.clone(),
+                workspace_id: group.workspace_id.clone(),
                 title: input
                     .title
                     .unwrap_or_else(|| format!("{} - Split", group.title)),
@@ -564,6 +567,7 @@ async fn build_group_drafts(
             to: input.to,
             activity_type: Some("commit".to_string()),
             project_ids: input.project_ids,
+            workspace_ids: input.workspace_ids,
             classification: input.classification,
             git_refs: input.git_refs,
             worktree_paths: input.worktree_paths,
@@ -709,6 +713,9 @@ fn cluster_nodes(
             if !same_weekish(&nodes[left].item, &nodes[right].item) {
                 continue;
             }
+            if !should_score_candidate(&nodes[left], &nodes[right], nodes.len()) {
+                continue;
+            }
             let scored = score_edge(&nodes[left], &nodes[right]);
             if accepts_edge(&scored) {
                 let root = union(&mut parent, left, right);
@@ -787,6 +794,28 @@ fn cluster_nodes(
     drafts
 }
 
+fn should_score_candidate(left: &EvidenceNode, right: &EvidenceNode, node_count: usize) -> bool {
+    if node_count <= 80 {
+        return true;
+    }
+    if anchor_score(&left.item, &right.item) >= 0.8 {
+        return true;
+    }
+    let same_family = grouping_family(&left.item) == grouping_family(&right.item);
+    if same_family && temporal_score(&left.item, &right.item) >= 0.62 {
+        return true;
+    }
+    if !left.module_tokens.is_disjoint(&right.module_tokens)
+        || !left.path_tokens.is_disjoint(&right.path_tokens)
+    {
+        return true;
+    }
+    if taskish_overlap(&left.tokens, &right.tokens) >= 0.8 {
+        return true;
+    }
+    same_family && jaccard(&left.tokens, &right.tokens) >= 0.18
+}
+
 struct ScoredEdge {
     score: f64,
     is_groupable: bool,
@@ -803,7 +832,7 @@ fn score_edge(left: &EvidenceNode, right: &EvidenceNode) -> ScoredEdge {
     let anchor = anchor_score(&left.item, &right.item);
     let lexical = jaccard(&left.tokens, &right.tokens);
     let semantic = semantic_score(left.embedding.as_deref(), right.embedding.as_deref());
-    let family = if project_family(&left.item) == project_family(&right.item) {
+    let family = if grouping_family(&left.item) == grouping_family(&right.item) {
         1.0
     } else {
         0.0
@@ -1016,7 +1045,7 @@ fn component_theme(nodes: &[EvidenceNode], indexes: &[usize]) -> Option<Componen
         );
     }
     Some(ComponentTheme {
-        project_family: project_family(first_item),
+        project_family: grouping_family(first_item),
         branch_phrases,
         issue_tokens: issue_tokens_set,
         module_tokens,
@@ -1083,6 +1112,7 @@ fn draft_from_nodes(
 
     Some(CreateActivityGroupInput {
         project_id: common_project_id(&nodes),
+        workspace_id: common_workspace_id(&nodes),
         title: narrative.title,
         summary: Some(narrative.summary.clone()),
         start_date: first.item.occurred_at.chars().take(10).collect(),
@@ -1312,7 +1342,18 @@ fn fingerprint_for_nodes(nodes: &[EvidenceNode]) -> String {
         .map(|node| node.item.id.clone())
         .collect::<Vec<_>>();
     ids.sort();
-    let input = format!("{ALGORITHM_VERSION}|{}", ids.join("|"));
+    let mut project_ids = nodes
+        .iter()
+        .filter_map(|node| node.item.project_id.clone())
+        .collect::<Vec<_>>();
+    project_ids.sort();
+    project_ids.dedup();
+    let workspace_id = common_workspace_id(nodes).unwrap_or_else(|| "no-workspace".to_string());
+    let input = format!(
+        "{ALGORITHM_VERSION}|workspace:{workspace_id}|projects:{}|{}",
+        project_ids.join(","),
+        ids.join("|")
+    );
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     input.hash(&mut hasher);
     format!("grp_{:x}", hasher.finish())
@@ -1366,7 +1407,7 @@ fn find(parent: &mut [usize], index: usize) -> usize {
 }
 
 fn same_weekish(left: &ActivityItem, right: &ActivityItem) -> bool {
-    project_family(left) == project_family(right) || anchor_score(left, right) >= 0.8
+    grouping_family(left) == grouping_family(right) || anchor_score(left, right) >= 0.8
 }
 
 fn temporal_score(left: &ActivityItem, right: &ActivityItem) -> f64 {
@@ -1488,6 +1529,21 @@ fn common_project_id(nodes: &[EvidenceNode]) -> Option<String> {
         .iter()
         .all(|node| node.item.project_id.as_deref() == Some(first.as_str()))
         .then_some(first)
+}
+
+fn common_workspace_id(nodes: &[EvidenceNode]) -> Option<String> {
+    let first = nodes.first()?.item.workspace_id.clone()?;
+    nodes
+        .iter()
+        .all(|node| node.item.workspace_id.as_deref() == Some(first.as_str()))
+        .then_some(first)
+}
+
+fn grouping_family(item: &ActivityItem) -> String {
+    if let Some(workspace_id) = item.workspace_id.as_deref().filter(|value| !value.is_empty()) {
+        return format!("workspace:{workspace_id}");
+    }
+    project_family(item)
 }
 
 fn project_family(item: &ActivityItem) -> String {
@@ -1634,10 +1690,25 @@ mod tests {
     use super::*;
 
     fn activity(id: &str, summary: &str, branch: Option<&str>, minute: &str) -> ActivityItem {
+        activity_with_project_workspace(id, summary, branch, minute, "project_1", "WorkTrace", None)
+    }
+
+    fn activity_with_project_workspace(
+        id: &str,
+        summary: &str,
+        branch: Option<&str>,
+        minute: &str,
+        project_id: &str,
+        project_name: &str,
+        workspace_id: Option<&str>,
+    ) -> ActivityItem {
         ActivityItem {
             id: id.to_string(),
-            project_id: Some("project_1".to_string()),
-            project_name: Some("WorkTrace".to_string()),
+            project_id: Some(project_id.to_string()),
+            project_name: Some(project_name.to_string()),
+            workspace_id: workspace_id.map(str::to_string),
+            workspace_name: workspace_id.map(|_| "Sparc Force".to_string()),
+            workspace_relative_path: None,
             activity_type: "commit".to_string(),
             summary: summary.to_string(),
             occurred_at: format!("2026-05-27T10:{minute}:00Z"),
@@ -1732,6 +1803,87 @@ mod tests {
 
         assert_eq!(drafts.len(), 1);
         assert_eq!(drafts[0].items.len(), 2);
+    }
+
+    #[test]
+    fn shared_workspace_and_feature_branch_can_group_across_projects() {
+        let drafts = cluster_nodes(
+            vec![
+                EvidenceNode::new(
+                    activity_with_project_workspace(
+                        "api_1",
+                        "feat: add campaign invite metrics",
+                        Some("feature/tasks-analytics"),
+                        "00",
+                        "api",
+                        "SPARC-FORCE-API",
+                        Some("workspace_sparc"),
+                    ),
+                    vec![change("hash_api_1", "src/campaigns/invites.rs", "src")],
+                    Vec::new(),
+                    None,
+                ),
+                EvidenceNode::new(
+                    activity_with_project_workspace(
+                        "web_1",
+                        "feat: update campaign invites table",
+                        Some("feature/tasks-analytics"),
+                        "12",
+                        "web",
+                        "SPARC-FORCE-WEB",
+                        Some("workspace_sparc"),
+                    ),
+                    vec![change("hash_web_1", "src/components/CampaignInvitesTable.tsx", "src")],
+                    Vec::new(),
+                    None,
+                ),
+            ],
+            &[],
+        );
+
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].project_id, None);
+        assert_eq!(drafts[0].workspace_id.as_deref(), Some("workspace_sparc"));
+        assert_eq!(drafts[0].items.len(), 2);
+    }
+
+    #[test]
+    fn same_workspace_alone_does_not_group_unrelated_commits() {
+        let drafts = cluster_nodes(
+            vec![
+                EvidenceNode::new(
+                    activity_with_project_workspace(
+                        "api_2",
+                        "feat: add billing export",
+                        None,
+                        "00",
+                        "api",
+                        "SPARC-FORCE-API",
+                        Some("workspace_sparc"),
+                    ),
+                    vec![change("hash_api_2", "src/billing/export.rs", "src")],
+                    Vec::new(),
+                    None,
+                ),
+                EvidenceNode::new(
+                    activity_with_project_workspace(
+                        "web_2",
+                        "fix: improve profile avatar upload",
+                        None,
+                        "09",
+                        "web",
+                        "SPARC-FORCE-WEB",
+                        Some("workspace_sparc"),
+                    ),
+                    vec![change("hash_web_2", "src/profile/avatar.tsx", "src")],
+                    Vec::new(),
+                    None,
+                ),
+            ],
+            &[],
+        );
+
+        assert!(drafts.is_empty());
     }
 }
 

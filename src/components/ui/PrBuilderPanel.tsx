@@ -9,8 +9,10 @@ import { listGitBranches } from "../../lib/api/projects";
 import {
   fullPrPackageText,
   generatePrPackage,
+  type PrPackageGroupContext,
   suggestedBaseBranch,
   suggestedBranchName,
+  suggestedPrNotes,
   suggestedPrTitle,
 } from "../../lib/prBuilder";
 import { Badge } from "./Badge";
@@ -20,11 +22,13 @@ import { Panel } from "./Panel";
 export function PrBuilderPanel({
   project,
   commits,
+  groups = [],
   onClose,
   onCopy,
 }: {
   project: Project;
   commits: ActivityItem[];
+  groups?: PrPackageGroupContext[];
   onClose: () => void;
   onCopy: (label: string, value: string) => void;
 }) {
@@ -32,9 +36,9 @@ export function PrBuilderPanel({
   const [branchLoadState, setBranchLoadState] = useState<"loading" | "loaded" | "failed">("loading");
   const [branchLoadWarning, setBranchLoadWarning] = useState<string | null>(null);
   const [baseBranch, setBaseBranch] = useState("");
-  const [branchName, setBranchName] = useState(() => suggestedBranchName(project.name, commits));
-  const [title, setTitle] = useState(() => suggestedPrTitle(commits, project.name));
-  const [notes, setNotes] = useState("");
+  const [branchName, setBranchName] = useState(() => suggestedBranchName(project.name, commits, groups));
+  const [title, setTitle] = useState(() => suggestedPrTitle(commits, project.name, groups));
+  const [notes, setNotes] = useState(() => suggestedPrNotes(commits, groups));
   const [createdPrUrl, setCreatedPrUrl] = useState<string | null>(null);
 
   const githubStatusQuery = useQuery({
@@ -78,6 +82,12 @@ export function PrBuilderPanel({
     };
   }, [commits, project.id]);
 
+  useEffect(() => {
+    setBranchName(suggestedBranchName(project.name, commits, groups));
+    setTitle(suggestedPrTitle(commits, project.name, groups));
+    setNotes(suggestedPrNotes(commits, groups));
+  }, [commits, groups, project.name]);
+
   const canGeneratePackage = baseBranch.trim().length > 0;
 
   const prPackage = useMemo(
@@ -89,8 +99,9 @@ export function PrBuilderPanel({
         branchName,
         title,
         notes,
+        groups,
       }),
-    [baseBranch, branchName, commits, notes, project, title],
+    [baseBranch, branchName, commits, groups, notes, project, title],
   );
   const createPrMutation = useMutation({
     mutationFn: () =>
@@ -262,6 +273,7 @@ export function PrBuilderPanel({
 
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/8 bg-white/[0.03] p-3">
         <div className="flex flex-wrap items-center gap-2">
+          {groups.length ? <Badge tone="green">{groups.length} work item(s)</Badge> : null}
           <Badge tone="cyan">{prPackage.selectedCommits.length} commit(s)</Badge>
           <Badge tone="slate">Read-only package</Badge>
         </div>

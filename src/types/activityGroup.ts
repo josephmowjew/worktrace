@@ -19,6 +19,13 @@ export type ActivityGroup = {
   id: string;
   projectId?: string | null;
   projectName?: string | null;
+  workspaceId?: string | null;
+  workspaceName?: string | null;
+  projectCount: number;
+  projects: Array<{
+    projectId: string;
+    projectName: string;
+  }>;
   title: string;
   summary?: string | null;
   startDate: string;
@@ -57,6 +64,7 @@ export type ListActivityGroupsInput = {
   from: string;
   to: string;
   projectIds?: string[] | null;
+  workspaceIds?: string[] | null;
   classification?: string | null;
   gitRefs?: GitRefFilter[] | null;
   worktreePaths?: string[] | null;
@@ -70,6 +78,7 @@ export type SuggestActivityGroupsInput = Omit<ListActivityGroupsInput, "includeH
 
 export type CreateActivityGroupInput = {
   projectId?: string | null;
+  workspaceId?: string | null;
   title: string;
   summary?: string | null;
   startDate: string;
@@ -96,7 +105,7 @@ export type CreateActivityGroupInput = {
 };
 
 export type UpdateActivityGroupInput = Partial<
-  Omit<CreateActivityGroupInput, "projectId" | "items">
+  Omit<CreateActivityGroupInput, "projectId" | "workspaceId" | "items">
 >;
 
 export type ReplaceActivityGroupItemsInput = {

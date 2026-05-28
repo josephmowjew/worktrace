@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use chrono::Utc;
@@ -25,6 +25,41 @@ pub struct GitScanResult {
     pub worktrees: Vec<GitWorktree>,
 }
 
+pub struct GitScanOptions {
+    pub collect_evidence: bool,
+    pub evidence_commit_hashes: Option<HashSet<String>>,
+    pub check_worktree_clean: bool,
+    pub revision_sources: Option<Vec<GitRevisionSource>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GitRevisionSource {
+    pub source_kind: String,
+    pub source_name: String,
+    pub repo_path: String,
+    pub rev: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct GitSourceHead {
+    pub source_kind: String,
+    pub source_name: String,
+    pub repo_path: String,
+    pub rev: String,
+    pub head_commit: Option<String>,
+}
+
+impl Default for GitScanOptions {
+    fn default() -> Self {
+        Self {
+            collect_evidence: true,
+            evidence_commit_hashes: None,
+            check_worktree_clean: true,
+            revision_sources: None,
+        }
+    }
+}
+
 impl GitScanner {
     pub fn scan(
         project_id: &str,
@@ -33,16 +68,199 @@ impl GitScanner {
         to: Option<&str>,
         author_email: Option<&str>,
     ) -> Result<GitScanResult, GitScanError> {
+        Self::scan_with_options(
+            project_id,
+            repo_path,
+            from,
+            to,
+            author_email,
+            GitScanOptions::default(),
+        )
+    }
+
+    pub fn ref_fingerprint(project_id: &str, repo_path: &str) -> Result<String, GitScanError> {
+        if !Path::new(repo_path).exists() {
+            return Err(GitScanError::RepoNotFound(repo_path.to_string()));
+        }
+        let scanned_at = Utc::now().to_rfc3339();
+        let refs = discover_refs(project_id, repo_path, &scanned_at)?;
+        let worktrees = discover_worktrees(project_id, repo_path, &scanned_at, false)?;
+        Ok(ref_fingerprint(&refs, &worktrees))
+    }
+
+    pub fn discover_source_heads(
+        project_id: &str,
+        repo_path: &str,
+    ) -> Result<Vec<GitSourceHead>, GitScanError> {
+        if !Path::new(repo_path).exists() {
+            return Err(GitScanError::RepoNotFound(repo_path.to_string()));
+        }
+        let scanned_at = Utc::now().to_rfc3339();
+        let refs = discover_refs(project_id, repo_path, &scanned_at)?;
+        let worktrees = discover_worktrees(project_id, repo_path, &scanned_at, false)?;
+        let mut heads = refs
+            .iter()
+            .filter_map(|git_ref| {
+                git_ref.last_seen_commit.as_ref().map(|head| GitSourceHead {
+                    source_kind: format!("ref:{}", git_ref.kind.as_storage_value()),
+                    source_name: git_ref.name.clone(),
+                    repo_path: repo_path.to_string(),
+                    rev: git_ref.full_name.clone(),
+                    head_commit: Some(head.clone()),
+                })
+            })
+            .collect::<Vec<_>>();
+        heads.extend(worktrees.iter().filter_map(|worktree| {
+            worktree.head_commit.as_ref().map(|head| GitSourceHead {
+                source_kind: "worktree".to_string(),
+                source_name: worktree.path.clone(),
+                repo_path: worktree.path.clone(),
+                rev: worktree.branch.clone().unwrap_or_else(|| head.clone()),
+                head_commit: Some(head.clone()),
+            })
+        }));
+        if heads.is_empty() {
+            let head = rev_parse(repo_path, "HEAD").ok();
+            heads.push(GitSourceHead {
+                source_kind: "head".to_string(),
+                source_name: "HEAD".to_string(),
+                repo_path: repo_path.to_string(),
+                rev: "HEAD".to_string(),
+                head_commit: head,
+            });
+        }
+        Ok(heads)
+    }
+
+    pub fn is_ancestor(repo_path: &str, ancestor: &str, descendant: &str) -> bool {
+        runner::run_git(
+            repo_path,
+            &["merge-base", "--is-ancestor", ancestor, descendant],
+        )
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+    }
+
+    pub fn scan_with_options(
+        project_id: &str,
+        repo_path: &str,
+        from: Option<&str>,
+        to: Option<&str>,
+        author_email: Option<&str>,
+        options: GitScanOptions,
+    ) -> Result<GitScanResult, GitScanError> {
         if !Path::new(repo_path).exists() {
             return Err(GitScanError::RepoNotFound(repo_path.to_string()));
         }
 
         let scanned_at = Utc::now().to_rfc3339();
         let refs = discover_refs(project_id, repo_path, &scanned_at)?;
-        let worktrees = discover_worktrees(project_id, repo_path, &scanned_at)?;
+        let worktrees = discover_worktrees(
+            project_id,
+            repo_path,
+            &scanned_at,
+            options.check_worktree_clean,
+        )?;
         let mut commits_by_hash: HashMap<String, ParsedGitCommit> = HashMap::new();
         let mut stats_by_hash: HashMap<String, CommitStats> = HashMap::new();
         let mut refs_by_commit: HashMap<String, Vec<CommitRef>> = HashMap::new();
+
+        if let Some(revision_sources) = &options.revision_sources {
+            let mut commit_worktree_refs = Vec::new();
+            for source in revision_sources {
+                let stdout = run_git_log(&source.repo_path, &source.rev, from, to, author_email)?;
+                for parsed in parse_git_log(&stdout) {
+                    if source.source_kind == "worktree" {
+                        commit_worktree_refs.push(CommitWorktreeRef {
+                            project_id: project_id.to_string(),
+                            commit_hash: parsed.commit_hash.clone(),
+                            worktree_path: source.source_name.clone(),
+                            branch: Some(source.rev.clone()),
+                        });
+                    } else {
+                        let ref_kind = if source.source_kind == "ref:remote" {
+                            GitRefKind::Remote
+                        } else {
+                            GitRefKind::Local
+                        };
+                        refs_by_commit
+                            .entry(parsed.commit_hash.clone())
+                            .or_default()
+                            .push(CommitRef {
+                                project_id: project_id.to_string(),
+                                commit_hash: parsed.commit_hash.clone(),
+                                ref_name: source.source_name.clone(),
+                                ref_kind,
+                            });
+                    }
+                    commits_by_hash
+                        .entry(parsed.commit_hash.clone())
+                        .or_insert(parsed);
+                }
+                if options.collect_evidence {
+                    for (hash, stats) in load_commit_stats(
+                        project_id,
+                        &source.repo_path,
+                        &source.rev,
+                        from,
+                        to,
+                        author_email,
+                        &scanned_at,
+                        options.evidence_commit_hashes.as_ref(),
+                    )? {
+                        stats_by_hash.entry(hash).or_insert(stats);
+                    }
+                }
+            }
+
+            commit_worktree_refs.sort_by(|left, right| {
+                left.commit_hash
+                    .cmp(&right.commit_hash)
+                    .then_with(|| left.worktree_path.cmp(&right.worktree_path))
+            });
+            commit_worktree_refs.dedup_by(|left, right| {
+                left.commit_hash == right.commit_hash && left.worktree_path == right.worktree_path
+            });
+            let mut commit_refs = refs_by_commit
+                .values()
+                .flat_map(|refs| refs.iter().cloned())
+                .collect::<Vec<_>>();
+            commit_refs.sort_by(|left, right| {
+                left.commit_hash
+                    .cmp(&right.commit_hash)
+                    .then_with(|| left.ref_name.cmp(&right.ref_name))
+            });
+            commit_refs.dedup_by(|left, right| {
+                left.commit_hash == right.commit_hash
+                    && left.ref_name == right.ref_name
+                    && left.ref_kind == right.ref_kind
+            });
+            let commits = commits_by_hash
+                .into_iter()
+                .map(|(commit_hash, parsed)| {
+                    let branch = preferred_branch(&commit_hash, &refs_by_commit, &refs);
+                    let mut commit = with_project(parsed, project_id, branch);
+                    if let Some(commit_stats) = stats_by_hash.get(&commit.commit_hash) {
+                        commit.files_changed = Some(commit_stats.files_changed);
+                        commit.insertions = Some(commit_stats.insertions);
+                        commit.deletions = Some(commit_stats.deletions);
+                    }
+                    commit
+                })
+                .collect::<Vec<_>>();
+            let file_changes = collect_file_changes(&stats_by_hash);
+            let diff_snippets =
+                collect_diff_snippets(repo_path, project_id, &file_changes, &scanned_at);
+            return Ok(GitScanResult {
+                commits,
+                file_changes,
+                diff_snippets,
+                refs,
+                commit_refs,
+                commit_worktree_refs,
+                worktrees,
+            });
+        }
 
         for git_ref in &refs {
             let stdout = run_git_log(repo_path, &git_ref.full_name, from, to, author_email)?;
@@ -61,16 +279,19 @@ impl GitScanner {
                     .or_insert(parsed);
             }
 
-            for (hash, stats) in load_commit_stats(
-                project_id,
-                repo_path,
-                &git_ref.full_name,
-                from,
-                to,
-                author_email,
-                &scanned_at,
-            )? {
-                stats_by_hash.entry(hash).or_insert(stats);
+            if options.collect_evidence {
+                for (hash, stats) in load_commit_stats(
+                    project_id,
+                    repo_path,
+                    &git_ref.full_name,
+                    from,
+                    to,
+                    author_email,
+                    &scanned_at,
+                    options.evidence_commit_hashes.as_ref(),
+                )? {
+                    stats_by_hash.entry(hash).or_insert(stats);
+                }
             }
         }
 
@@ -84,16 +305,19 @@ impl GitScanner {
                     .entry(parsed.commit_hash.clone())
                     .or_insert(parsed);
             }
-            for (hash, stats) in load_commit_stats(
-                project_id,
-                repo_path,
-                "HEAD",
-                from,
-                to,
-                author_email,
-                &scanned_at,
-            )? {
-                stats_by_hash.entry(hash).or_insert(stats);
+            if options.collect_evidence {
+                for (hash, stats) in load_commit_stats(
+                    project_id,
+                    repo_path,
+                    "HEAD",
+                    from,
+                    to,
+                    author_email,
+                    &scanned_at,
+                    options.evidence_commit_hashes.as_ref(),
+                )? {
+                    stats_by_hash.entry(hash).or_insert(stats);
+                }
             }
             let commit_worktree_refs = scan_worktree_commits(
                 project_id,
@@ -103,6 +327,7 @@ impl GitScanner {
                 author_email,
                 &mut commits_by_hash,
                 &mut stats_by_hash,
+                &options,
             )?;
             let commits = commits_by_hash
                 .into_values()
@@ -140,6 +365,7 @@ impl GitScanner {
             author_email,
             &mut commits_by_hash,
             &mut stats_by_hash,
+            &options,
         )?;
         let mut commit_refs = refs_by_commit
             .values()
@@ -332,6 +558,19 @@ fn current_branch(repo_path: &str) -> Result<String, GitScanError> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+fn rev_parse(repo_path: &str, rev: &str) -> Result<String, GitScanError> {
+    let output = runner::run_git(repo_path, &["rev-parse", rev])
+        .map_err(|source| GitScanError::CommandFailed(source.to_string()))?;
+
+    if !output.status.success() {
+        return Err(GitScanError::CommandFailed(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 fn load_commit_stats(
     project_id: &str,
     repo_path: &str,
@@ -340,6 +579,7 @@ fn load_commit_stats(
     to: Option<&str>,
     author_email: Option<&str>,
     collected_at: &str,
+    only_hashes: Option<&HashSet<String>>,
 ) -> Result<std::collections::HashMap<String, CommitStats>, GitScanError> {
     let mut args = vec![
         "log".to_string(),
@@ -369,6 +609,9 @@ fn load_commit_stats(
             continue;
         };
         if !is_full_commit_hash(hash) {
+            continue;
+        }
+        if only_hashes.is_some_and(|hashes| !hashes.contains(hash)) {
             continue;
         }
         let mut stats = CommitStats {
@@ -598,6 +841,7 @@ fn discover_worktrees(
     project_id: &str,
     repo_path: &str,
     scanned_at: &str,
+    check_clean: bool,
 ) -> Result<Vec<GitWorktree>, GitScanError> {
     let output = runner::run_git(repo_path, &["worktree", "list", "--porcelain"])
         .map_err(|source| GitScanError::CommandFailed(source.to_string()))?;
@@ -621,7 +865,11 @@ fn discover_worktrees(
             if let Some(worktree_path) = path.take() {
                 worktrees.push(GitWorktree {
                     project_id: project_id.to_string(),
-                    is_clean: worktree_clean(&worktree_path).ok(),
+                    is_clean: if check_clean {
+                        worktree_clean(&worktree_path).ok()
+                    } else {
+                        None
+                    },
                     path: worktree_path,
                     branch: branch.take(),
                     head_commit: head.take(),
@@ -651,7 +899,11 @@ fn discover_worktrees(
     if let Some(worktree_path) = path.take() {
         worktrees.push(GitWorktree {
             project_id: project_id.to_string(),
-            is_clean: worktree_clean(&worktree_path).ok(),
+            is_clean: if check_clean {
+                worktree_clean(&worktree_path).ok()
+            } else {
+                None
+            },
             path: worktree_path,
             branch,
             head_commit: head,
@@ -672,6 +924,7 @@ fn scan_worktree_commits(
     author_email: Option<&str>,
     commits_by_hash: &mut HashMap<String, ParsedGitCommit>,
     stats_by_hash: &mut HashMap<String, CommitStats>,
+    options: &GitScanOptions,
 ) -> Result<Vec<CommitWorktreeRef>, GitScanError> {
     let mut commit_refs = Vec::new();
 
@@ -694,17 +947,20 @@ fn scan_worktree_commits(
                 .or_insert(parsed);
         }
 
-        let collected_at = Utc::now().to_rfc3339();
-        for (hash, stats) in load_commit_stats(
-            project_id,
-            &worktree.path,
-            revision,
-            from,
-            to,
-            author_email,
-            &collected_at,
-        )? {
-            stats_by_hash.entry(hash).or_insert(stats);
+        if options.collect_evidence {
+            let collected_at = Utc::now().to_rfc3339();
+            for (hash, stats) in load_commit_stats(
+                project_id,
+                &worktree.path,
+                revision,
+                from,
+                to,
+                author_email,
+                &collected_at,
+                options.evidence_commit_hashes.as_ref(),
+            )? {
+                stats_by_hash.entry(hash).or_insert(stats);
+            }
         }
     }
 
@@ -805,13 +1061,36 @@ fn ref_kind_rank(kind: &GitRefKind) -> u8 {
     }
 }
 
+fn ref_fingerprint(refs: &[GitRef], worktrees: &[GitWorktree]) -> String {
+    let mut parts = refs
+        .iter()
+        .map(|git_ref| {
+            format!(
+                "ref:{}:{}:{}",
+                git_ref.kind.as_storage_value(),
+                git_ref.full_name,
+                git_ref.last_seen_commit.as_deref().unwrap_or("")
+            )
+        })
+        .chain(worktrees.iter().map(|worktree| {
+            format!(
+                "worktree:{}:{}",
+                worktree.branch.as_deref().unwrap_or(""),
+                worktree.head_commit.as_deref().unwrap_or("")
+            )
+        }))
+        .collect::<Vec<_>>();
+    parts.sort();
+    parts.join("|")
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::GitScanner;
+    use super::{GitScanOptions, GitScanner};
 
     #[test]
     fn scanner_reads_real_git_commit_with_stats() {
@@ -850,6 +1129,49 @@ mod tests {
         assert_eq!(scan.file_changes.len(), 1);
         assert_eq!(scan.file_changes[0].commit_hash, commits[0].commit_hash);
         assert_eq!(scan.file_changes[0].path, "activity.txt");
+
+        fs::remove_dir_all(repo_path).ok();
+    }
+
+    #[test]
+    fn scanner_can_skip_expensive_evidence_collection() {
+        let repo_path = create_temp_repo_path();
+        fs::create_dir_all(&repo_path).expect("create temp repo");
+        run_git(&repo_path, &["init"]);
+        run_git(&repo_path, &["config", "user.name", "WorkTrace Tester"]);
+        run_git(
+            &repo_path,
+            &["config", "user.email", "tester@worktrace.local"],
+        );
+
+        fs::write(repo_path.join("activity.txt"), "first line\nsecond line\n")
+            .expect("write commit file");
+        run_git(&repo_path, &["add", "."]);
+        run_git_with_dates(
+            &repo_path,
+            &["commit", "-m", "feat: cheap scan"],
+            "2026-05-20T10:00:00+00:00",
+        );
+
+        let scan = GitScanner::scan_with_options(
+            "project_test",
+            repo_path.to_str().expect("repo path string"),
+            Some("2026-05-19"),
+            Some("2026-05-21"),
+            Some("tester@worktrace.local"),
+            GitScanOptions {
+                collect_evidence: false,
+                evidence_commit_hashes: None,
+                check_worktree_clean: false,
+                revision_sources: None,
+            },
+        )
+        .expect("scan commits");
+
+        assert_eq!(scan.commits.len(), 1);
+        assert!(scan.file_changes.is_empty());
+        assert!(scan.diff_snippets.is_empty());
+        assert_eq!(scan.commits[0].files_changed, None);
 
         fs::remove_dir_all(repo_path).ok();
     }

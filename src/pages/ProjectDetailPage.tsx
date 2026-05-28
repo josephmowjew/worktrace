@@ -3,6 +3,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { useParams, useNavigate } from "react-router-dom";
 import { useEffect, useState, useMemo, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
+import { CheckCircle2, ChevronDown, ChevronRight, Edit3, GitCommit, GitCommitVertical, Sparkles } from "lucide-react";
 import { ProjectDetailHeader } from "../components/ui/ProjectDetailHeader";
 import { ProjectFormPanel } from "../components/ui/ProjectFormPanel";
 import { ProjectDetailTabs, type ProjectDetailTab } from "../components/ui/ProjectDetailTabs";
@@ -16,6 +17,8 @@ import { Button } from "../components/ui/Button";
 import { useSpeech } from "../components/ui/SpeechProvider";
 import { useToast } from "../components/ui/ToastProvider";
 import { WeekRangePicker } from "../components/ui/WeekRangePicker";
+import { Badge } from "../components/ui/Badge";
+import { ModalShell } from "../components/ui/ModalShell";
 import { useEscapeKey } from "../hooks/useEscapeKey";
 import {
   getProjectById,
@@ -30,11 +33,15 @@ import {
 } from "../lib/api/projects";
 import { syncCommits } from "../lib/api/gitSync";
 import { listActivity, getWeekSummary } from "../lib/api/activity";
+import { listActivityGroups, recordActivityGroupTitleFeedback, updateActivityGroup } from "../lib/api/activityGroups";
 import { listWeeklyTasks } from "../lib/api/weeklyTasks";
 import { listManualLogs } from "../lib/api/manualLogs";
 import { syncAnnouncement, syncStartedAnnouncement } from "../lib/announcements";
 import { currentWeekRange, shiftWeek } from "../lib/dates";
 import type { CreateProjectInput, GitRef, GitRefFilter, GitWorktree, ProjectGitFocus } from "../types/project";
+import type { ActivityItem } from "../types/activity";
+import type { ActivityGroup } from "../types/activityGroup";
+import type { PrPackageGroupContext } from "../lib/prBuilder";
 
 export function ProjectDetailPage() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -45,8 +52,12 @@ export function ProjectDetailPage() {
   const [activeTab, setActiveTab] = useState<ProjectDetailTab>("commits");
   const [weekAnchor, setWeekAnchor] = useState(() => new Date());
   const [selectedCommitIds, setSelectedCommitIds] = useState<Set<string>>(() => new Set());
+  const [selectedGroupIds, setSelectedGroupIds] = useState<Set<string>>(() => new Set());
   const [isPrBuilderOpen, setIsPrBuilderOpen] = useState(false);
   const [isEditFormOpen, setIsEditFormOpen] = useState(false);
+  const [editingGroup, setEditingGroup] = useState<ActivityGroup | null>(null);
+  const [organizeStatus, setOrganizeStatus] = useState<string | null>(null);
+  const [currentOrganizedGroupIds, setCurrentOrganizedGroupIds] = useState<Set<string>>(() => new Set());
   const editFormRef = useRef<HTMLDivElement>(null);
 
   const weekRange = useMemo(() => currentWeekRange(weekAnchor), [weekAnchor]);
@@ -63,6 +74,14 @@ export function ProjectDetailPage() {
     saveProjectMutation.reset();
     setIsEditFormOpen(false);
   }, isEditFormOpen);
+
+  useEffect(() => {
+    setSelectedCommitIds(new Set());
+    setSelectedGroupIds(new Set());
+    setIsPrBuilderOpen(false);
+    setCurrentOrganizedGroupIds(new Set());
+    setOrganizeStatus(null);
+  }, [projectId, weekRange.from, weekRange.to]);
 
   const projectQuery = useQuery({
     queryKey: ["project", projectId],
@@ -84,6 +103,18 @@ export function ProjectDetailPage() {
   const activityQuery = useQuery({
     queryKey: ["activity", weekRange.from, weekRange.to, projectId],
     queryFn: () => listActivity({ from: weekRange.from, to: weekRange.to, projectIds: [projectId!] }),
+    enabled: !!projectId,
+  });
+
+  const activityGroupsQuery = useQuery({
+    queryKey: ["activityGroups", weekRange.from, weekRange.to, projectId],
+    queryFn: () =>
+      listActivityGroups({
+        from: weekRange.from,
+        to: weekRange.to,
+        projectIds: null,
+        includeHidden: true,
+      }),
     enabled: !!projectId,
   });
 
@@ -129,7 +160,7 @@ export function ProjectDetailPage() {
   });
 
   const syncMutation = useMutation({
-    mutationFn: () => syncCommits({ from: null, to: null, authorEmail: null, projectIds: [projectId!] }),
+    mutationFn: () => syncCommits({ from: null, to: null, authorEmail: null, projectIds: [projectId!], mode: "auto" }),
     onMutate: () => {
       speech.announce(syncStartedAnnouncement(project ? `${project.name} activity` : "project activity"), {
         category: "sync",
@@ -137,6 +168,7 @@ export function ProjectDetailPage() {
     },
     onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["activity"] });
+      await queryClient.invalidateQueries({ queryKey: ["activityGroups"] });
       await queryClient.invalidateQueries({ queryKey: ["projectStats"] });
       await queryClient.invalidateQueries({ queryKey: ["gitRefs", projectId] });
       await queryClient.invalidateQueries({ queryKey: ["gitWorktrees", projectId] });
@@ -146,6 +178,68 @@ export function ProjectDetailPage() {
     },
     onError: (error) => {
       toast.error("Sync failed", error instanceof Error ? error.message : "Repository sync could not be completed.");
+    },
+  });
+
+  const smartOrganizeMutation = useMutation({
+    mutationFn: async () => {
+      setOrganizeStatus("Checking repositories");
+      const syncResult = await syncCommits({
+        from: weekRange.from,
+        to: weekRange.to,
+        authorEmail: null,
+        projectIds: [projectId!],
+        mode: "auto",
+      });
+      const evidenceStatus =
+        syncResult.skippedFreshProjects > 0 || syncResult.unchangedProjects > 0
+          ? "Using timeline work items from cached evidence"
+          : syncResult.newCommits > 0
+            ? `Synced ${syncResult.newCommits} latest local commits`
+            : "Using timeline work items";
+
+      return { evidenceStatus };
+    },
+    onSuccess: async (result) => {
+      setOrganizeStatus(result.evidenceStatus);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["activity"] }),
+        queryClient.invalidateQueries({ queryKey: ["activityGroups"] }),
+        queryClient.invalidateQueries({ queryKey: ["reports"] }),
+      ]);
+      toast.success(
+        "Timeline groups refreshed",
+        "Project Details is using the same work items generated in Activity Timeline.",
+      );
+    },
+    onError: (error) => {
+      setOrganizeStatus(null);
+      toast.error("Group refresh failed", error instanceof Error ? error.message : "Timeline work items could not be refreshed.");
+    },
+  });
+
+  const updateGroupMutation = useMutation({
+    mutationFn: ({ id, group }: { id: string; group: { title: string; summary?: string | null; reportSummary?: string | null; includedInReport: boolean; reviewStatus?: string } }) =>
+      updateActivityGroup(id, group),
+    onSuccess: (_, variables) => {
+      const original = editingGroup;
+      setEditingGroup(null);
+      queryClient.invalidateQueries({ queryKey: ["activityGroups"] });
+      queryClient.invalidateQueries({ queryKey: ["reports"] });
+      if (original && (original.title !== variables.group.title || original.reportSummary !== variables.group.reportSummary)) {
+        recordActivityGroupTitleFeedback({
+          groupId: variables.id,
+          eventType: original.title !== variables.group.title ? "title_renamed" : "summary_edited",
+          previousTitle: original.title,
+          newTitle: variables.group.title,
+          previousSummary: original.reportSummary,
+          newSummary: variables.group.reportSummary,
+        }).catch(() => undefined);
+      }
+      toast.success("Work item updated", "Project detail and reports will use the new narrative.");
+    },
+    onError: (error) => {
+      toast.error("Update failed", error instanceof Error ? error.message : "Work item could not be updated.");
     },
   });
 
@@ -191,10 +285,40 @@ export function ProjectDetailPage() {
   }, [activityQuery.data]);
 
   const commits = useMemo(() => activityItems.filter((item) => item.activityType === "commit"), [activityItems]);
-  const selectedCommits = useMemo(
-    () => commits.filter((commit) => selectedCommitIds.has(commit.id)),
-    [commits, selectedCommitIds],
+  const commitsById = useMemo(
+    () => new Map(commits.map((commit) => [commit.id, commit])),
+    [commits],
   );
+  const visibleGroups = useMemo(
+    () => (activityGroupsQuery.data ?? [])
+      .filter((group) => shouldDisplayActivityGroup(group, currentOrganizedGroupIds))
+      .filter((group) => groupHasProjectCommit(group, commitsById, projectId)),
+    [activityGroupsQuery.data, commitsById, currentOrganizedGroupIds, projectId],
+  );
+  const groupedCommitIds = useMemo(
+    () => new Set(visibleGroups.flatMap((group) => group.items.map((item) => item.sourceId))),
+    [visibleGroups],
+  );
+  const visibleRawCommits = useMemo(
+    () => commits.filter((commit) => !groupedCommitIds.has(commit.id)),
+    [commits, groupedCommitIds],
+  );
+  const selectedGroups = useMemo(
+    () => visibleGroups.filter((group) => selectedGroupIds.has(group.id)),
+    [selectedGroupIds, visibleGroups],
+  );
+  const selectedCommits = useMemo(
+    () => dedupeCommitsByHash([
+      ...selectedGroups.flatMap((group) => commitsForGroup(group, commitsById)),
+      ...commits.filter((commit) => selectedCommitIds.has(commit.id)),
+    ]),
+    [commits, commitsById, selectedCommitIds, selectedGroups],
+  );
+  const selectedPrGroups = useMemo(
+    () => selectedGroups.map((group) => groupToPrContext(group, commitsById)),
+    [commitsById, selectedGroups],
+  );
+  const selectedUnitCount = selectedGroupIds.size + selectedCommitIds.size;
   const meetings = useMemo(() => {
     return (logsQuery.data ?? []).filter((log) => log.activityType === "Meeting");
   }, [logsQuery.data]);
@@ -230,8 +354,27 @@ export function ProjectDetailPage() {
     });
   }
 
+  function toggleGroupSelection(groupId: string) {
+    setSelectedGroupIds((current) => {
+      const next = new Set(current);
+      if (next.has(groupId)) {
+        next.delete(groupId);
+      } else {
+        next.add(groupId);
+      }
+      return next;
+    });
+  }
+
+  function buildPrFromGroup(group: ActivityGroup) {
+    setSelectedGroupIds(new Set([group.id]));
+    setSelectedCommitIds(new Set());
+    setIsPrBuilderOpen(true);
+  }
+
   function clearCommitSelection() {
     setSelectedCommitIds(new Set());
+    setSelectedGroupIds(new Set());
     setIsPrBuilderOpen(false);
   }
 
@@ -337,17 +480,32 @@ export function ProjectDetailPage() {
                 <div>
                   <h2 className="text-sm font-semibold text-white">PR Builder</h2>
                   <p className="mt-1 text-xs text-slate-500">
-                    Select commits to generate a copy-ready GitHub PR package.
+                    Select work items or raw commits to generate a copy-ready GitHub PR package.
                   </p>
+                  {organizeStatus ? (
+                    <p className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-cyan-300/15 bg-cyan-300/10 px-2 py-1 text-[11px] font-semibold text-cyan-100">
+                      <Sparkles className="h-3 w-3" />
+                      {organizeStatus}
+                    </p>
+                  ) : null}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="rounded-lg border border-white/8 bg-white/[0.03] px-3 py-2 text-xs font-semibold text-slate-300">
-                    {selectedCommits.length} selected
+                    {selectedUnitCount} selected
                   </span>
                   <Button
                     type="button"
                     variant="secondary"
-                    disabled={selectedCommits.length === 0}
+                    disabled={smartOrganizeMutation.isPending || syncMutation.isPending || activityQuery.isLoading}
+                    onClick={() => smartOrganizeMutation.mutate()}
+                  >
+                    <Sparkles className={`h-4 w-4 ${smartOrganizeMutation.isPending ? "animate-pulse" : ""}`} />
+                    {smartOrganizeMutation.isPending ? "Refreshing..." : "Refresh Groups"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={selectedUnitCount === 0}
                     onClick={clearCommitSelection}
                   >
                     Clear
@@ -366,15 +524,22 @@ export function ProjectDetailPage() {
                 <PrBuilderPanel
                   project={project}
                   commits={selectedCommits}
+                  groups={selectedPrGroups}
                   onClose={() => setIsPrBuilderOpen(false)}
                   onCopy={copyPrBuilderText}
                 />
               ) : null}
-              <CommitList
-                commits={commits}
-                isLoading={activityQuery.isLoading}
+              <ProjectWorkStream
+                groups={visibleGroups}
+                rawCommits={visibleRawCommits}
+                isLoading={activityQuery.isLoading || activityGroupsQuery.isLoading}
+                commitsById={commitsById}
+                selectedGroupIds={selectedGroupIds}
                 selectedCommitIds={selectedCommitIds}
+                onToggleGroup={toggleGroupSelection}
                 onToggleCommit={toggleCommitSelection}
+                onEditGroup={setEditingGroup}
+                onBuildGroupPr={buildPrFromGroup}
               />
             </>
           )}
@@ -400,7 +565,7 @@ export function ProjectDetailPage() {
           {activeTab === "meetings" && (
             <MeetingList meetings={meetings} isLoading={activityQuery.isLoading || logsQuery.isLoading} />
           )}
-          {activeTab === "all" && (
+      {activeTab === "all" && (
             <CommitList commits={allActivity} isLoading={activityQuery.isLoading || logsQuery.isLoading} />
           )}
         </div>
@@ -413,7 +578,295 @@ export function ProjectDetailPage() {
           isSyncing={syncMutation.isPending}
         />
       </div>
+      {editingGroup ? (
+        <ProjectGroupEditModal
+          group={editingGroup}
+          isSaving={updateGroupMutation.isPending}
+          onClose={() => setEditingGroup(null)}
+          onSave={(values) => updateGroupMutation.mutate({ id: editingGroup.id, group: values })}
+        />
+      ) : null}
     </div>
+  );
+}
+
+function ProjectWorkStream({
+  groups,
+  rawCommits,
+  isLoading,
+  commitsById,
+  selectedGroupIds,
+  selectedCommitIds,
+  onToggleGroup,
+  onToggleCommit,
+  onEditGroup,
+  onBuildGroupPr,
+}: {
+  groups: ActivityGroup[];
+  rawCommits: ActivityItem[];
+  isLoading: boolean;
+  commitsById: Map<string, ActivityItem>;
+  selectedGroupIds: Set<string>;
+  selectedCommitIds: Set<string>;
+  onToggleGroup: (groupId: string) => void;
+  onToggleCommit: (commitId: string) => void;
+  onEditGroup: (group: ActivityGroup) => void;
+  onBuildGroupPr: (group: ActivityGroup) => void;
+}) {
+  if (isLoading) {
+    return (
+      <Panel>
+        <div className="space-y-3">
+          {Array.from({ length: 5 }).map((_, index) => (
+            <div key={index} className="h-16 animate-pulse rounded-xl bg-white/[0.03]" />
+          ))}
+        </div>
+      </Panel>
+    );
+  }
+
+  if (groups.length === 0 && rawCommits.length === 0) {
+    return (
+      <Panel>
+        <div className="flex flex-col items-center justify-center py-12 text-center">
+          <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-blue-300/20 bg-blue-500/10 text-blue-200">
+            <GitCommit className="h-5 w-5" />
+          </div>
+          <p className="text-sm font-semibold text-slate-200">No commits this week</p>
+          <p className="mt-1 text-xs text-slate-500">Sync your repository to see commits here.</p>
+        </div>
+      </Panel>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {groups.map((group) => (
+        <ProjectWorkItemRow
+          key={group.id}
+          group={group}
+          isSelected={selectedGroupIds.has(group.id)}
+          onToggle={() => onToggleGroup(group.id)}
+          onEdit={() => onEditGroup(group)}
+          onBuildPr={() => onBuildGroupPr(group)}
+          commits={commitsForGroup(group, commitsById)}
+        />
+      ))}
+      {rawCommits.length ? (
+        <CommitList
+          commits={rawCommits}
+          isLoading={false}
+          selectedCommitIds={selectedCommitIds}
+          onToggleCommit={onToggleCommit}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function ProjectWorkItemRow({
+  group,
+  commits,
+  isSelected,
+  onToggle,
+  onEdit,
+  onBuildPr,
+}: {
+  group: ActivityGroup;
+  commits: ActivityItem[];
+  isSelected: boolean;
+  onToggle: () => void;
+  onEdit: () => void;
+  onBuildPr: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const summary = group.reportSummary || group.summary;
+
+  return (
+    <article
+      className={[
+        "rounded-2xl border bg-slate-950/45 shadow-[0_14px_42px_rgba(2,6,23,0.24),inset_0_1px_0_rgba(255,255,255,0.045)] transition-[background-color,border-color,box-shadow,transform] duration-150",
+        isSelected ? "border-cyan-300/35 ring-1 ring-cyan-300/20" : "border-cyan-200/12 hover:border-cyan-200/22 hover:bg-slate-950/52",
+      ].join(" ")}
+    >
+      <div className="flex items-start gap-3 p-3">
+        <label className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/[0.03]">
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-cyan-400"
+            checked={isSelected}
+            onChange={onToggle}
+            aria-label={`Select work item ${group.title}`}
+          />
+        </label>
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-cyan-300/15 bg-cyan-500/10 text-cyan-100">
+          <GitCommitVertical className="h-4 w-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-md border border-cyan-200/10 bg-cyan-400/10 px-2 py-0.5 text-[11px] font-semibold text-cyan-100">
+              Work item
+            </span>
+            <span className="rounded-md border border-white/8 bg-white/5 px-2 py-0.5 text-[10px] font-semibold text-slate-400">
+              {commits.length === group.items.length
+                ? `${commits.length} commit${commits.length === 1 ? "" : "s"}`
+                : `${commits.length} of ${group.items.length} commits here`}
+            </span>
+            {group.projectCount > 1 ? (
+              <span className="rounded-md border border-violet-300/15 bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold text-violet-100">
+                Workspace item · {group.projectCount} projects
+              </span>
+            ) : group.workspaceName ? (
+              <span className="rounded-md border border-white/8 bg-white/5 px-2 py-0.5 text-[10px] font-semibold text-slate-400">
+                {group.workspaceName}
+              </span>
+            ) : null}
+            <span className={confidenceBadgeClass(group.confidenceLabel)}>
+              {group.confidenceLabel.replace("_", " ")}
+            </span>
+            {group.titleQualityLabel && group.titleQualityLabel !== "report_ready" ? (
+              <span className={titleQualityBadgeClass(group.titleQualityLabel)}>
+                {titleQualityLabel(group.titleQualityLabel)}
+              </span>
+            ) : null}
+            {group.includedInReport ? (
+              <span className="inline-flex items-center gap-1 rounded-md border border-emerald-300/15 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-200">
+                <CheckCircle2 className="h-3 w-3" />
+                Report
+              </span>
+            ) : null}
+          </div>
+          <p className="mt-2 text-sm font-semibold leading-6 text-slate-50 [text-wrap:pretty]">
+            {group.title}
+          </p>
+          {summary ? (
+            <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">
+              {summary.replace(/\n/g, " ")}
+            </p>
+          ) : null}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={onBuildPr}
+            className="hidden min-h-10 rounded-xl border border-blue-300/20 bg-blue-500/10 px-3 text-xs font-semibold text-blue-100 transition-[background-color,border-color,transform] duration-150 hover:border-blue-200/35 hover:bg-blue-500/15 active:scale-[0.96] sm:inline-flex sm:items-center"
+          >
+            {group.projectCount > 1 ? "Build PR for this repo" : "Build PR"}
+          </button>
+          <button
+            type="button"
+            onClick={onEdit}
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-slate-950/42 text-slate-400 transition-[background-color,color,transform] duration-150 hover:bg-white/8 hover:text-slate-200 active:scale-[0.96]"
+            aria-label="Edit work item"
+          >
+            <Edit3 className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-slate-950/42 text-slate-400 transition-[background-color,color,transform] duration-150 hover:bg-white/8 hover:text-slate-200 active:scale-[0.96]"
+            aria-label={expanded ? "Collapse work item commits" : "Expand work item commits"}
+          >
+            {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          </button>
+        </div>
+      </div>
+      {expanded ? (
+        <div className="mx-3 mb-3 space-y-2 rounded-xl border border-blue-100/8 bg-slate-950/50 p-3">
+          {commits.length ? (
+            commits.map((commit) => (
+              <div key={commit.id} className="rounded-xl border border-white/8 bg-white/[0.025] p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone="slate">Commit</Badge>
+                  <span className="font-mono text-[10px] text-slate-500">
+                    {commit.commitHash?.slice(0, 8) ?? "no hash"}
+                  </span>
+                </div>
+                <p className="mt-1 text-sm font-medium text-slate-100">{commit.summary.split("\n")[0]}</p>
+              </div>
+            ))
+          ) : (
+            <div className="rounded-lg border border-white/8 bg-white/[0.03] p-3 text-xs text-slate-400">
+              Source commits are no longer available.
+            </div>
+          )}
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function ProjectGroupEditModal({
+  group,
+  isSaving,
+  onClose,
+  onSave,
+}: {
+  group: ActivityGroup;
+  isSaving: boolean;
+  onClose: () => void;
+  onSave: (values: { title: string; summary?: string | null; reportSummary?: string | null; includedInReport: boolean; reviewStatus?: string }) => void;
+}) {
+  const [title, setTitle] = useState(group.title);
+  const [reportSummary, setReportSummary] = useState(group.reportSummary ?? group.summary ?? "");
+  const [includedInReport, setIncludedInReport] = useState(group.includedInReport);
+
+  useEscapeKey(onClose, true);
+
+  return (
+    <ModalShell title="Edit work item" onClose={onClose}>
+      <div className="space-y-4 p-5">
+        <label className="grid gap-2 text-xs font-semibold text-slate-300">
+          Work item title
+          <input
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            className="h-11 rounded-xl border border-white/10 bg-slate-950/70 px-3 text-sm text-white outline-none transition-[border-color,box-shadow] focus:border-cyan-300/50 focus:ring-2 focus:ring-cyan-400/15"
+          />
+        </label>
+        <label className="grid gap-2 text-xs font-semibold text-slate-300">
+          Report summary
+          <textarea
+            value={reportSummary}
+            onChange={(event) => setReportSummary(event.target.value)}
+            className="min-h-24 resize-none rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2 text-sm text-white outline-none transition-[border-color,box-shadow] focus:border-cyan-300/50 focus:ring-2 focus:ring-cyan-400/15"
+          />
+        </label>
+        <p className="text-xs leading-5 text-slate-500">
+          Renames like this improve future grouping names on this machine.
+        </p>
+        <label className="flex items-center gap-2 text-xs font-semibold text-slate-300">
+          <input
+            type="checkbox"
+            checked={includedInReport}
+            onChange={(event) => setIncludedInReport(event.target.checked)}
+            className="h-4 w-4 accent-cyan-400"
+          />
+          Include in reports
+        </label>
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="primary"
+            disabled={!title.trim() || isSaving}
+            onClick={() =>
+              onSave({
+                title: title.trim(),
+                summary: reportSummary.trim() || null,
+                reportSummary: reportSummary.trim() || null,
+                includedInReport,
+                reviewStatus: "reviewed",
+              })
+            }
+          >
+            {isSaving ? "Saving..." : "Save work item"}
+          </Button>
+        </div>
+      </div>
+    </ModalShell>
   );
 }
 
@@ -600,6 +1053,99 @@ function formatContextDate(value: string) {
   }
 
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function shouldDisplayActivityGroup(group: ActivityGroup, currentOrganizedGroupIds: Set<string>) {
+  if (group.items.length > 1) {
+    return true;
+  }
+  if (currentOrganizedGroupIds.has(group.id) || group.locked || group.userEditedAt || group.reviewStatus === "reviewed") {
+    return true;
+  }
+  const isGeneratedLocalGroup =
+    group.source === "local_rule" || group.source === "ai" || Boolean(group.fingerprint) || Boolean(group.algorithmVersion);
+  return !isGeneratedLocalGroup || group.confidenceLabel === "strong";
+}
+
+function isCommitActivity(item: ActivityItem | null | undefined): item is ActivityItem {
+  return Boolean(item && item.activityType === "commit");
+}
+
+function commitsForGroup(group: ActivityGroup, commitsById: Map<string, ActivityItem>) {
+  return group.items
+    .map((item) => item.activity && isCommitActivity(item.activity) ? item.activity : commitsById.get(item.sourceId))
+    .filter(isCommitActivity);
+}
+
+function groupHasProjectCommit(
+  group: ActivityGroup,
+  commitsById: Map<string, ActivityItem>,
+  projectId?: string,
+) {
+  if (!projectId) {
+    return false;
+  }
+  if (group.projectId === projectId) {
+    return true;
+  }
+  return group.items.some((item) => commitsById.has(item.sourceId));
+}
+
+function dedupeCommitsByHash(commits: ActivityItem[]) {
+  const seen = new Set<string>();
+  const deduped: ActivityItem[] = [];
+  for (const commit of commits) {
+    const key = commit.commitHash || commit.id;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(commit);
+  }
+  return deduped.sort((left, right) => left.occurredAt.localeCompare(right.occurredAt));
+}
+
+function groupToPrContext(
+  group: ActivityGroup,
+  commitsById: Map<string, ActivityItem>,
+): PrPackageGroupContext {
+  return {
+    id: group.id,
+    title: group.title,
+    summary: group.summary,
+    reportSummary: group.reportSummary,
+    workspaceName: group.workspaceName,
+    projectCount: group.projectCount,
+    commitIds: commitsForGroup(group, commitsById).map((commit) => commit.id),
+  };
+}
+
+function confidenceBadgeClass(label: string) {
+  if (label === "strong") {
+    return "rounded-md border border-emerald-300/15 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold capitalize text-emerald-200";
+  }
+  if (label === "needs_review") {
+    return "rounded-md border border-amber-300/15 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold capitalize text-amber-200";
+  }
+  return "rounded-md border border-blue-300/15 bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold capitalize text-blue-200";
+}
+
+function titleQualityBadgeClass(label: string) {
+  if (label === "report_ready" || label === "acceptable") {
+    return "rounded-md border border-emerald-300/15 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-200";
+  }
+  if (label === "technically_correct_but_weak") {
+    return "rounded-md border border-blue-300/15 bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold text-blue-200";
+  }
+  return "rounded-md border border-amber-300/15 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200";
+}
+
+function titleQualityLabel(label: string) {
+  if (label === "acceptable") return "Acceptable title";
+  if (label === "technically_correct_but_weak") return "Weak title";
+  if (label === "fallback_only") return "Fallback title";
+  if (label === "rejected") return "Rejected title";
+  return "Needs review";
 }
 
 async function invalidateProjectViews(queryClient: QueryClient, projectId?: string) {

@@ -761,10 +761,21 @@ export function TodayPage() {
         }
         onSetFocusGoal={(minutes) => updateFocusGoalMutation.mutate(minutes)}
         onMarkPriorityDone={(item) =>
-          updatePriorityMutation.mutate({
-            id: item.id,
-            input: { status: "done" },
-          })
+          item.id.startsWith("suggested_daily_plan_item_")
+            ? replacePrioritiesMutation.mutate(
+                priorityDraft
+                  .map((draftItem, index) => ({
+                    rank: index + 1,
+                    title: draftItem.title.trim(),
+                    weeklyTaskId: draftItem.weeklyTaskId,
+                    plannedMinutes: draftItem.plannedMinutes.trim() ? Number(draftItem.plannedMinutes) : undefined,
+                  }))
+                  .filter((draftItem) => draftItem.title),
+              )
+            : updatePriorityMutation.mutate({
+                id: item.id,
+                input: { status: "done" },
+              })
         }
         isSaving={
           replacePrioritiesMutation.isPending ||
@@ -1310,7 +1321,7 @@ function TodayCommandCenterPanel({
                   <p className="truncate text-sm text-slate-200">{item.rank}. {item.title}</p>
                   {item.status !== "done" ? (
                     <Button onClick={() => onMarkPriorityDone(item)} className="h-7 px-2 text-xs" disabled={isSaving}>
-                      Done
+                      {item.id.startsWith("suggested_daily_plan_item_") ? "Save" : "Done"}
                     </Button>
                   ) : (
                     <Badge tone="green">Done</Badge>

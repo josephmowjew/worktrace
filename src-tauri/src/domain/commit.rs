@@ -24,6 +24,21 @@ pub struct SyncCommitsInput {
     pub to: Option<String>,
     pub author_email: Option<String>,
     pub project_ids: Option<Vec<String>>,
+    pub mode: Option<SyncMode>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncMode {
+    Auto,
+    Full,
+    EvidenceRepair,
+}
+
+impl Default for SyncMode {
+    fn default() -> Self {
+        Self::Auto
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -31,7 +46,16 @@ pub struct SyncCommitsInput {
 pub struct SyncCommitsResult {
     pub scanned_projects: i64,
     pub skipped_projects: i64,
+    pub skipped_fresh_projects: i64,
+    pub incremental_projects: i64,
+    pub full_projects: i64,
+    pub unchanged_projects: i64,
+    pub fallback_rescans: i64,
     pub new_commits: i64,
     pub updated_commits: i64,
+    pub evidence_repaired: i64,
+    pub diff_snippets_collected: i64,
+    pub duration_ms: i64,
+    pub slow_projects: Vec<String>,
     pub errors: Vec<String>,
 }

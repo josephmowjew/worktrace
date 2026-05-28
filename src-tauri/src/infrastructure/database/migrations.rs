@@ -130,6 +130,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::raw_sql(CALENDAR_SQL).execute(pool).await?;
     sqlx::raw_sql(DAILY_PLAN_SQL).execute(pool).await?;
     sqlx::raw_sql(GIT_METADATA_SQL).execute(pool).await?;
+    sqlx::raw_sql(GIT_SYNC_STATE_SQL).execute(pool).await?;
     sqlx::raw_sql(ACTIVITY_GROUPS_SQL).execute(pool).await?;
     run_activity_group_metadata_migration(pool).await?;
     sqlx::raw_sql(ACTIVITY_GROUP_TITLE_MEMORY_SQL)
@@ -142,6 +143,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::raw_sql(ACTIVITY_GROUP_NARRATIVES_SQL)
         .execute(pool)
         .await?;
+    sqlx::raw_sql(BACKGROUND_JOBS_SQL).execute(pool).await?;
     sqlx::raw_sql(EMBEDDINGS_SQL).execute(pool).await?;
     sqlx::raw_sql(SPARC_FORCE_SQL).execute(pool).await?;
     run_sparc_force_dedup_migration(pool).await?;
@@ -152,6 +154,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 async fn run_activity_group_metadata_migration(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     for statement in [
         "ALTER TABLE activity_groups ADD COLUMN fingerprint TEXT;",
+        "ALTER TABLE activity_groups ADD COLUMN workspace_id TEXT;",
         "ALTER TABLE activity_groups ADD COLUMN algorithm_version TEXT;",
         "ALTER TABLE activity_groups ADD COLUMN confidence_label TEXT NOT NULL DEFAULT 'likely';",
         "ALTER TABLE activity_groups ADD COLUMN rationale_json TEXT;",
@@ -165,6 +168,11 @@ async fn run_activity_group_metadata_migration(pool: &SqlitePool) -> Result<(), 
 
     sqlx::query(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_activity_groups_fingerprint ON activity_groups(fingerprint);",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_activity_groups_workspace ON activity_groups(workspace_id);",
     )
     .execute(pool)
     .await?;
@@ -545,10 +553,47 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_plan_items_plan_rank ON daily_plan_i
 CREATE INDEX IF NOT EXISTS idx_daily_plan_items_plan ON daily_plan_items(daily_plan_id);
 "#;
 
+const GIT_SYNC_STATE_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS project_git_sync_state (
+  project_id TEXT NOT NULL,
+  range_from TEXT NOT NULL DEFAULT '',
+  range_to TEXT NOT NULL DEFAULT '',
+  author_email TEXT NOT NULL DEFAULT '',
+  ref_fingerprint TEXT NOT NULL,
+  evidence_version TEXT NOT NULL,
+  last_scanned_at TEXT NOT NULL,
+  last_full_scanned_at TEXT,
+  last_error TEXT,
+  PRIMARY KEY (project_id, range_from, range_to, author_email),
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_git_sync_state_project
+  ON project_git_sync_state(project_id);
+
+CREATE TABLE IF NOT EXISTS project_git_sync_cursors (
+  project_id TEXT NOT NULL,
+  source_kind TEXT NOT NULL,
+  source_name TEXT NOT NULL,
+  previous_head_commit TEXT,
+  latest_head_commit TEXT,
+  last_synced_at TEXT NOT NULL,
+  last_full_synced_at TEXT,
+  last_error TEXT,
+  is_stale INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (project_id, source_kind, source_name),
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_git_sync_cursors_project
+  ON project_git_sync_cursors(project_id);
+"#;
+
 const ACTIVITY_GROUPS_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS activity_groups (
   id TEXT PRIMARY KEY,
   project_id TEXT,
+  workspace_id TEXT,
   title TEXT NOT NULL,
   summary TEXT,
   start_date TEXT NOT NULL,
@@ -566,7 +611,8 @@ CREATE TABLE IF NOT EXISTS activity_groups (
   review_status TEXT NOT NULL DEFAULT 'draft',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  FOREIGN KEY (project_id) REFERENCES projects(id)
+  FOREIGN KEY (project_id) REFERENCES projects(id),
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_activity_groups_project ON activity_groups(project_id);
@@ -755,6 +801,22 @@ CREATE INDEX IF NOT EXISTS idx_activity_embeddings_source
   ON activity_embeddings(source_type, source_id);
 CREATE INDEX IF NOT EXISTS idx_activity_embeddings_hash
   ON activity_embeddings(text_hash);
+"#;
+
+const BACKGROUND_JOBS_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS background_jobs (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  status TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_background_jobs_kind_status
+  ON background_jobs(kind, status);
 "#;
 
 const SCHEMA_SQL: &str = r#"

@@ -49,9 +49,18 @@ pub struct ConnectEmbeddingProviderInput {
     pub api_key: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RefreshActivityEmbeddingsInput {
+    pub from: String,
+    pub to: String,
+    pub project_ids: Option<Vec<String>>,
+    pub classification: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueActivityEmbeddingRefreshInput {
     pub from: String,
     pub to: String,
     pub project_ids: Option<Vec<String>>,
@@ -85,6 +94,48 @@ pub struct SemanticActivitySearchResult {
     pub source_id: String,
     pub score: f32,
     pub semantic_match: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackgroundJobStatusInput {
+    pub kind: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackgroundJobStatus {
+    pub queued: i64,
+    pub running: i64,
+    pub failed: i64,
+    pub completed: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueBackgroundJobResult {
+    pub queued: bool,
+    pub job_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunBackgroundJobsResult {
+    pub processed: i64,
+    pub succeeded: i64,
+    pub failed: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct BackgroundJobRecord {
+    pub id: String,
+    pub kind: String,
+    pub payload_json: String,
+    pub status: String,
+    pub attempts: i64,
+    pub last_error: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone)]

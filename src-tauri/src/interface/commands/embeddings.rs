@@ -3,11 +3,13 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::application::embeddings::{EmbeddingError, EmbeddingIndexService, EmbeddingService};
 use crate::domain::embedding::{
-    ConnectEmbeddingProviderInput, EmbeddingStatus, RefreshActivityEmbeddingsInput,
-    RefreshActivityEmbeddingsResult, SemanticActivitySearchInput, SemanticActivitySearchResult,
+    BackgroundJobStatus, BackgroundJobStatusInput, ConnectEmbeddingProviderInput, EmbeddingStatus,
+    QueueActivityEmbeddingRefreshInput, QueueBackgroundJobResult, RefreshActivityEmbeddingsInput,
+    RefreshActivityEmbeddingsResult, RunBackgroundJobsResult, SemanticActivitySearchInput,
+    SemanticActivitySearchResult,
 };
 use crate::infrastructure::database::repositories::{
-    ActivityEmbeddingRepository, ActivityRepository, SettingsRepository,
+    ActivityEmbeddingRepository, ActivityRepository, BackgroundJobRepository, SettingsRepository,
 };
 use crate::interface::dto::app_result::AppResult;
 use crate::AppState;
@@ -75,6 +77,64 @@ pub async fn refresh_activity_embeddings(
             &embedding_repository,
             &app_data_dir,
             input,
+        )
+        .await
+        {
+            Ok(result) => AppResult::ok(result),
+            Err(error) => embedding_error(error),
+        },
+    )
+}
+
+#[tauri::command]
+pub async fn queue_activity_embedding_refresh(
+    state: State<'_, AppState>,
+    input: QueueActivityEmbeddingRefreshInput,
+) -> Result<AppResult<QueueBackgroundJobResult>, String> {
+    let job_repository = BackgroundJobRepository::new(state.database.pool());
+    Ok(
+        match EmbeddingIndexService::queue_refresh(&job_repository, input).await {
+            Ok(result) => AppResult::ok(result),
+            Err(error) => embedding_error(error),
+        },
+    )
+}
+
+#[tauri::command]
+pub async fn get_background_job_status(
+    state: State<'_, AppState>,
+    input: BackgroundJobStatusInput,
+) -> Result<AppResult<BackgroundJobStatus>, String> {
+    let job_repository = BackgroundJobRepository::new(state.database.pool());
+    Ok(
+        match EmbeddingIndexService::job_status(&job_repository, input).await {
+            Ok(status) => AppResult::ok(status),
+            Err(error) => embedding_error(error),
+        },
+    )
+}
+
+#[tauri::command]
+pub async fn run_background_jobs_once(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<AppResult<RunBackgroundJobsResult>, String> {
+    let settings_repository = SettingsRepository::new(state.database.pool());
+    let activity_repository = ActivityRepository::new(state.database.pool());
+    let embedding_repository = ActivityEmbeddingRepository::new(state.database.pool());
+    let job_repository = BackgroundJobRepository::new(state.database.pool());
+    let app_data_dir = match app.path().app_data_dir() {
+        Ok(path) => path,
+        Err(error) => return Ok(AppResult::err("APP_DATA_ERROR", error.to_string())),
+    };
+
+    Ok(
+        match EmbeddingIndexService::run_background_jobs_once(
+            &settings_repository,
+            &activity_repository,
+            &embedding_repository,
+            &job_repository,
+            &app_data_dir,
         )
         .await
         {

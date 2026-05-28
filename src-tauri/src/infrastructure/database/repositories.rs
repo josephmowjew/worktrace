@@ -14,7 +14,8 @@ use crate::domain::activity::{
     ListActivityInput, TopProject, WeekSummary, WeekSummaryInput,
 };
 use crate::domain::activity_group::{
-    ActivityGroup, ActivityGroupItem, ActivityGroupNarrative, ActivityGroupTitleMemory,
+    ActivityGroup, ActivityGroupItem, ActivityGroupNarrative, ActivityGroupProject,
+    ActivityGroupTitleMemory,
     CreateActivityGroupInput, GroupingDiffSnippet, GroupingEvidence, ListActivityGroupsInput,
     RecordActivityGroupTitleFeedbackInput, ReplaceActivityGroupItemsInput,
     SelectActivityGroupTitleCandidateInput, TitleCandidateDto, UpdateActivityGroupInput,
@@ -28,7 +29,9 @@ use crate::domain::daily_plan::{
     DailyPlan, DailyPlanItem, DailyPlanItemStatus, GetDailyPlanInput, ReplaceDailyPlanItemInput,
     UpdateDailyPlanItemInput, UpsertDailyPlanInput,
 };
-use crate::domain::embedding::{ActivityEmbeddingRecord, UpsertActivityEmbeddingInput};
+use crate::domain::embedding::{
+    ActivityEmbeddingRecord, BackgroundJobRecord, BackgroundJobStatus, UpsertActivityEmbeddingInput,
+};
 use crate::domain::focus_session::{
     CreateFocusSessionInput, FocusSession, FocusSessionStatus, ListFocusSessionsInput,
     StopFocusSessionInput,
@@ -36,7 +39,7 @@ use crate::domain::focus_session::{
 use crate::domain::git_metadata::{
     CommitDiffSnippet, CommitFileChange, CommitRef, CommitRefSummary, CommitWorktreeRef,
     CommitWorktreeSummary, GitRef, GitRefFilter, GitRefKind, GitWorktree, ProjectGitFocus,
-    SaveProjectGitFocusInput,
+    ProjectGitSyncCursor, ProjectGitSyncState, SaveProjectGitFocusInput,
 };
 use crate::domain::manual_log::{
     ActivityType, CreateManualLogInput, ManualLog, UpdateManualLogInput,
@@ -788,9 +791,9 @@ impl<'a> CommitRepository<'a> {
                 author_email = ?5,
                 branch = ?6,
                 committed_at = ?7,
-                files_changed = ?8,
-                insertions = ?9,
-                deletions = ?10,
+                files_changed = COALESCE(?8, files_changed),
+                insertions = COALESCE(?9, insertions),
+                deletions = COALESCE(?10, deletions),
                 updated_at = ?11
             WHERE project_id = ?1 AND commit_hash = ?2
             "#,
@@ -810,6 +813,82 @@ impl<'a> CommitRepository<'a> {
         .await?;
 
         Ok(CommitUpsertResult::Updated)
+    }
+
+    pub async fn upsert_many(&self, commits: &[Commit]) -> Result<(i64, i64), sqlx::Error> {
+        let now = current_timestamp();
+        let mut tx = self.pool.begin().await?;
+        let mut inserted_count = 0;
+        let mut updated_count = 0;
+
+        for commit in commits {
+            let inserted = sqlx::query(
+                r#"
+                INSERT OR IGNORE INTO commits (
+                  id, project_id, commit_hash, message, author_name, author_email, branch,
+                  committed_at, files_changed, insertions, deletions, included_in_report,
+                  created_at, updated_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                "#,
+            )
+            .bind(&commit.id)
+            .bind(&commit.project_id)
+            .bind(&commit.commit_hash)
+            .bind(&commit.message)
+            .bind(&commit.author_name)
+            .bind(&commit.author_email)
+            .bind(&commit.branch)
+            .bind(&commit.committed_at)
+            .bind(commit.files_changed)
+            .bind(commit.insertions)
+            .bind(commit.deletions)
+            .bind(if commit.included_in_report { 1 } else { 0 })
+            .bind(&now)
+            .bind(&now)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
+                == 1;
+
+            if inserted {
+                inserted_count += 1;
+                continue;
+            }
+
+            sqlx::query(
+                r#"
+                UPDATE commits
+                SET message = ?3,
+                    author_name = ?4,
+                    author_email = ?5,
+                    branch = ?6,
+                    committed_at = ?7,
+                    files_changed = COALESCE(?8, files_changed),
+                    insertions = COALESCE(?9, insertions),
+                    deletions = COALESCE(?10, deletions),
+                    updated_at = ?11
+                WHERE project_id = ?1 AND commit_hash = ?2
+                "#,
+            )
+            .bind(&commit.project_id)
+            .bind(&commit.commit_hash)
+            .bind(&commit.message)
+            .bind(&commit.author_name)
+            .bind(&commit.author_email)
+            .bind(&commit.branch)
+            .bind(&commit.committed_at)
+            .bind(commit.files_changed)
+            .bind(commit.insertions)
+            .bind(commit.deletions)
+            .bind(&now)
+            .execute(&mut *tx)
+            .await?;
+            updated_count += 1;
+        }
+
+        tx.commit().await?;
+        Ok((inserted_count, updated_count))
     }
 }
 
@@ -1085,6 +1164,68 @@ impl<'a> GitMetadataRepository<'a> {
         tx.commit().await
     }
 
+    pub async fn replace_commit_file_changes_for_hashes(
+        &self,
+        project_id: &str,
+        commit_hashes: &[String],
+        changes: &[CommitFileChange],
+    ) -> Result<(), sqlx::Error> {
+        let hashes = commit_hashes
+            .iter()
+            .filter(|hash| is_full_commit_hash(hash))
+            .collect::<std::collections::HashSet<_>>();
+        if hashes.is_empty() {
+            return Ok(());
+        }
+
+        let mut tx = self.pool.begin().await?;
+        for commit_hash in &hashes {
+            sqlx::query(
+                "DELETE FROM commit_file_changes WHERE project_id = ?1 AND commit_hash = ?2",
+            )
+            .bind(project_id)
+            .bind(*commit_hash)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        for change in changes
+            .iter()
+            .filter(|change| hashes.contains(&change.commit_hash))
+        {
+            sqlx::query(
+                r#"
+                INSERT OR REPLACE INTO commit_file_changes (
+                  project_id, commit_hash, path, old_path, change_kind, additions, deletions,
+                  is_binary, language, top_level_dir, is_test, is_docs, is_config,
+                  is_migration, is_generated, collected_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+                "#,
+            )
+            .bind(&change.project_id)
+            .bind(&change.commit_hash)
+            .bind(&change.path)
+            .bind(&change.old_path)
+            .bind(&change.change_kind)
+            .bind(change.additions)
+            .bind(change.deletions)
+            .bind(bool_to_i64(change.is_binary))
+            .bind(&change.language)
+            .bind(&change.top_level_dir)
+            .bind(bool_to_i64(change.is_test))
+            .bind(bool_to_i64(change.is_docs))
+            .bind(bool_to_i64(change.is_config))
+            .bind(bool_to_i64(change.is_migration))
+            .bind(bool_to_i64(change.is_generated))
+            .bind(&change.collected_at)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await
+    }
+
     pub async fn replace_commit_diff_snippets(
         &self,
         project_id: &str,
@@ -1116,6 +1257,86 @@ impl<'a> GitMetadataRepository<'a> {
         }
 
         tx.commit().await
+    }
+
+    pub async fn replace_commit_diff_snippets_for_hashes(
+        &self,
+        project_id: &str,
+        commit_hashes: &[String],
+        snippets: &[CommitDiffSnippet],
+    ) -> Result<(), sqlx::Error> {
+        let hashes = commit_hashes
+            .iter()
+            .filter(|hash| is_full_commit_hash(hash))
+            .collect::<std::collections::HashSet<_>>();
+        if hashes.is_empty() {
+            return Ok(());
+        }
+
+        let mut tx = self.pool.begin().await?;
+        for commit_hash in &hashes {
+            sqlx::query(
+                "DELETE FROM commit_diff_snippets WHERE project_id = ?1 AND commit_hash = ?2",
+            )
+            .bind(project_id)
+            .bind(*commit_hash)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        for snippet in snippets
+            .iter()
+            .filter(|snippet| hashes.contains(&snippet.commit_hash))
+        {
+            sqlx::query(
+                r#"
+                INSERT INTO commit_diff_snippets (
+                  id, project_id, commit_hash, path, snippet, collected_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                "#,
+            )
+            .bind(generate_id("commit_diff_snippet"))
+            .bind(&snippet.project_id)
+            .bind(&snippet.commit_hash)
+            .bind(&snippet.path)
+            .bind(&snippet.snippet)
+            .bind(&snippet.collected_at)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await
+    }
+
+    pub async fn missing_file_evidence_commit_hashes(
+        &self,
+        project_id: &str,
+        commit_hashes: &[String],
+    ) -> Result<Vec<String>, sqlx::Error> {
+        if commit_hashes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = sqlx::query(
+            r#"
+            SELECT DISTINCT commit_hash
+            FROM commit_file_changes
+            WHERE project_id = ?1
+            "#,
+        )
+        .bind(project_id)
+        .fetch_all(self.pool)
+        .await?;
+        let present = rows
+            .into_iter()
+            .map(|row| row.get::<String, _>("commit_hash"))
+            .filter(|hash| is_full_commit_hash(hash))
+            .collect::<std::collections::HashSet<_>>();
+        Ok(commit_hashes
+            .iter()
+            .filter(|hash| is_full_commit_hash(hash) && !present.contains(*hash))
+            .cloned()
+            .collect())
     }
 
     pub async fn list_file_changes_for_commits(
@@ -1339,6 +1560,127 @@ impl<'a> GitMetadataRepository<'a> {
         self.get_project_focus(&input.project_id).await
     }
 
+    pub async fn get_sync_state(
+        &self,
+        project_id: &str,
+        range_from: Option<&str>,
+        range_to: Option<&str>,
+        author_email: Option<&str>,
+    ) -> Result<Option<ProjectGitSyncState>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            SELECT project_id, range_from, range_to, author_email, ref_fingerprint,
+                   evidence_version, last_scanned_at, last_full_scanned_at, last_error
+            FROM project_git_sync_state
+            WHERE project_id = ?1
+              AND COALESCE(range_from, '') = COALESCE(?2, '')
+              AND COALESCE(range_to, '') = COALESCE(?3, '')
+              AND COALESCE(author_email, '') = COALESCE(?4, '')
+            "#,
+        )
+        .bind(project_id)
+        .bind(range_from.unwrap_or(""))
+        .bind(range_to.unwrap_or(""))
+        .bind(author_email.unwrap_or(""))
+        .fetch_optional(self.pool)
+        .await?;
+
+        Ok(row.map(project_git_sync_state_from_row))
+    }
+
+    pub async fn upsert_sync_state(&self, state: &ProjectGitSyncState) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO project_git_sync_state (
+              project_id, range_from, range_to, author_email, ref_fingerprint,
+              evidence_version, last_scanned_at, last_full_scanned_at, last_error
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            ON CONFLICT(project_id, range_from, range_to, author_email)
+            DO UPDATE SET
+              ref_fingerprint = excluded.ref_fingerprint,
+              evidence_version = excluded.evidence_version,
+              last_scanned_at = excluded.last_scanned_at,
+              last_full_scanned_at = COALESCE(excluded.last_full_scanned_at, project_git_sync_state.last_full_scanned_at),
+              last_error = excluded.last_error
+            "#,
+        )
+        .bind(&state.project_id)
+        .bind(state.range_from.as_deref().unwrap_or(""))
+        .bind(state.range_to.as_deref().unwrap_or(""))
+        .bind(state.author_email.as_deref().unwrap_or(""))
+        .bind(&state.ref_fingerprint)
+        .bind(&state.evidence_version)
+        .bind(&state.last_scanned_at)
+        .bind(&state.last_full_scanned_at)
+        .bind(&state.last_error)
+        .execute(self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_sync_cursors(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<ProjectGitSyncCursor>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT project_id, source_kind, source_name, previous_head_commit, latest_head_commit,
+                   last_synced_at, last_full_synced_at, last_error, is_stale
+            FROM project_git_sync_cursors
+            WHERE project_id = ?1
+            "#,
+        )
+        .bind(project_id)
+        .fetch_all(self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(project_git_sync_cursor_from_row)
+            .collect())
+    }
+
+    pub async fn upsert_sync_cursors(
+        &self,
+        cursors: &[ProjectGitSyncCursor],
+    ) -> Result<(), sqlx::Error> {
+        if cursors.is_empty() {
+            return Ok(());
+        }
+        let mut tx = self.pool.begin().await?;
+        for cursor in cursors {
+            sqlx::query(
+                r#"
+                INSERT INTO project_git_sync_cursors (
+                  project_id, source_kind, source_name, previous_head_commit, latest_head_commit,
+                  last_synced_at, last_full_synced_at, last_error, is_stale
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                ON CONFLICT(project_id, source_kind, source_name)
+                DO UPDATE SET
+                  previous_head_commit = excluded.previous_head_commit,
+                  latest_head_commit = excluded.latest_head_commit,
+                  last_synced_at = excluded.last_synced_at,
+                  last_full_synced_at = COALESCE(excluded.last_full_synced_at, project_git_sync_cursors.last_full_synced_at),
+                  last_error = excluded.last_error,
+                  is_stale = excluded.is_stale
+                "#,
+            )
+            .bind(&cursor.project_id)
+            .bind(&cursor.source_kind)
+            .bind(&cursor.source_name)
+            .bind(&cursor.previous_head_commit)
+            .bind(&cursor.latest_head_commit)
+            .bind(&cursor.last_synced_at)
+            .bind(&cursor.last_full_synced_at)
+            .bind(&cursor.last_error)
+            .bind(bool_to_i64(cursor.is_stale))
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await
+    }
+
     pub async fn focus_for_projects(
         &self,
         project_ids: Option<&[String]>,
@@ -1409,6 +1751,9 @@ impl<'a> ActivityRepository<'a> {
                 SELECT commits.id,
                        commits.project_id,
                        projects.name AS project_name,
+                       projects.workspace_id AS workspace_id,
+                       workspaces.name AS workspace_name,
+                       projects.workspace_relative_path AS workspace_relative_path,
                        projects.classification AS project_classification,
                        commits.message,
                        commits.committed_at,
@@ -1422,6 +1767,7 @@ impl<'a> ActivityRepository<'a> {
                        commits.deletions
                 FROM commits
                 JOIN projects ON projects.id = commits.project_id
+                LEFT JOIN workspaces ON workspaces.id = projects.workspace_id
                 WHERE projects.status = 'active'
                   AND substr(commits.committed_at, 1, 10) >= ?1
                   AND substr(commits.committed_at, 1, 10) <= ?2
@@ -1436,6 +1782,10 @@ impl<'a> ActivityRepository<'a> {
             for row in rows {
                 let project_id: String = row.get("project_id");
                 if !project_filter_matches(&input.project_ids, &project_id) {
+                    continue;
+                }
+                let workspace_id: Option<String> = row.get("workspace_id");
+                if !workspace_filter_matches(&input.workspace_ids, workspace_id.as_deref()) {
                     continue;
                 }
                 let project_classification: String = row.get("project_classification");
@@ -1465,6 +1815,9 @@ impl<'a> ActivityRepository<'a> {
                     id: row.get("id"),
                     project_id: Some(project_id),
                     project_name: row.get("project_name"),
+                    workspace_id,
+                    workspace_name: row.get("workspace_name"),
+                    workspace_relative_path: row.get("workspace_relative_path"),
                     activity_type: "commit".to_string(),
                     summary: row.get("message"),
                     occurred_at: row.get("committed_at"),
@@ -1488,6 +1841,9 @@ impl<'a> ActivityRepository<'a> {
                 SELECT manual_logs.id,
                        manual_logs.project_id,
                        projects.name AS project_name,
+                       projects.workspace_id AS workspace_id,
+                       workspaces.name AS workspace_name,
+                       projects.workspace_relative_path AS workspace_relative_path,
                        projects.classification AS project_classification,
                        manual_logs.activity_type,
                        manual_logs.summary,
@@ -1495,6 +1851,7 @@ impl<'a> ActivityRepository<'a> {
                        manual_logs.included_in_report
                 FROM manual_logs
                 LEFT JOIN projects ON projects.id = manual_logs.project_id
+                LEFT JOIN workspaces ON workspaces.id = projects.workspace_id
                 WHERE manual_logs.date >= ?1
                   AND manual_logs.date <= ?2
                   AND (
@@ -1515,6 +1872,10 @@ impl<'a> ActivityRepository<'a> {
                     if !project_filter_matches(&input.project_ids, project_id) {
                         continue;
                     }
+                    let workspace_id: Option<String> = row.get("workspace_id");
+                    if !workspace_filter_matches(&input.workspace_ids, workspace_id.as_deref()) {
+                        continue;
+                    }
                     let project_classification: Option<String> = row.get("project_classification");
                     if !classification_filter_matches(
                         &input.classification,
@@ -1523,6 +1884,8 @@ impl<'a> ActivityRepository<'a> {
                         continue;
                     }
                 } else if input.project_ids.is_some() {
+                    continue;
+                } else if input.workspace_ids.is_some() {
                     continue;
                 } else if input.classification.is_some() {
                     continue;
@@ -1537,6 +1900,9 @@ impl<'a> ActivityRepository<'a> {
                     id: row.get("id"),
                     project_id,
                     project_name: row.get("project_name"),
+                    workspace_id: row.get("workspace_id"),
+                    workspace_name: row.get("workspace_name"),
+                    workspace_relative_path: row.get("workspace_relative_path"),
                     activity_type,
                     summary: row.get("summary"),
                     occurred_at: row.get("date"),
@@ -1937,6 +2303,8 @@ impl<'a> ActivityGroupRepository<'a> {
             r#"
             SELECT activity_groups.id,
                    activity_groups.project_id,
+                   activity_groups.workspace_id,
+                   workspaces.name AS workspace_name,
                    projects.name AS project_name,
                    projects.classification AS project_classification,
                    activity_groups.title,
@@ -1958,6 +2326,7 @@ impl<'a> ActivityGroupRepository<'a> {
                    activity_groups.updated_at
             FROM activity_groups
             LEFT JOIN projects ON projects.id = activity_groups.project_id
+            LEFT JOIN workspaces ON workspaces.id = activity_groups.workspace_id
             WHERE activity_groups.start_date <= ?2
               AND activity_groups.end_date >= ?1
               AND (
@@ -1975,16 +2344,24 @@ impl<'a> ActivityGroupRepository<'a> {
         let mut groups = Vec::new();
         for row in rows {
             let project_id: Option<String> = row.get("project_id");
-            if let Some(project_id) = &project_id {
-                if !project_filter_matches(&input.project_ids, project_id) {
-                    continue;
-                }
+            let workspace_id: Option<String> = row.get("workspace_id");
+            let items = self.list_items(row.get("id")).await?;
+            let projects = group_projects(&items);
+            if !group_matches_project_filter(&input.project_ids, project_id.as_deref(), &projects)
+            {
+                continue;
+            }
+            if !group_matches_workspace_filter(&input.workspace_ids, workspace_id.as_deref(), &items)
+            {
+                continue;
+            }
+            if let Some(_project_id) = &project_id {
                 let classification: Option<String> = row.get("project_classification");
                 if !classification_filter_matches(&input.classification, classification.as_deref())
                 {
                     continue;
                 }
-            } else if input.project_ids.is_some() || input.classification.is_some() {
+            } else if input.classification.is_some() {
                 continue;
             }
 
@@ -1993,7 +2370,6 @@ impl<'a> ActivityGroupRepository<'a> {
                 continue;
             }
 
-            let items = self.list_items(row.get("id")).await?;
             if !group_matches_git_filters(self.pool, &input.git_refs, &input.worktree_paths, &items)
                 .await?
             {
@@ -2004,6 +2380,10 @@ impl<'a> ActivityGroupRepository<'a> {
                 id: row.get("id"),
                 project_id,
                 project_name: row.get("project_name"),
+                workspace_id,
+                workspace_name: row.get("workspace_name"),
+                project_count: projects.len() as i64,
+                projects,
                 title: row.get("title"),
                 summary: row.get("summary"),
                 start_date: row.get("start_date"),
@@ -2045,15 +2425,16 @@ impl<'a> ActivityGroupRepository<'a> {
         sqlx::query(
             r#"
             INSERT INTO activity_groups (
-                id, project_id, title, summary, start_date, end_date, source,
+                id, project_id, workspace_id, title, summary, start_date, end_date, source,
                 confidence, included_in_report, fingerprint, algorithm_version, confidence_label,
                 rationale_json, report_summary, locked, review_status, created_at, updated_at
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
             "#,
         )
         .bind(&id)
         .bind(&input.project_id)
+        .bind(&input.workspace_id)
         .bind(input.title.trim())
         .bind(input.summary.as_deref().map(str::trim))
         .bind(&input.start_date)
@@ -2219,6 +2600,8 @@ impl<'a> ActivityGroupRepository<'a> {
             r#"
             SELECT activity_groups.id,
                    activity_groups.project_id,
+                   activity_groups.workspace_id,
+                   workspaces.name AS workspace_name,
                    projects.name AS project_name,
                    activity_groups.title,
                    activity_groups.summary,
@@ -2239,6 +2622,7 @@ impl<'a> ActivityGroupRepository<'a> {
                    activity_groups.updated_at
             FROM activity_groups
             LEFT JOIN projects ON projects.id = activity_groups.project_id
+            LEFT JOIN workspaces ON workspaces.id = activity_groups.workspace_id
             WHERE activity_groups.id = ?1
             "#,
         )
@@ -2251,6 +2635,10 @@ impl<'a> ActivityGroupRepository<'a> {
                 id: row.get("id"),
                 project_id: row.get("project_id"),
                 project_name: row.get("project_name"),
+                workspace_id: row.get("workspace_id"),
+                workspace_name: row.get("workspace_name"),
+                project_count: 0,
+                projects: Vec::new(),
                 title: row.get("title"),
                 summary: row.get("summary"),
                 start_date: row.get("start_date"),
@@ -2276,6 +2664,8 @@ impl<'a> ActivityGroupRepository<'a> {
                 updated_at: row.get("updated_at"),
                 items: self.list_items(id).await?,
             };
+            group.projects = group_projects(&group.items);
+            group.project_count = group.projects.len() as i64;
             self.apply_narrative_metadata(&mut group).await?;
             Ok(Some(group))
         } else {
@@ -2739,24 +3129,26 @@ impl<'a> ActivityGroupRepository<'a> {
             r#"
             UPDATE activity_groups
             SET project_id = ?2,
-                title = ?3,
-                summary = ?4,
-                start_date = ?5,
-                end_date = ?6,
-                source = ?7,
-                confidence = ?8,
-                included_in_report = ?9,
-                algorithm_version = ?10,
-                confidence_label = ?11,
-                rationale_json = ?12,
-                report_summary = ?13,
-                review_status = ?14,
-                updated_at = ?15
+                workspace_id = ?3,
+                title = ?4,
+                summary = ?5,
+                start_date = ?6,
+                end_date = ?7,
+                source = ?8,
+                confidence = ?9,
+                included_in_report = ?10,
+                algorithm_version = ?11,
+                confidence_label = ?12,
+                rationale_json = ?13,
+                report_summary = ?14,
+                review_status = ?15,
+                updated_at = ?16
             WHERE id = ?1
             "#,
         )
         .bind(id)
         .bind(&input.project_id)
+        .bind(&input.workspace_id)
         .bind(input.title.trim())
         .bind(input.summary.as_deref().map(str::trim))
         .bind(&input.start_date)
@@ -3714,6 +4106,169 @@ impl<'a> ActivityEmbeddingRepository<'a> {
             })
             .map(activity_embedding_from_row)
             .collect())
+    }
+}
+
+pub struct BackgroundJobRepository<'a> {
+    pool: &'a SqlitePool,
+}
+
+impl<'a> BackgroundJobRepository<'a> {
+    pub fn new(pool: &'a SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn enqueue_unique(
+        &self,
+        kind: &str,
+        payload_json: &str,
+    ) -> Result<Option<BackgroundJobRecord>, sqlx::Error> {
+        let existing = sqlx::query(
+            r#"
+            SELECT id, kind, payload_json, status, attempts, last_error, created_at, updated_at
+            FROM background_jobs
+            WHERE kind = ?1 AND payload_json = ?2 AND status IN ('queued', 'running')
+            ORDER BY created_at DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(kind)
+        .bind(payload_json)
+        .fetch_optional(self.pool)
+        .await?;
+        if let Some(row) = existing {
+            return Ok(Some(background_job_from_row(row)));
+        }
+
+        let now = current_timestamp();
+        let id = generate_id("background_job");
+        sqlx::query(
+            r#"
+            INSERT INTO background_jobs (
+              id, kind, payload_json, status, attempts, created_at, updated_at
+            )
+            VALUES (?1, ?2, ?3, 'queued', 0, ?4, ?4)
+            "#,
+        )
+        .bind(&id)
+        .bind(kind)
+        .bind(payload_json)
+        .bind(&now)
+        .execute(self.pool)
+        .await?;
+        self.get(&id).await
+    }
+
+    pub async fn get(&self, id: &str) -> Result<Option<BackgroundJobRecord>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, kind, payload_json, status, attempts, last_error, created_at, updated_at
+            FROM background_jobs
+            WHERE id = ?1
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(self.pool)
+        .await?;
+        Ok(row.map(background_job_from_row))
+    }
+
+    pub async fn next_queued(
+        &self,
+        kind: Option<&str>,
+    ) -> Result<Option<BackgroundJobRecord>, sqlx::Error> {
+        let row = if let Some(kind) = kind {
+            sqlx::query(
+                r#"
+                SELECT id, kind, payload_json, status, attempts, last_error, created_at, updated_at
+                FROM background_jobs
+                WHERE status = 'queued' AND kind = ?1
+                ORDER BY created_at ASC
+                LIMIT 1
+                "#,
+            )
+            .bind(kind)
+            .fetch_optional(self.pool)
+            .await?
+        } else {
+            sqlx::query(
+                r#"
+                SELECT id, kind, payload_json, status, attempts, last_error, created_at, updated_at
+                FROM background_jobs
+                WHERE status = 'queued'
+                ORDER BY created_at ASC
+                LIMIT 1
+                "#,
+            )
+            .fetch_optional(self.pool)
+            .await?
+        };
+        Ok(row.map(background_job_from_row))
+    }
+
+    pub async fn mark_running(&self, id: &str) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE background_jobs SET status = 'running', attempts = attempts + 1, updated_at = ?2 WHERE id = ?1",
+        )
+        .bind(id)
+        .bind(current_timestamp())
+        .execute(self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn mark_completed(&self, id: &str) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE background_jobs SET status = 'completed', last_error = NULL, updated_at = ?2 WHERE id = ?1",
+        )
+        .bind(id)
+        .bind(current_timestamp())
+        .execute(self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn mark_failed(&self, id: &str, error: &str) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE background_jobs SET status = 'failed', last_error = ?2, updated_at = ?3 WHERE id = ?1",
+        )
+        .bind(id)
+        .bind(error)
+        .bind(current_timestamp())
+        .execute(self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn status(&self, kind: Option<&str>) -> Result<BackgroundJobStatus, sqlx::Error> {
+        let rows = if let Some(kind) = kind {
+            sqlx::query(
+                "SELECT status, COUNT(*) AS count FROM background_jobs WHERE kind = ?1 GROUP BY status",
+            )
+            .bind(kind)
+            .fetch_all(self.pool)
+            .await?
+        } else {
+            sqlx::query("SELECT status, COUNT(*) AS count FROM background_jobs GROUP BY status")
+                .fetch_all(self.pool)
+                .await?
+        };
+        let mut status = BackgroundJobStatus {
+            queued: 0,
+            running: 0,
+            failed: 0,
+            completed: 0,
+        };
+        for row in rows {
+            match row.get::<String, _>("status").as_str() {
+                "queued" => status.queued = row.get("count"),
+                "running" => status.running = row.get("count"),
+                "failed" => status.failed = row.get("count"),
+                "completed" => status.completed = row.get("count"),
+                _ => {}
+            }
+        }
+        Ok(status)
     }
 }
 
@@ -7183,6 +7738,34 @@ fn commit_diff_snippet_from_row(row: sqlx::sqlite::SqliteRow) -> CommitDiffSnipp
     }
 }
 
+fn project_git_sync_state_from_row(row: sqlx::sqlite::SqliteRow) -> ProjectGitSyncState {
+    ProjectGitSyncState {
+        project_id: row.get("project_id"),
+        range_from: row.get("range_from"),
+        range_to: row.get("range_to"),
+        author_email: row.get("author_email"),
+        ref_fingerprint: row.get("ref_fingerprint"),
+        evidence_version: row.get("evidence_version"),
+        last_scanned_at: row.get("last_scanned_at"),
+        last_full_scanned_at: row.get("last_full_scanned_at"),
+        last_error: row.get("last_error"),
+    }
+}
+
+fn project_git_sync_cursor_from_row(row: sqlx::sqlite::SqliteRow) -> ProjectGitSyncCursor {
+    ProjectGitSyncCursor {
+        project_id: row.get("project_id"),
+        source_kind: row.get("source_kind"),
+        source_name: row.get("source_name"),
+        previous_head_commit: row.get("previous_head_commit"),
+        latest_head_commit: row.get("latest_head_commit"),
+        last_synced_at: row.get("last_synced_at"),
+        last_full_synced_at: row.get("last_full_synced_at"),
+        last_error: row.get("last_error"),
+        is_stale: i64_to_bool(row.get("is_stale")),
+    }
+}
+
 fn activity_embedding_from_row(row: sqlx::sqlite::SqliteRow) -> ActivityEmbeddingRecord {
     ActivityEmbeddingRecord {
         id: row.get("id"),
@@ -7194,6 +7777,19 @@ fn activity_embedding_from_row(row: sqlx::sqlite::SqliteRow) -> ActivityEmbeddin
         text_hash: row.get("text_hash"),
         vector_path: row.get("vector_path"),
         dimensions: row.get("dimensions"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    }
+}
+
+fn background_job_from_row(row: sqlx::sqlite::SqliteRow) -> BackgroundJobRecord {
+    BackgroundJobRecord {
+        id: row.get("id"),
+        kind: row.get("kind"),
+        payload_json: row.get("payload_json"),
+        status: row.get("status"),
+        attempts: row.get("attempts"),
+        last_error: row.get("last_error"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     }
@@ -7385,6 +7981,9 @@ async fn activity_item_for_source(
         SELECT commits.id,
                commits.project_id,
                projects.name AS project_name,
+               projects.workspace_id AS workspace_id,
+               workspaces.name AS workspace_name,
+               projects.workspace_relative_path AS workspace_relative_path,
                commits.message,
                commits.committed_at,
                commits.included_in_report,
@@ -7397,6 +7996,7 @@ async fn activity_item_for_source(
                commits.deletions
         FROM commits
         JOIN projects ON projects.id = commits.project_id
+        LEFT JOIN workspaces ON workspaces.id = projects.workspace_id
         WHERE commits.id = ?1
         LIMIT 1
         "#,
@@ -7418,6 +8018,9 @@ async fn activity_item_for_source(
         id: row.get("id"),
         project_id: Some(project_id),
         project_name: row.get("project_name"),
+        workspace_id: row.get("workspace_id"),
+        workspace_name: row.get("workspace_name"),
+        workspace_relative_path: row.get("workspace_relative_path"),
         activity_type: "commit".to_string(),
         summary: row.get("message"),
         occurred_at: row.get("committed_at"),
@@ -7526,6 +8129,77 @@ fn project_filter_matches(project_ids: &Option<Vec<String>>, project_id: &str) -
         .as_ref()
         .map(|ids| ids.iter().any(|id| id == project_id))
         .unwrap_or(true)
+}
+
+fn workspace_filter_matches(workspace_ids: &Option<Vec<String>>, workspace_id: Option<&str>) -> bool {
+    workspace_ids
+        .as_ref()
+        .map(|ids| {
+            workspace_id
+                .map(|workspace_id| ids.iter().any(|id| id == workspace_id))
+                .unwrap_or(false)
+        })
+        .unwrap_or(true)
+}
+
+fn group_matches_project_filter(
+    project_ids: &Option<Vec<String>>,
+    group_project_id: Option<&str>,
+    projects: &[ActivityGroupProject],
+) -> bool {
+    let Some(ids) = project_ids.as_ref() else {
+        return true;
+    };
+    group_project_id
+        .map(|project_id| ids.iter().any(|id| id == project_id))
+        .unwrap_or(false)
+        || projects
+            .iter()
+            .any(|project| ids.iter().any(|id| id == &project.project_id))
+}
+
+fn group_matches_workspace_filter(
+    workspace_ids: &Option<Vec<String>>,
+    group_workspace_id: Option<&str>,
+    items: &[ActivityGroupItem],
+) -> bool {
+    let Some(ids) = workspace_ids.as_ref() else {
+        return true;
+    };
+    group_workspace_id
+        .map(|workspace_id| ids.iter().any(|id| id == workspace_id))
+        .unwrap_or(false)
+        || items.iter().any(|item| {
+            item.activity
+                .as_ref()
+                .and_then(|activity| activity.workspace_id.as_deref())
+                .map(|workspace_id| ids.iter().any(|id| id == workspace_id))
+                .unwrap_or(false)
+        })
+}
+
+fn group_projects(items: &[ActivityGroupItem]) -> Vec<ActivityGroupProject> {
+    let mut projects = Vec::new();
+    for activity in items.iter().filter_map(|item| item.activity.as_ref()) {
+        let Some(project_id) = &activity.project_id else {
+            continue;
+        };
+        if projects
+            .iter()
+            .any(|project: &ActivityGroupProject| project.project_id == *project_id)
+        {
+            continue;
+        }
+        projects.push(ActivityGroupProject {
+            project_id: project_id.clone(),
+            project_name: activity
+                .project_name
+                .clone()
+                .unwrap_or_else(|| "Unknown project".to_string()),
+        });
+    }
+    projects.sort_by(|left, right| left.project_name.cmp(&right.project_name));
+    projects
 }
 
 fn classification_filter_matches(
@@ -7657,6 +8331,10 @@ fn current_timestamp() -> String {
     Utc::now().to_rfc3339()
 }
 
+fn is_full_commit_hash(value: &str) -> bool {
+    value.len() == 40 && value.chars().all(|character| character.is_ascii_hexdigit())
+}
+
 fn generate_id(prefix: &str) -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -7739,6 +8417,44 @@ mod tests {
             .expect("create project")
     }
 
+    fn test_file_change(project_id: &str, commit_hash: &str, path: &str) -> CommitFileChange {
+        CommitFileChange {
+            project_id: project_id.to_string(),
+            commit_hash: commit_hash.to_string(),
+            path: path.to_string(),
+            old_path: None,
+            change_kind: "modified".to_string(),
+            additions: 3,
+            deletions: 1,
+            is_binary: false,
+            language: Some("rust".to_string()),
+            top_level_dir: Some("src".to_string()),
+            is_test: false,
+            is_docs: false,
+            is_config: false,
+            is_migration: false,
+            is_generated: false,
+            collected_at: "2026-05-28T12:00:00Z".to_string(),
+        }
+    }
+
+    fn test_commit(project_id: &str, commit_hash: &str, message: &str) -> Commit {
+        Commit {
+            id: format!("commit_{project_id}_{commit_hash}"),
+            project_id: project_id.to_string(),
+            commit_hash: commit_hash.to_string(),
+            message: message.to_string(),
+            author_name: Some("Tester".to_string()),
+            author_email: Some("tester@example.com".to_string()),
+            branch: Some("main".to_string()),
+            committed_at: "2026-05-28T12:00:00Z".to_string(),
+            files_changed: Some(1),
+            insertions: Some(3),
+            deletions: Some(1),
+            included_in_report: true,
+        }
+    }
+
     #[tokio::test]
     async fn migrations_are_idempotent() {
         let pool = test_pool().await;
@@ -7769,6 +8485,131 @@ mod tests {
 
         assert_eq!(workspace_count, 1);
         assert_eq!(project_workspace_column, 1);
+    }
+
+    #[tokio::test]
+    async fn git_sync_state_round_trips_ref_fingerprint() {
+        let pool = test_pool().await;
+        let project = create_project(&pool).await;
+        let repository = GitMetadataRepository::new(&pool);
+
+        repository
+            .upsert_sync_state(&ProjectGitSyncState {
+                project_id: project.id.clone(),
+                range_from: Some("2026-05-25".to_string()),
+                range_to: Some("2026-05-29".to_string()),
+                author_email: Some("tester@example.com".to_string()),
+                ref_fingerprint: "refs-a".to_string(),
+                evidence_version: "git-evidence-v2".to_string(),
+                last_scanned_at: "2026-05-28T12:00:00Z".to_string(),
+                last_full_scanned_at: None,
+                last_error: None,
+            })
+            .await
+            .expect("upsert sync state");
+
+        let state = repository
+            .get_sync_state(
+                &project.id,
+                Some("2026-05-25"),
+                Some("2026-05-29"),
+                Some("tester@example.com"),
+            )
+            .await
+            .expect("get sync state")
+            .expect("sync state exists");
+
+        assert_eq!(state.ref_fingerprint, "refs-a");
+        assert_eq!(state.evidence_version, "git-evidence-v2");
+    }
+
+    #[tokio::test]
+    async fn per_commit_evidence_replacement_keeps_unrelated_rows() {
+        let pool = test_pool().await;
+        let project = create_project(&pool).await;
+        let repository = GitMetadataRepository::new(&pool);
+        let first = "1111111111111111111111111111111111111111".to_string();
+        let second = "2222222222222222222222222222222222222222".to_string();
+
+        repository
+            .replace_commit_file_changes(
+                &project.id,
+                &[
+                    test_file_change(&project.id, &first, "src/old.rs"),
+                    test_file_change(&project.id, &second, "src/keep.rs"),
+                ],
+            )
+            .await
+            .expect("seed evidence");
+
+        repository
+            .replace_commit_file_changes_for_hashes(
+                &project.id,
+                std::slice::from_ref(&first),
+                &[test_file_change(&project.id, &first, "src/new.rs")],
+            )
+            .await
+            .expect("replace one commit evidence");
+
+        let first_changes = repository
+            .list_file_changes_for_commits(&project.id, std::slice::from_ref(&first))
+            .await
+            .expect("list first changes");
+        let second_changes = repository
+            .list_file_changes_for_commits(&project.id, std::slice::from_ref(&second))
+            .await
+            .expect("list second changes");
+
+        assert_eq!(first_changes.len(), 1);
+        assert_eq!(first_changes[0].path, "src/new.rs");
+        assert_eq!(second_changes.len(), 1);
+        assert_eq!(second_changes[0].path, "src/keep.rs");
+    }
+
+    #[tokio::test]
+    async fn bulk_commit_upsert_preserves_report_inclusion_and_existing_stats() {
+        let pool = test_pool().await;
+        let project = create_project(&pool).await;
+        let repository = CommitRepository::new(&pool);
+        let hash = "3333333333333333333333333333333333333333";
+        let mut commit = test_commit(&project.id, hash, "feat: original");
+
+        repository
+            .upsert_many(std::slice::from_ref(&commit))
+            .await
+            .expect("insert commit");
+        sqlx::query(
+            "UPDATE commits SET included_in_report = 0 WHERE project_id = ?1 AND commit_hash = ?2",
+        )
+        .bind(&project.id)
+        .bind(hash)
+        .execute(&pool)
+        .await
+        .expect("mark excluded");
+
+        commit.message = "feat: updated".to_string();
+        commit.files_changed = None;
+        commit.insertions = None;
+        commit.deletions = None;
+        repository
+            .upsert_many(std::slice::from_ref(&commit))
+            .await
+            .expect("update commit");
+
+        let row = sqlx::query(
+            "SELECT message, files_changed, insertions, deletions, included_in_report FROM commits WHERE project_id = ?1 AND commit_hash = ?2",
+        )
+        .bind(&project.id)
+        .bind(hash)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch commit");
+
+        assert_eq!(row.get::<String, _>("message"), "feat: updated");
+        assert_eq!(row.get::<i64, _>("files_changed"), 1);
+        assert_eq!(row.get::<i64, _>("insertions"), 3);
+        assert_eq!(row.get::<i64, _>("deletions"), 1);
+        assert_eq!(row.get::<i64, _>("included_in_report"), 0);
     }
 
     #[tokio::test]
@@ -8356,6 +9197,7 @@ mod tests {
                 to: "2026-05-20".to_string(),
                 activity_type: None,
                 project_ids: None,
+                workspace_ids: None,
                 classification: None,
                 git_refs: None,
                 worktree_paths: None,
@@ -8381,6 +9223,7 @@ mod tests {
                 to: "2026-05-20".to_string(),
                 activity_type: Some("commit".to_string()),
                 project_ids: None,
+                workspace_ids: None,
                 classification: None,
                 git_refs: None,
                 worktree_paths: None,
@@ -8397,6 +9240,7 @@ mod tests {
                 to: "2026-05-20".to_string(),
                 activity_type: Some("Testing".to_string()),
                 project_ids: None,
+                workspace_ids: None,
                 classification: None,
                 git_refs: None,
                 worktree_paths: None,
@@ -8413,6 +9257,7 @@ mod tests {
                 to: "2026-05-20".to_string(),
                 activity_type: None,
                 project_ids: Some(vec!["missing_project".to_string()]),
+                workspace_ids: None,
                 classification: None,
                 git_refs: None,
                 worktree_paths: None,
@@ -8498,6 +9343,7 @@ mod tests {
                 to: "2026-05-20".to_string(),
                 activity_type: None,
                 project_ids: None,
+                workspace_ids: None,
                 classification: None,
                 git_refs: None,
                 worktree_paths: None,
@@ -8592,6 +9438,7 @@ mod tests {
                 to: "2026-05-19".to_string(),
                 activity_type: Some("commit".to_string()),
                 project_ids: Some(vec![project.id.clone()]),
+                workspace_ids: None,
                 classification: None,
                 git_refs: Some(vec![GitRefFilter {
                     project_id: Some(project.id.clone()),
@@ -8611,6 +9458,7 @@ mod tests {
                 to: "2026-05-19".to_string(),
                 activity_type: Some("commit".to_string()),
                 project_ids: Some(vec![project.id.clone()]),
+                workspace_ids: None,
                 classification: None,
                 git_refs: None,
                 worktree_paths: Some(vec!["C:\\repo\\sparc-force-api-feature".to_string()]),

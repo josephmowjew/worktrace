@@ -13,13 +13,15 @@ use tokio::time::{timeout, Duration};
 
 use crate::domain::activity::ListActivityInput;
 use crate::domain::embedding::{
-    ConnectEmbeddingProviderInput, EmbeddingProvider, EmbeddingStatus,
-    RefreshActivityEmbeddingsInput, RefreshActivityEmbeddingsResult, SemanticActivitySearchInput,
-    SemanticActivitySearchResult, UpsertActivityEmbeddingInput,
+    BackgroundJobStatus, BackgroundJobStatusInput, ConnectEmbeddingProviderInput,
+    EmbeddingProvider, EmbeddingStatus, QueueActivityEmbeddingRefreshInput,
+    QueueBackgroundJobResult, RefreshActivityEmbeddingsInput, RefreshActivityEmbeddingsResult,
+    RunBackgroundJobsResult, SemanticActivitySearchInput, SemanticActivitySearchResult,
+    UpsertActivityEmbeddingInput,
 };
 use crate::domain::settings::Settings;
 use crate::infrastructure::database::repositories::{
-    ActivityEmbeddingRepository, ActivityRepository, SettingsRepository,
+    ActivityEmbeddingRepository, ActivityRepository, BackgroundJobRepository, SettingsRepository,
 };
 
 const KEYRING_SERVICE: &str = "WorkTrace";
@@ -90,6 +92,112 @@ impl EmbeddingService {
 pub struct EmbeddingIndexService;
 
 impl EmbeddingIndexService {
+    pub async fn queue_refresh(
+        job_repository: &BackgroundJobRepository<'_>,
+        input: QueueActivityEmbeddingRefreshInput,
+    ) -> Result<QueueBackgroundJobResult, EmbeddingError> {
+        let payload = serde_json::to_string(&RefreshActivityEmbeddingsInput {
+            from: input.from,
+            to: input.to,
+            project_ids: input.project_ids,
+            classification: input.classification,
+        })
+        .map_err(|error| EmbeddingError::Provider(error.to_string()))?;
+        let job = job_repository
+            .enqueue_unique("embedding_refresh", &payload)
+            .await
+            .map_err(EmbeddingError::Database)?;
+
+        Ok(QueueBackgroundJobResult {
+            queued: job.is_some(),
+            job_id: job.map(|job| job.id),
+        })
+    }
+
+    pub async fn job_status(
+        job_repository: &BackgroundJobRepository<'_>,
+        input: BackgroundJobStatusInput,
+    ) -> Result<BackgroundJobStatus, EmbeddingError> {
+        job_repository
+            .status(input.kind.as_deref())
+            .await
+            .map_err(EmbeddingError::Database)
+    }
+
+    pub async fn run_background_jobs_once(
+        settings_repository: &SettingsRepository<'_>,
+        activity_repository: &ActivityRepository<'_>,
+        embedding_repository: &ActivityEmbeddingRepository<'_>,
+        job_repository: &BackgroundJobRepository<'_>,
+        app_data_dir: &Path,
+    ) -> Result<RunBackgroundJobsResult, EmbeddingError> {
+        let Some(job) = job_repository
+            .next_queued(Some("embedding_refresh"))
+            .await
+            .map_err(EmbeddingError::Database)?
+        else {
+            return Ok(RunBackgroundJobsResult {
+                processed: 0,
+                succeeded: 0,
+                failed: 0,
+            });
+        };
+
+        job_repository
+            .mark_running(&job.id)
+            .await
+            .map_err(EmbeddingError::Database)?;
+        let input = match serde_json::from_str::<RefreshActivityEmbeddingsInput>(&job.payload_json)
+        {
+            Ok(input) => input,
+            Err(error) => {
+                job_repository
+                    .mark_failed(&job.id, &error.to_string())
+                    .await
+                    .map_err(EmbeddingError::Database)?;
+                return Ok(RunBackgroundJobsResult {
+                    processed: 1,
+                    succeeded: 0,
+                    failed: 1,
+                });
+            }
+        };
+
+        match Self::refresh_for_range(
+            settings_repository,
+            activity_repository,
+            embedding_repository,
+            app_data_dir,
+            input,
+        )
+        .await
+        {
+            Ok(_) => {
+                job_repository
+                    .mark_completed(&job.id)
+                    .await
+                    .map_err(EmbeddingError::Database)?;
+                Ok(RunBackgroundJobsResult {
+                    processed: 1,
+                    succeeded: 1,
+                    failed: 0,
+                })
+            }
+            Err(error) => {
+                let message = error.to_string();
+                job_repository
+                    .mark_failed(&job.id, &message)
+                    .await
+                    .map_err(EmbeddingError::Database)?;
+                Ok(RunBackgroundJobsResult {
+                    processed: 1,
+                    succeeded: 0,
+                    failed: 1,
+                })
+            }
+        }
+    }
+
     pub async fn refresh_for_range(
         settings_repository: &SettingsRepository<'_>,
         activity_repository: &ActivityRepository<'_>,
@@ -317,6 +425,7 @@ async fn activity_evidence(
             to: input.to,
             activity_type: None,
             project_ids: input.project_ids,
+            workspace_ids: None,
             classification: input.classification,
             git_refs: None,
             worktree_paths: None,

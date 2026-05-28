@@ -4,6 +4,9 @@ export type ActivityItem = {
   id: string;
   projectId?: string | null;
   projectName?: string | null;
+  workspaceId?: string | null;
+  workspaceName?: string | null;
+  workspaceRelativePath?: string | null;
   activityType: string;
   summary: string;
   occurredAt: string;
@@ -29,6 +32,7 @@ export type ListActivityInput = {
   to: string;
   activityType?: string | null;
   projectIds?: string[] | null;
+  workspaceIds?: string[] | null;
   gitRefs?: GitRefFilter[] | null;
   worktreePaths?: string[] | null;
 };

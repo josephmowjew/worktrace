@@ -42,6 +42,15 @@ export function TimelineGroupItem({ group, onEdit, onSelectTitleCandidate }: Tim
                 {group.projectName}
               </span>
             ) : null}
+            {group.projectCount > 1 ? (
+              <span className="rounded-md border border-violet-300/15 bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold text-violet-100">
+                Workspace item · {group.projectCount} projects
+              </span>
+            ) : group.workspaceName ? (
+              <span className="rounded-md border border-white/8 bg-white/5 px-2 py-0.5 text-[10px] font-semibold text-slate-400">
+                {group.workspaceName}
+              </span>
+            ) : null}
             <span className="rounded-md border border-white/8 bg-white/5 px-2 py-0.5 text-[10px] font-semibold text-slate-400">
               {group.items.length} commit{group.items.length === 1 ? "" : "s"}
             </span>
@@ -153,6 +162,18 @@ export function TimelineGroupItem({ group, onEdit, onSelectTitleCandidate }: Tim
 
       {expanded ? (
         <div className="mx-4 mb-4 space-y-2 rounded-xl border border-blue-100/8 bg-slate-950/50 p-3">
+          {group.projectCount > 1 ? (
+            <div className="flex flex-wrap gap-2 pb-1">
+              {group.projects.map((project) => (
+                <span
+                  key={project.projectId}
+                  className="rounded-md border border-white/8 bg-white/[0.03] px-2 py-1 text-[10px] font-semibold text-slate-300"
+                >
+                  {project.projectName}
+                </span>
+              ))}
+            </div>
+          ) : null}
           {activities.length ? (
             activities.map((item) => <TimelineItem key={item.id} item={item} showTime={false} />)
           ) : (

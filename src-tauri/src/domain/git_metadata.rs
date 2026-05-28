@@ -143,3 +143,31 @@ pub struct SaveProjectGitFocusInput {
     pub refs: Vec<GitRefFilter>,
     pub worktree_paths: Vec<String>,
 }
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectGitSyncState {
+    pub project_id: String,
+    pub range_from: Option<String>,
+    pub range_to: Option<String>,
+    pub author_email: Option<String>,
+    pub ref_fingerprint: String,
+    pub evidence_version: String,
+    pub last_scanned_at: String,
+    pub last_full_scanned_at: Option<String>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectGitSyncCursor {
+    pub project_id: String,
+    pub source_kind: String,
+    pub source_name: String,
+    pub previous_head_commit: Option<String>,
+    pub latest_head_commit: Option<String>,
+    pub last_synced_at: String,
+    pub last_full_synced_at: Option<String>,
+    pub last_error: Option<String>,
+    pub is_stale: bool,
+}

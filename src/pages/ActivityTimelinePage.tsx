@@ -3,6 +3,7 @@ import {
   BarChart3,
   CalendarDays,
   ChevronLeft,
+  ChevronDown,
   ChevronRight,
   Code,
   Eye,
@@ -33,7 +34,7 @@ import { Badge } from "../components/ui/Badge";
 import { ModalShell } from "../components/ui/ModalShell";
 import { listActivity, getActivityHeatmap, getWeekSummary, getKeyHighlights } from "../lib/api/activity";
 import { listActivityGroups, recordActivityGroupTitleFeedback, refreshActivityGroupSuggestions, selectActivityGroupTitleCandidate, suggestActivityGroups, updateActivityGroup } from "../lib/api/activityGroups";
-import { getEmbeddingStatus, refreshActivityEmbeddings, semanticActivitySearch } from "../lib/api/embeddings";
+import { getBackgroundJobStatus, getEmbeddingStatus, queueActivityEmbeddingRefresh, runBackgroundJobsOnce, semanticActivitySearch } from "../lib/api/embeddings";
 import { syncCommits } from "../lib/api/gitSync";
 import { listProjects } from "../lib/api/projects";
 import { listWeeklyTasks } from "../lib/api/weeklyTasks";
@@ -63,7 +64,8 @@ export function ActivityTimelinePage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [viewingTask, setViewingTask] = useState<WeeklyTask | null>(null);
   const [editingGroup, setEditingGroup] = useState<ActivityGroup | null>(null);
-  const [organizePhase, setOrganizePhase] = useState<"idle" | "evidence" | "embedding" | "grouping">("idle");
+  const [syncMenuOpen, setSyncMenuOpen] = useState(false);
+  const [organizePhase, setOrganizePhase] = useState<"idle" | "evidence" | "grouping">("idle");
 
   const weekRange = useMemo(() => currentWeekRange(currentDate), [currentDate]);
 
@@ -105,14 +107,24 @@ export function ActivityTimelinePage() {
     retry: false,
   });
 
+  const backgroundJobStatusQuery = useQuery({
+    queryKey: ["backgroundJobStatus", "embedding_refresh"],
+    queryFn: () => getBackgroundJobStatus({ kind: "embedding_refresh" }),
+    refetchInterval: (query) => {
+      const status = query.state.data;
+      return status && (status.queued > 0 || status.running > 0) ? 5000 : false;
+    },
+    retry: false,
+  });
+
   const smartOrganizeMutation = useMutation({
     mutationFn: async () => {
       const status = embeddingStatusQuery.data ?? await getEmbeddingStatus();
-      let embeddingsIndexed = 0;
-      let embeddingsSkipped = 0;
-      let embeddingsAttempted = false;
       let evidenceWarning: string | null = null;
       let embeddingWarning: string | null = null;
+      let evidenceStatus = "Checking repositories";
+      let usedCachedEvidence = false;
+      let backgroundJobsQueued = 0;
 
       setOrganizePhase("evidence");
       try {
@@ -120,29 +132,35 @@ export function ActivityTimelinePage() {
           from: weekRange.from,
           to: weekRange.to,
           projectIds,
+          mode: "auto",
         });
         if (syncResult.errors.length > 0) {
           evidenceWarning = syncResult.errors.join(" ");
         }
+        usedCachedEvidence = syncResult.skippedFreshProjects > 0 || syncResult.unchangedProjects > 0;
+        evidenceStatus = syncResult.skippedFreshProjects > 0 && syncResult.scannedProjects === 0
+          ? "Using cached Git evidence"
+          : syncResult.evidenceRepaired > 0
+            ? `Repairing file evidence for ${syncResult.evidenceRepaired} commits`
+            : syncResult.newCommits > 0
+              ? `Organized from ${syncResult.newCommits} latest local commits`
+            : "Checking repositories";
       } catch (error) {
         evidenceWarning =
           error instanceof Error ? error.message : "Git evidence could not be refreshed.";
       }
 
       if (status.available) {
-        embeddingsAttempted = true;
         try {
-          setOrganizePhase("embedding");
-          const result = await refreshActivityEmbeddings({
+          const queued = await queueActivityEmbeddingRefresh({
             from: weekRange.from,
             to: weekRange.to,
             projectIds,
           });
-          embeddingsIndexed = result.indexed;
-          embeddingsSkipped = result.skipped;
+          backgroundJobsQueued = queued.queued ? 1 : 0;
         } catch (error) {
           embeddingWarning =
-            error instanceof Error ? error.message : "Embeddings could not be refreshed.";
+            error instanceof Error ? error.message : "Semantic refinement could not be queued.";
         }
       }
 
@@ -152,7 +170,7 @@ export function ActivityTimelinePage() {
         to: weekRange.to,
         projectIds,
         useAi: false,
-        useEmbeddings: status.available,
+        useEmbeddings: false,
       });
       const commitCount = countCommitItems(activityQuery.data ?? []);
       const groupedCommitCount = new Set(groups.flatMap((group) => group.items.map((item) => item.sourceId))).size;
@@ -173,9 +191,14 @@ export function ActivityTimelinePage() {
         titleNeedsReviewCount,
         fallbackTitleCount,
         evidenceWarning,
-        embeddingsAttempted,
-        embeddingsIndexed,
-        embeddingsSkipped,
+        evidenceStatus,
+        backgroundJobsQueued,
+        usedCachedEvidence,
+        qualityState: backgroundJobsQueued > 0
+          ? "background_refining"
+          : usedCachedEvidence
+            ? "using_cached_evidence"
+            : "ready",
         embeddingWarning,
       };
     },
@@ -185,11 +208,21 @@ export function ActivityTimelinePage() {
         queryClient.invalidateQueries({ queryKey: ["activity"] }),
         queryClient.invalidateQueries({ queryKey: ["activityGroups"] }),
         queryClient.invalidateQueries({ queryKey: ["semanticActivitySearch"] }),
+        queryClient.invalidateQueries({ queryKey: ["backgroundJobStatus"] }),
         queryClient.invalidateQueries({ queryKey: ["reports"] }),
       ]);
-      const suffix = result.embeddingsAttempted
-        ? ` ${result.embeddingsIndexed} semantic signals indexed, ${result.embeddingsSkipped} already fresh.`
-        : " Deterministic grouping used.";
+      if (result.backgroundJobsQueued > 0) {
+        runBackgroundJobsOnce()
+          .finally(() => {
+            queryClient.invalidateQueries({ queryKey: ["backgroundJobStatus"] });
+            queryClient.invalidateQueries({ queryKey: ["semanticActivitySearch"] });
+          });
+      }
+      const suffix = result.qualityState === "background_refining"
+        ? " Refining semantic matches in background."
+        : result.usedCachedEvidence
+          ? " Used cached evidence."
+          : " Deterministic grouping used.";
       const organizeMessage =
         result.ungroupedCount > 0
           ? `${result.groups.length} work items found from ${result.commitCount} commits; ${result.ungroupedCount} left ungrouped.${titleReviewSuffix(result.titleNeedsReviewCount, result.fallbackTitleCount)}${suffix}`
@@ -319,13 +352,16 @@ export function ActivityTimelinePage() {
       }),
   });
 
+  useEscapeKey(() => setSyncMenuOpen(false), syncMenuOpen);
+
   const syncMutation = useMutation({
-    mutationFn: () =>
+    mutationFn: (mode: "auto" | "full" = "auto") =>
       syncCommits({
         from: null,
         to: null,
         authorEmail: null,
         projectIds,
+        mode,
       }),
     onMutate: () => {
       speech.announce(syncStartedAnnouncement("activity timeline"), { category: "sync" });
@@ -339,8 +375,10 @@ export function ActivityTimelinePage() {
         queryClient.invalidateQueries({ queryKey: ["keyHighlights"] }),
       ]);
       toast.success(
-        "Sync complete",
-        `Added ${result.newCommits} commits and updated ${result.updatedCommits}.`,
+        result.fullProjects > 0 ? "Full sync complete" : "Sync complete",
+        result.newCommits === 0 && result.updatedCommits === 0
+          ? "No new commits."
+          : `Added ${result.newCommits} commits and updated ${result.updatedCommits}.`,
       );
       speech.announce(syncAnnouncement(result), { category: "sync" });
       if (result.errors.length) {
@@ -443,17 +481,44 @@ export function ActivityTimelinePage() {
               </span>
             </div>
 
-            <Button
-              variant="primary"
-              onClick={() => syncMutation.mutate()}
-              disabled={syncMutation.isPending || smartOrganizeMutation.isPending}
-              className="h-12 rounded-xl px-5 shadow-[0_16px_34px_rgba(37,99,235,0.32)] transition-[background-color,box-shadow,transform] active:scale-[0.96]"
-            >
-              <RefreshCw
-                className={`h-4 w-4 ${syncMutation.isPending ? "animate-spin" : ""}`}
-              />
-              {syncMutation.isPending ? "Syncing..." : "Sync Repositories"}
-            </Button>
+            <div className="relative flex">
+              <Button
+                variant="primary"
+                onClick={() => syncMutation.mutate("auto")}
+                disabled={syncMutation.isPending || smartOrganizeMutation.isPending}
+                className="h-12 rounded-r-none px-5 shadow-[0_16px_34px_rgba(37,99,235,0.32)] transition-[background-color,box-shadow,transform] active:scale-[0.96]"
+              >
+                <RefreshCw
+                  className={`h-4 w-4 ${syncMutation.isPending ? "animate-spin" : ""}`}
+                />
+                {syncMutation.isPending ? "Syncing..." : "Sync Repositories"}
+              </Button>
+              <button
+                type="button"
+                onClick={() => setSyncMenuOpen((open) => !open)}
+                disabled={syncMutation.isPending || smartOrganizeMutation.isPending}
+                className="flex h-12 w-11 items-center justify-center rounded-r-xl border-l border-white/15 bg-blue-600 text-white shadow-[0_16px_34px_rgba(37,99,235,0.32)] transition-[background-color,transform] hover:bg-blue-500 active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label="Sync options"
+                aria-expanded={syncMenuOpen}
+              >
+                <ChevronDown className="h-4 w-4" />
+              </button>
+              {syncMenuOpen ? (
+                <div className="absolute right-0 top-[calc(100%+8px)] z-30 w-48 rounded-xl border border-blue-200/12 bg-slate-950/95 p-1.5 text-sm text-slate-200 shadow-[0_18px_48px_rgba(2,6,23,0.45)] backdrop-blur">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSyncMenuOpen(false);
+                      syncMutation.mutate("full");
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-slate-200 transition-colors hover:bg-white/8"
+                  >
+                    <RefreshCw className="h-4 w-4 text-blue-300" />
+                    Full Sync
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </>
         }
       />
@@ -513,9 +578,7 @@ export function ActivityTimelinePage() {
               <Sparkles className={`h-4 w-4 ${smartOrganizeMutation.isPending ? "animate-pulse" : ""}`} />
               {smartOrganizeMutation.isPending
                 ? organizePhase === "evidence"
-                  ? "Refreshing..."
-                  : organizePhase === "embedding"
-                  ? "Indexing..."
+                  ? "Checking..."
                   : "Organizing..."
                 : "Smart Organize"}
             </Button>
@@ -555,19 +618,15 @@ export function ActivityTimelinePage() {
               <div className="flex min-w-0 items-center gap-2">
                 <Sparkles className="h-3.5 w-3.5 shrink-0 animate-pulse" />
                 <span className="truncate">
-                  {organizePhase === "embedding"
-                    ? "Generating local semantic index for this activity range."
-                    : organizePhase === "evidence"
-                      ? "Refreshing Git file evidence before organizing."
-                      : "Grouping related activity into work items."}
+                  {organizePhase === "evidence"
+                    ? "Checking repositories and using cached Git evidence when it is fresh."
+                    : "Grouping related activity into work items."}
                 </span>
               </div>
               <span className="shrink-0 rounded-md border border-cyan-200/15 bg-slate-950/40 px-2 py-1 font-semibold text-cyan-50">
-                {organizePhase === "embedding"
-                  ? "Embeddings"
-                  : organizePhase === "evidence"
-                    ? "Evidence"
-                    : "Grouping"}
+                {organizePhase === "evidence"
+                  ? "Evidence"
+                  : "Grouping"}
               </span>
             </div>
           ) : smartOrganizeMutation.data ? (
@@ -576,6 +635,15 @@ export function ActivityTimelinePage() {
               {smartOrganizeMutation.data.groups.length} work items from {smartOrganizeMutation.data.commitCount} commits.
               {smartOrganizeMutation.data.ungroupedCount > 0 ? ` ${smartOrganizeMutation.data.ungroupedCount} commits left ungrouped.` : null}
               {smartOrganizeMutation.data.needsReviewCount > 0 ? ` ${smartOrganizeMutation.data.needsReviewCount} need review.` : null}
+              {smartOrganizeMutation.data.evidenceStatus ? ` ${smartOrganizeMutation.data.evidenceStatus}.` : null}
+            </div>
+          ) : null}
+
+          {backgroundJobStatusQuery.data
+            && (backgroundJobStatusQuery.data.queued > 0 || backgroundJobStatusQuery.data.running > 0) ? (
+            <div className="flex items-center gap-2 rounded-xl border border-cyan-300/20 bg-cyan-300/10 p-3 text-xs text-cyan-100">
+              <Sparkles className="h-3.5 w-3.5 animate-pulse" />
+              Refining semantic matches in background. You can keep working.
             </div>
           ) : null}
 

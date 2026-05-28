@@ -23,7 +23,7 @@ pub struct DailyPlan {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DailyPlanItem {
     pub id: String,

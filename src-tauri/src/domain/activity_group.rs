@@ -9,6 +9,7 @@ pub struct ListActivityGroupsInput {
     pub from: String,
     pub to: String,
     pub project_ids: Option<Vec<String>>,
+    pub workspace_ids: Option<Vec<String>>,
     pub classification: Option<String>,
     pub git_refs: Option<Vec<GitRefFilter>>,
     pub worktree_paths: Option<Vec<String>>,
@@ -21,6 +22,7 @@ pub struct SuggestActivityGroupsInput {
     pub from: String,
     pub to: String,
     pub project_ids: Option<Vec<String>>,
+    pub workspace_ids: Option<Vec<String>>,
     pub classification: Option<String>,
     pub git_refs: Option<Vec<GitRefFilter>>,
     pub worktree_paths: Option<Vec<String>>,
@@ -32,6 +34,7 @@ pub struct SuggestActivityGroupsInput {
 #[serde(rename_all = "camelCase")]
 pub struct CreateActivityGroupInput {
     pub project_id: Option<String>,
+    pub workspace_id: Option<String>,
     pub title: String,
     pub summary: Option<String>,
     pub start_date: String,
@@ -84,6 +87,7 @@ pub struct PreviewActivityGroupSuggestionsInput {
     pub from: String,
     pub to: String,
     pub project_ids: Option<Vec<String>>,
+    pub workspace_ids: Option<Vec<String>>,
     pub classification: Option<String>,
     pub git_refs: Option<Vec<GitRefFilter>>,
     pub worktree_paths: Option<Vec<String>>,
@@ -166,6 +170,10 @@ pub struct ActivityGroup {
     pub id: String,
     pub project_id: Option<String>,
     pub project_name: Option<String>,
+    pub workspace_id: Option<String>,
+    pub workspace_name: Option<String>,
+    pub project_count: i64,
+    pub projects: Vec<ActivityGroupProject>,
     pub title: String,
     pub summary: Option<String>,
     pub start_date: String,
@@ -268,6 +276,13 @@ pub struct ActivityGroupItem {
     pub summary_snapshot: String,
     pub activity: Option<ActivityItem>,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityGroupProject {
+    pub project_id: String,
+    pub project_name: String,
 }
 
 #[derive(Debug, Clone)]

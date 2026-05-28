@@ -134,7 +134,7 @@ impl DailyPlanService {
             })
             .await
             .map_err(DailyPlanServiceError::Database)?;
-        let top_priorities = plans
+        let saved_priorities = plans
             .list_items(&daily_plan.id)
             .await
             .map_err(DailyPlanServiceError::Database)?;
@@ -181,6 +181,8 @@ impl DailyPlanService {
             .filter(|event| !event.is_cancelled)
             .collect::<Vec<_>>();
 
+        let top_priorities =
+            effective_top_priorities(&saved_priorities, &tasks, &daily_plan, &date);
         let current_task = resolve_current_task(&daily_plan, &active_focus, &tasks);
         let suggested_next_task = resolve_suggested_task(&daily_plan, &top_priorities, &tasks);
         let focus_actual_minutes = total_focus_minutes(&focus, &active_focus);
@@ -294,6 +296,63 @@ fn resolve_current_task(
         .cloned()
 }
 
+fn effective_top_priorities(
+    saved_priorities: &[DailyPlanItem],
+    tasks: &[WeeklyTask],
+    plan: &DailyPlan,
+    date: &str,
+) -> Vec<DailyPlanItem> {
+    if !saved_priorities.is_empty() {
+        return saved_priorities.to_vec();
+    }
+
+    let mut eligible = tasks
+        .iter()
+        .filter(|task| {
+            task.status != WeeklyTaskStatus::Completed
+                && task.status != WeeklyTaskStatus::Dropped
+                && task
+                    .target_date
+                    .as_deref()
+                    .map(|target| target <= date)
+                    .unwrap_or(true)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+
+    eligible.sort_by_key(|task| {
+        (
+            priority_rank(&task.priority),
+            task.target_date
+                .clone()
+                .unwrap_or_else(|| "9999-12-31".to_string()),
+            task.created_at.clone(),
+        )
+    });
+
+    eligible
+        .into_iter()
+        .take(3)
+        .enumerate()
+        .map(|(index, task)| {
+            let planned_minutes = task
+                .estimated_minutes
+                .or_else(|| Some(default_planned_minutes(&task.priority)));
+            DailyPlanItem {
+                id: format!("suggested_daily_plan_item_{}", task.id),
+                daily_plan_id: plan.id.clone(),
+                rank: index as i32 + 1,
+                title: task.title,
+                weekly_task_id: Some(task.id),
+                planned_minutes,
+                status: DailyPlanItemStatus::Todo,
+                created_at: plan.updated_at.clone(),
+                updated_at: plan.updated_at.clone(),
+            }
+        })
+        .collect()
+}
+
 fn resolve_suggested_task(
     plan: &DailyPlan,
     priorities: &[DailyPlanItem],
@@ -345,6 +404,14 @@ fn priority_rank(priority: &WeeklyTaskPriority) -> i32 {
     }
 }
 
+fn default_planned_minutes(priority: &WeeklyTaskPriority) -> i32 {
+    match priority {
+        WeeklyTaskPriority::High => 90,
+        WeeklyTaskPriority::Normal => 60,
+        WeeklyTaskPriority::Low => 30,
+    }
+}
+
 fn total_focus_minutes(focus: &[FocusSession], active_focus: &Option<FocusSession>) -> i32 {
     let mut total = focus
         .iter()
@@ -380,11 +447,7 @@ fn compute_plan_vs_actual(
                 .or_else(|| linked_task.and_then(|task| task.estimated_minutes))
                 .unwrap_or_else(|| {
                     linked_task
-                        .map(|task| match task.priority {
-                            WeeklyTaskPriority::High => 90,
-                            WeeklyTaskPriority::Normal => 60,
-                            WeeklyTaskPriority::Low => 30,
-                        })
+                        .map(|task| default_planned_minutes(&task.priority))
                         .unwrap_or(60)
                 })
                 .max(1);
@@ -498,5 +561,208 @@ fn compute_distraction_risk(
         level: level.to_string(),
         score: score.round().clamp(0.0, 100.0) as i32,
         reasons,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::weekly_task::{WeeklyTaskPriority, WeeklyTaskStatus, WeeklyTaskType};
+
+    fn plan() -> DailyPlan {
+        DailyPlan {
+            id: "daily_plan_1".to_string(),
+            date: "2026-05-28".to_string(),
+            focus_goal_minutes: 240,
+            current_task_id: None,
+            suggested_task_id: None,
+            created_at: "2026-05-28T08:00:00Z".to_string(),
+            updated_at: "2026-05-28T08:00:00Z".to_string(),
+        }
+    }
+
+    fn task(
+        id: &str,
+        title: &str,
+        status: WeeklyTaskStatus,
+        priority: WeeklyTaskPriority,
+        target_date: Option<&str>,
+        estimated_minutes: Option<i32>,
+        created_at: &str,
+    ) -> WeeklyTask {
+        WeeklyTask {
+            id: id.to_string(),
+            project_id: None,
+            project_name: None,
+            task_type: WeeklyTaskType::PlannedWork,
+            status,
+            title: title.to_string(),
+            details: None,
+            week_start_date: "2026-05-25".to_string(),
+            target_date: target_date.map(str::to_string),
+            completed_at: None,
+            priority,
+            included_in_report: false,
+            progress_percent: None,
+            estimated_minutes,
+            created_at: created_at.to_string(),
+            updated_at: created_at.to_string(),
+        }
+    }
+
+    fn saved_item() -> DailyPlanItem {
+        DailyPlanItem {
+            id: "daily_plan_item_1".to_string(),
+            daily_plan_id: "daily_plan_1".to_string(),
+            rank: 1,
+            title: "Saved priority".to_string(),
+            weekly_task_id: None,
+            planned_minutes: Some(45),
+            status: DailyPlanItemStatus::Todo,
+            created_at: "2026-05-28T08:00:00Z".to_string(),
+            updated_at: "2026-05-28T08:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn suggests_top_three_today_tasks_when_no_priorities_are_saved() {
+        let plan = plan();
+        let tasks = vec![
+            task(
+                "normal",
+                "Normal task",
+                WeeklyTaskStatus::Todo,
+                WeeklyTaskPriority::Normal,
+                Some("2026-05-28"),
+                Some(50),
+                "2026-05-28T10:00:00Z",
+            ),
+            task(
+                "high",
+                "High task",
+                WeeklyTaskStatus::Todo,
+                WeeklyTaskPriority::High,
+                Some("2026-05-28"),
+                None,
+                "2026-05-28T11:00:00Z",
+            ),
+            task(
+                "low",
+                "Low task",
+                WeeklyTaskStatus::InProgress,
+                WeeklyTaskPriority::Low,
+                None,
+                Some(20),
+                "2026-05-28T09:00:00Z",
+            ),
+            task(
+                "extra",
+                "Extra task",
+                WeeklyTaskStatus::Todo,
+                WeeklyTaskPriority::Low,
+                None,
+                None,
+                "2026-05-28T12:00:00Z",
+            ),
+        ];
+
+        let priorities = effective_top_priorities(&[], &tasks, &plan, "2026-05-28");
+
+        assert_eq!(priorities.len(), 3);
+        assert_eq!(priorities[0].title, "High task");
+        assert_eq!(priorities[0].weekly_task_id.as_deref(), Some("high"));
+        assert_eq!(priorities[0].planned_minutes, Some(90));
+        assert_eq!(priorities[1].title, "Normal task");
+        assert_eq!(priorities[1].planned_minutes, Some(50));
+        assert_eq!(priorities[2].title, "Low task");
+    }
+
+    #[test]
+    fn saved_priorities_win_over_suggestions() {
+        let plan = plan();
+        let saved = vec![saved_item()];
+        let tasks = vec![task(
+            "high",
+            "High task",
+            WeeklyTaskStatus::Todo,
+            WeeklyTaskPriority::High,
+            None,
+            None,
+            "2026-05-28T09:00:00Z",
+        )];
+
+        let priorities = effective_top_priorities(&saved, &tasks, &plan, "2026-05-28");
+
+        assert_eq!(priorities, saved);
+    }
+
+    #[test]
+    fn suggestions_exclude_done_dropped_and_future_tasks() {
+        let plan = plan();
+        let tasks = vec![
+            task(
+                "done",
+                "Done task",
+                WeeklyTaskStatus::Completed,
+                WeeklyTaskPriority::High,
+                Some("2026-05-28"),
+                None,
+                "2026-05-28T09:00:00Z",
+            ),
+            task(
+                "dropped",
+                "Dropped task",
+                WeeklyTaskStatus::Dropped,
+                WeeklyTaskPriority::High,
+                Some("2026-05-28"),
+                None,
+                "2026-05-28T09:00:00Z",
+            ),
+            task(
+                "future",
+                "Future task",
+                WeeklyTaskStatus::Todo,
+                WeeklyTaskPriority::High,
+                Some("2026-05-29"),
+                None,
+                "2026-05-28T09:00:00Z",
+            ),
+            task(
+                "today",
+                "Today task",
+                WeeklyTaskStatus::Blocked,
+                WeeklyTaskPriority::Normal,
+                Some("2026-05-28"),
+                None,
+                "2026-05-28T09:00:00Z",
+            ),
+        ];
+
+        let priorities = effective_top_priorities(&[], &tasks, &plan, "2026-05-28");
+
+        assert_eq!(priorities.len(), 1);
+        assert_eq!(priorities[0].weekly_task_id.as_deref(), Some("today"));
+    }
+
+    #[test]
+    fn suggested_priorities_drive_plan_vs_actual_minutes() {
+        let plan = plan();
+        let tasks = vec![task(
+            "high",
+            "High task",
+            WeeklyTaskStatus::Todo,
+            WeeklyTaskPriority::High,
+            None,
+            None,
+            "2026-05-28T09:00:00Z",
+        )];
+        let priorities = effective_top_priorities(&[], &tasks, &plan, "2026-05-28");
+
+        let plan_vs_actual = compute_plan_vs_actual(&priorities, &tasks, &[]);
+
+        assert_eq!(plan_vs_actual.len(), 1);
+        assert_eq!(plan_vs_actual[0].planned_minutes, 90);
+        assert_eq!(plan_vs_actual[0].actual_minutes, 0);
+        assert_eq!(plan_vs_actual[0].status, "under");
     }
 }
