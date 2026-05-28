@@ -67,7 +67,13 @@ export function Select<T extends string = string>({
   size = "md",
 }: SelectProps<T>) {
   const [isOpen, setIsOpen] = useState(false);
-  const [position, setPosition] = useState({ top: 0, left: 0, width: 0, direction: "down" as "up" | "down" });
+  const [position, setPosition] = useState({
+    top: 0,
+    left: 0,
+    width: 0,
+    maxHeight: 256,
+    direction: "down" as "up" | "down",
+  });
   const [dropdownWidth, setDropdownWidth] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -115,12 +121,14 @@ export function Select<T extends string = string>({
     const spaceBelow = viewportHeight - rect.bottom - 8;
     const spaceAbove = rect.top - 8;
     const direction = spaceBelow >= dropdownMaxHeight || spaceBelow >= spaceAbove ? "down" : "up";
+    const availableHeight = Math.max(96, Math.min(dropdownMaxHeight, direction === "down" ? spaceBelow : spaceAbove));
 
     setDropdownWidth(calculatedWidth);
     setPosition({
       top: direction === "down" ? rect.bottom + 8 : rect.top - 8,
       left,
       width: calculatedWidth,
+      maxHeight: availableHeight,
       direction,
     });
   }, [isOpen]);
@@ -149,12 +157,14 @@ export function Select<T extends string = string>({
         const spaceBelow = viewportHeight - rect.bottom - 8;
         const spaceAbove = rect.top - 8;
         const direction = spaceBelow >= dropdownMaxHeight || spaceBelow >= spaceAbove ? "down" : "up";
+        const availableHeight = Math.max(96, Math.min(dropdownMaxHeight, direction === "down" ? spaceBelow : spaceAbove));
 
         setDropdownWidth(calculatedWidth);
         setPosition({
           top: direction === "down" ? rect.bottom + 8 : rect.top - 8,
           left,
           width: calculatedWidth,
+          maxHeight: availableHeight,
           direction,
         });
       }
@@ -178,6 +188,7 @@ export function Select<T extends string = string>({
         bottom: position.direction === "up" ? `calc(100vh - ${position.top}px)` : undefined,
         left: `${position.left}px`,
         width: `${dropdownWidth}px`,
+        maxHeight: `${position.maxHeight}px`,
       }}
     >
       <style>{`
