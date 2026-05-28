@@ -11,6 +11,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { Panel } from "../components/ui/Panel";
+import { PageHeader } from "../components/ui/PageHeader";
 
 const dailySteps = [
   {
@@ -59,25 +60,18 @@ const commands = [
 export function GuidePage() {
   return (
     <div className="space-y-4">
-      <Panel className="relative overflow-hidden p-0">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_12%_12%,rgba(59,130,246,0.24),transparent_28%),radial-gradient(circle_at_86%_18%,rgba(20,184,166,0.16),transparent_28%),linear-gradient(135deg,rgba(15,23,42,0.28),rgba(15,23,42,0.86))]" />
-        <div className="relative grid gap-5 px-5 py-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(360px,0.55fr)] lg:items-end">
-          <div>
-            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-cyan-300/15 bg-cyan-300/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
-              <BookOpen className="h-3.5 w-3.5" />
-              WorkTrace guide
-            </div>
-            <h1 className="text-3xl font-semibold tracking-tight text-white">How to use WorkTrace well</h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">
-              WorkTrace works best when you treat it as a light daily loop: plan the work, capture what actually happened, review the day, then generate the weekly update with almost no Friday cleanup.
-            </p>
-          </div>
-          <div className="grid gap-3 rounded-2xl border border-white/10 bg-slate-950/35 p-4 shadow-2xl shadow-black/20">
+      <PageHeader
+        icon={BookOpen}
+        eyebrow="WorkTrace guide"
+        title="How to use WorkTrace well"
+        description="WorkTrace works best when you treat it as a light daily loop: plan the work, capture what actually happened, review the day, then generate the weekly update with almost no Friday cleanup."
+        meta={
+          <div className="grid min-w-[280px] gap-3 rounded-xl border border-white/10 bg-slate-950/45 p-3 sm:grid-cols-2">
             <GuideMetric icon={Clock3} label="Daily rhythm" value="5 min" />
             <GuideMetric icon={FileText} label="Weekly report goal" value="< 5 min" />
           </div>
-        </div>
-      </Panel>
+        }
+      />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
         <Panel>

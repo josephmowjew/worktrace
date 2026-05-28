@@ -9,6 +9,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::time::{timeout, Duration};
 
 use crate::domain::activity::ListActivityInput;
+use crate::domain::activity_group::ListActivityGroupsInput;
 use crate::domain::report::{
     ConnectReportAiProviderInput, ReportAiModel, ReportAiModelList, ReportAiProvider,
     ReportAiProviderStatus, ReportAiStatus, ReportPolishInput, ReportPolishResult,
@@ -18,8 +19,8 @@ use crate::domain::report::{
 use crate::domain::settings::Settings;
 use crate::domain::weekly_task::ListWeeklyTasksInput;
 use crate::infrastructure::database::repositories::{
-    ActivityRepository, GitMetadataRepository, ProjectRepository, ReportNoteRepository,
-    SettingsRepository, WeeklyTaskRepository,
+    ActivityGroupRepository, ActivityRepository, GitMetadataRepository, ProjectRepository,
+    ReportNoteRepository, SettingsRepository, WeeklyTaskRepository,
 };
 use crate::AppState;
 
@@ -132,6 +133,7 @@ impl ReportAiService {
         app: Option<&AppHandle>,
         settings_repository: &SettingsRepository<'_>,
         activity_repository: &ActivityRepository<'_>,
+        activity_group_repository: &ActivityGroupRepository<'_>,
         weekly_task_repository: &WeeklyTaskRepository<'_>,
         report_note_repository: &ReportNoteRepository<'_>,
         project_repository: &ProjectRepository<'_>,
@@ -151,6 +153,7 @@ impl ReportAiService {
         let provider = effective_provider(input.provider, &settings);
         let context = build_context(
             activity_repository,
+            activity_group_repository,
             weekly_task_repository,
             report_note_repository,
             project_repository,
@@ -227,6 +230,7 @@ impl ReportAiService {
     pub async fn analyze_readiness(
         settings_repository: &SettingsRepository<'_>,
         activity_repository: &ActivityRepository<'_>,
+        activity_group_repository: &ActivityGroupRepository<'_>,
         weekly_task_repository: &WeeklyTaskRepository<'_>,
         report_note_repository: &ReportNoteRepository<'_>,
         project_repository: &ProjectRepository<'_>,
@@ -240,6 +244,7 @@ impl ReportAiService {
         let provider = effective_provider(input.provider, &settings);
         let context = build_context(
             activity_repository,
+            activity_group_repository,
             weekly_task_repository,
             report_note_repository,
             project_repository,
@@ -541,18 +546,12 @@ async fn call_openai_compatible(
             url, api_key, model, provider, messages, max_tokens, stream,
         )
         .await?;
-        if provider == ReportAiProvider::NvidiaBuild.as_str()
-            && streamed.content.trim().is_empty()
+        if provider == ReportAiProvider::NvidiaBuild.as_str() && streamed.content.trim().is_empty()
         {
             // Some NVIDIA routes return stream frames without assistant content.
             // Retry once without streaming before falling back to deterministic draft.
             return call_openai_compatible_non_stream(
-                url,
-                api_key,
-                model,
-                provider,
-                messages,
-                max_tokens,
+                url, api_key, model, provider, messages, max_tokens,
             )
             .await;
         }
@@ -769,7 +768,11 @@ fn append_stream_event(
         }
 
         for choice in event.choices {
-            if let Some(reason) = choice.finish_reason.clone().filter(|value| !value.is_empty()) {
+            if let Some(reason) = choice
+                .finish_reason
+                .clone()
+                .filter(|value| !value.is_empty())
+            {
                 finish_reasons.push(reason);
             }
             if let Some(delta) = choice.delta.content.filter(|value| !value.is_empty()) {
@@ -938,6 +941,7 @@ async fn list_nvidia_models() -> Result<ReportAiModelList, ReportAiError> {
 
 async fn build_context(
     activity_repository: &ActivityRepository<'_>,
+    activity_group_repository: &ActivityGroupRepository<'_>,
     weekly_task_repository: &WeeklyTaskRepository<'_>,
     report_note_repository: &ReportNoteRepository<'_>,
     project_repository: &ProjectRepository<'_>,
@@ -966,8 +970,20 @@ async fn build_context(
             activity_type: None,
             project_ids: project_ids.clone(),
             classification: normalize_context_classification(&classification),
+            git_refs: git_refs.clone(),
+            worktree_paths: worktree_paths.clone(),
+        })
+        .await
+        .map_err(ReportAiError::Database)?;
+    let activity_groups = activity_group_repository
+        .list(ListActivityGroupsInput {
+            from: start_date.to_string(),
+            to: end_date.to_string(),
+            project_ids: project_ids.clone(),
+            classification: normalize_context_classification(&classification),
             git_refs,
             worktree_paths,
+            include_hidden: Some(include_hidden),
         })
         .await
         .map_err(ReportAiError::Database)?;
@@ -1051,6 +1067,30 @@ async fn build_context(
         })
         .collect::<Vec<_>>();
 
+    let activity_group_items = activity_groups
+        .iter()
+        .filter(|group| include_hidden || group.included_in_report)
+        .map(|group| {
+            json!({
+                "id": &group.id,
+                "project": &group.project_name,
+                "title": &group.title,
+                "summary": &group.summary,
+                "start_date": &group.start_date,
+                "end_date": &group.end_date,
+                "source": &group.source,
+                "confidence": group.confidence,
+                "commits": group.items.iter().map(|item| {
+                    json!({
+                        "id": &item.source_id,
+                        "summary": &item.summary_snapshot,
+                        "occurred_at": &item.occurred_at,
+                    })
+                }).collect::<Vec<_>>(),
+            })
+        })
+        .collect::<Vec<_>>();
+
     let note_items = notes
         .iter()
         .filter(|note| include_hidden || note.included_in_report)
@@ -1083,12 +1123,14 @@ async fn build_context(
         "range": { "start": start_date, "end": end_date },
         "counts": {
             "activity": activity_items.len(),
+            "activity_groups": activity_group_items.len(),
             "weekly_tasks": task_items.len(),
             "notes": note_items.len(),
             "projects": project_items.len(),
         },
         "projects": project_items,
         "activity": activity_items,
+        "activity_groups": activity_group_items,
         "weekly_tasks": task_items,
         "notes": note_items,
     })

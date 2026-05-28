@@ -205,7 +205,7 @@ export function SelectField<TFieldValues extends FieldValues = FieldValues>({
               key={option.value}
               type="button"
               onClick={() => handleChange(option.value)}
-              className={`flex w-full items-center transition-all duration-150 ${classes.option} ${
+              className={`flex w-full items-center transition-[background-color,color] duration-150 ${classes.option} ${
                 isSelected
                   ? "bg-blue-500/10 text-white"
                   : "text-slate-300 hover:bg-white/8 hover:text-white"

@@ -33,25 +33,33 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .await
     .ok();
 
-    sqlx::query("ALTER TABLE projects ADD COLUMN classification TEXT NOT NULL DEFAULT 'unclassified';")
-        .execute(pool)
-        .await
-        .ok();
+    sqlx::query(
+        "ALTER TABLE projects ADD COLUMN classification TEXT NOT NULL DEFAULT 'unclassified';",
+    )
+    .execute(pool)
+    .await
+    .ok();
 
-    sqlx::query("ALTER TABLE workspaces ADD COLUMN classification TEXT NOT NULL DEFAULT 'unclassified';")
-        .execute(pool)
-        .await
-        .ok();
+    sqlx::query(
+        "ALTER TABLE workspaces ADD COLUMN classification TEXT NOT NULL DEFAULT 'unclassified';",
+    )
+    .execute(pool)
+    .await
+    .ok();
 
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_projects_workspace ON projects(workspace_id);")
         .execute(pool)
         .await?;
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_projects_classification ON projects(classification);")
-        .execute(pool)
-        .await?;
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_workspaces_classification ON workspaces(classification);")
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_projects_classification ON projects(classification);",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_workspaces_classification ON workspaces(classification);",
+    )
+    .execute(pool)
+    .await?;
 
     sqlx::query(
         r#"
@@ -122,8 +130,49 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::raw_sql(CALENDAR_SQL).execute(pool).await?;
     sqlx::raw_sql(DAILY_PLAN_SQL).execute(pool).await?;
     sqlx::raw_sql(GIT_METADATA_SQL).execute(pool).await?;
+    sqlx::raw_sql(ACTIVITY_GROUPS_SQL).execute(pool).await?;
+    run_activity_group_metadata_migration(pool).await?;
+    sqlx::raw_sql(ACTIVITY_GROUP_TITLE_MEMORY_SQL)
+        .execute(pool)
+        .await?;
+    sqlx::query("ALTER TABLE activity_group_title_memory ADD COLUMN evidence_terms_json TEXT;")
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::raw_sql(ACTIVITY_GROUP_NARRATIVES_SQL)
+        .execute(pool)
+        .await?;
+    sqlx::raw_sql(EMBEDDINGS_SQL).execute(pool).await?;
     sqlx::raw_sql(SPARC_FORCE_SQL).execute(pool).await?;
     run_sparc_force_dedup_migration(pool).await?;
+
+    Ok(())
+}
+
+async fn run_activity_group_metadata_migration(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    for statement in [
+        "ALTER TABLE activity_groups ADD COLUMN fingerprint TEXT;",
+        "ALTER TABLE activity_groups ADD COLUMN algorithm_version TEXT;",
+        "ALTER TABLE activity_groups ADD COLUMN confidence_label TEXT NOT NULL DEFAULT 'likely';",
+        "ALTER TABLE activity_groups ADD COLUMN rationale_json TEXT;",
+        "ALTER TABLE activity_groups ADD COLUMN report_summary TEXT;",
+        "ALTER TABLE activity_groups ADD COLUMN locked INTEGER NOT NULL DEFAULT 0;",
+        "ALTER TABLE activity_groups ADD COLUMN user_edited_at TEXT;",
+        "ALTER TABLE activity_groups ADD COLUMN review_status TEXT NOT NULL DEFAULT 'draft';",
+    ] {
+        sqlx::query(statement).execute(pool).await.ok();
+    }
+
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_activity_groups_fingerprint ON activity_groups(fingerprint);",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_activity_groups_review_status ON activity_groups(review_status);",
+    )
+    .execute(pool)
+    .await?;
 
     Ok(())
 }
@@ -496,6 +545,218 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_plan_items_plan_rank ON daily_plan_i
 CREATE INDEX IF NOT EXISTS idx_daily_plan_items_plan ON daily_plan_items(daily_plan_id);
 "#;
 
+const ACTIVITY_GROUPS_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS activity_groups (
+  id TEXT PRIMARY KEY,
+  project_id TEXT,
+  title TEXT NOT NULL,
+  summary TEXT,
+  start_date TEXT NOT NULL,
+  end_date TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'local_rule',
+  confidence REAL NOT NULL DEFAULT 0.7,
+  included_in_report INTEGER NOT NULL DEFAULT 1,
+  fingerprint TEXT,
+  algorithm_version TEXT,
+  confidence_label TEXT NOT NULL DEFAULT 'likely',
+  rationale_json TEXT,
+  report_summary TEXT,
+  locked INTEGER NOT NULL DEFAULT 0,
+  user_edited_at TEXT,
+  review_status TEXT NOT NULL DEFAULT 'draft',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_groups_project ON activity_groups(project_id);
+CREATE INDEX IF NOT EXISTS idx_activity_groups_dates ON activity_groups(start_date, end_date);
+CREATE INDEX IF NOT EXISTS idx_activity_groups_included ON activity_groups(included_in_report);
+
+CREATE TABLE IF NOT EXISTS activity_group_items (
+  id TEXT PRIMARY KEY,
+  group_id TEXT NOT NULL,
+  source_type TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  summary_snapshot TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (group_id) REFERENCES activity_groups(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_activity_group_items_unique ON activity_group_items(group_id, source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_activity_group_items_group ON activity_group_items(group_id);
+CREATE INDEX IF NOT EXISTS idx_activity_group_items_source ON activity_group_items(source_type, source_id);
+
+CREATE TABLE IF NOT EXISTS commit_file_changes (
+  project_id TEXT NOT NULL,
+  commit_hash TEXT NOT NULL,
+  path TEXT NOT NULL,
+  old_path TEXT,
+  change_kind TEXT NOT NULL DEFAULT 'modified',
+  additions INTEGER NOT NULL DEFAULT 0,
+  deletions INTEGER NOT NULL DEFAULT 0,
+  is_binary INTEGER NOT NULL DEFAULT 0,
+  language TEXT,
+  top_level_dir TEXT,
+  is_test INTEGER NOT NULL DEFAULT 0,
+  is_docs INTEGER NOT NULL DEFAULT 0,
+  is_config INTEGER NOT NULL DEFAULT 0,
+  is_migration INTEGER NOT NULL DEFAULT 0,
+  is_generated INTEGER NOT NULL DEFAULT 0,
+  collected_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, commit_hash, path),
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_commit_file_changes_commit ON commit_file_changes(project_id, commit_hash);
+CREATE INDEX IF NOT EXISTS idx_commit_file_changes_top_level ON commit_file_changes(top_level_dir);
+
+CREATE TABLE IF NOT EXISTS commit_diff_snippets (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  commit_hash TEXT NOT NULL,
+  path TEXT NOT NULL,
+  snippet TEXT NOT NULL,
+  collected_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_commit_diff_snippets_commit ON commit_diff_snippets(project_id, commit_hash);
+
+CREATE TABLE IF NOT EXISTS activity_source_links (
+  id TEXT PRIMARY KEY,
+  source_type TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  relation TEXT NOT NULL,
+  confidence REAL NOT NULL DEFAULT 0.7,
+  evidence_json TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_source_links_source ON activity_source_links(source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_activity_source_links_target ON activity_source_links(target_type, target_id);
+"#;
+
+const ACTIVITY_GROUP_TITLE_MEMORY_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS activity_group_title_memory (
+  id TEXT PRIMARY KEY,
+  original_title TEXT NOT NULL,
+  edited_title TEXT NOT NULL,
+  edited_summary TEXT,
+  project_id TEXT,
+  project_name TEXT,
+  evidence_fingerprint TEXT,
+  evidence_terms TEXT NOT NULL,
+  evidence_terms_json TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_group_title_memory_project
+  ON activity_group_title_memory(project_id);
+CREATE INDEX IF NOT EXISTS idx_activity_group_title_memory_fingerprint
+  ON activity_group_title_memory(evidence_fingerprint);
+"#;
+
+const ACTIVITY_GROUP_NARRATIVES_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS activity_group_narratives (
+  group_id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  summary TEXT,
+  report_summary TEXT,
+  title_confidence REAL NOT NULL,
+  title_confidence_label TEXT NOT NULL,
+  title_quality_label TEXT NOT NULL,
+  naming_strategy TEXT NOT NULL,
+  classification_json TEXT NOT NULL,
+  candidates_json TEXT NOT NULL,
+  rationale_json TEXT NOT NULL,
+  rejected_terms_json TEXT,
+  algorithm_version TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (group_id) REFERENCES activity_groups(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_group_narratives_quality
+  ON activity_group_narratives(title_quality_label);
+CREATE INDEX IF NOT EXISTS idx_activity_group_narratives_confidence
+  ON activity_group_narratives(title_confidence_label);
+
+CREATE TABLE IF NOT EXISTS activity_group_title_vocabulary (
+  id TEXT PRIMARY KEY,
+  project_id TEXT,
+  project_name TEXT,
+  project_family TEXT,
+  preferred_term TEXT NOT NULL,
+  normalized_term TEXT NOT NULL,
+  avoid_terms_json TEXT,
+  related_terms_json TEXT,
+  evidence_terms_json TEXT,
+  source TEXT NOT NULL,
+  confidence REAL NOT NULL DEFAULT 0.5,
+  use_count INTEGER NOT NULL DEFAULT 0,
+  last_used_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_title_vocabulary_project
+  ON activity_group_title_vocabulary(project_id, normalized_term);
+CREATE INDEX IF NOT EXISTS idx_title_vocabulary_family
+  ON activity_group_title_vocabulary(project_family, normalized_term);
+
+CREATE TABLE IF NOT EXISTS activity_group_title_events (
+  id TEXT PRIMARY KEY,
+  group_id TEXT NOT NULL,
+  project_id TEXT,
+  event_type TEXT NOT NULL,
+  previous_title TEXT,
+  new_title TEXT,
+  previous_summary TEXT,
+  new_summary TEXT,
+  selected_candidate_json TEXT,
+  rejected_candidates_json TEXT,
+  evidence_fingerprint TEXT,
+  evidence_terms_json TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (group_id) REFERENCES activity_groups(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_title_events_group
+  ON activity_group_title_events(group_id);
+CREATE INDEX IF NOT EXISTS idx_title_events_project
+  ON activity_group_title_events(project_id, event_type);
+"#;
+
+const EMBEDDINGS_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS activity_embeddings (
+  id TEXT PRIMARY KEY,
+  source_type TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  evidence_kind TEXT NOT NULL,
+  model TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  text_hash TEXT NOT NULL,
+  vector_path TEXT NOT NULL,
+  dimensions INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_activity_embeddings_unique
+  ON activity_embeddings(source_type, source_id, evidence_kind, model, provider);
+CREATE INDEX IF NOT EXISTS idx_activity_embeddings_source
+  ON activity_embeddings(source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_activity_embeddings_hash
+  ON activity_embeddings(text_hash);
+"#;
+
 const SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
@@ -513,7 +774,6 @@ CREATE TABLE IF NOT EXISTS projects (
 );
 
 CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
-CREATE INDEX IF NOT EXISTS idx_projects_classification ON projects(classification);
 
 CREATE TABLE IF NOT EXISTS workspaces (
   id TEXT PRIMARY KEY,
@@ -527,7 +787,6 @@ CREATE TABLE IF NOT EXISTS workspaces (
 );
 
 CREATE INDEX IF NOT EXISTS idx_workspaces_status ON workspaces(status);
-CREATE INDEX IF NOT EXISTS idx_workspaces_classification ON workspaces(classification);
 
 CREATE TABLE IF NOT EXISTS workspace_repo_ignores (
   id TEXT PRIMARY KEY,

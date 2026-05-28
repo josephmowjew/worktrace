@@ -1,9 +1,9 @@
-import { Save, X } from "lucide-react";
+import { Save } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import type { FocusSession, StopFocusSessionInput } from "../../types/focusSession";
 import { Button } from "./Button";
-import { Panel } from "./Panel";
+import { ModalShell } from "./ModalShell";
 
 export function StopFocusModal({
   isOpen,
@@ -40,18 +40,7 @@ export function StopFocusModal({
   if (!isOpen || !session) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-      <Panel className="relative w-full max-w-lg overflow-hidden p-0">
-        <div className="flex items-center justify-between border-b border-white/8 px-5 py-4">
-          <div>
-            <h2 className="text-base font-semibold text-white">Stop Focus Session</h2>
-            <p className="mt-0.5 text-xs text-slate-400">{session.title}</p>
-          </div>
-          <Button variant="ghost" onClick={onClose} className="h-9 w-9 px-0">
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
-
+    <ModalShell title="Stop Focus Session" description={session.title} onClose={onClose}>
         <form
           className="space-y-4 p-5"
           onSubmit={(event) => {
@@ -135,8 +124,7 @@ export function StopFocusModal({
             </Button>
           </div>
         </form>
-      </Panel>
-    </div>
+    </ModalShell>
   );
 }
 

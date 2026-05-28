@@ -40,8 +40,8 @@ mod tests {
 
     #[test]
     fn run_git_preserves_failure_status_and_stderr() {
-        let output = run_git(".", &["definitely-not-a-git-subcommand"])
-            .expect("run git invalid command");
+        let output =
+            run_git(".", &["definitely-not-a-git-subcommand"]).expect("run git invalid command");
         assert!(!output.status.success());
         assert!(!String::from_utf8_lossy(&output.stderr).trim().is_empty());
     }

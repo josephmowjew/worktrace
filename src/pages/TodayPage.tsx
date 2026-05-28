@@ -26,6 +26,7 @@ import { EndOfDayReviewModal } from "../components/ui/EndOfDayReviewModal";
 import { FocusSessionPanel } from "../components/ui/FocusSessionPanel";
 import { NudgePanel, type TodayNudge } from "../components/ui/NudgePanel";
 import { Panel } from "../components/ui/Panel";
+import { PageHeader } from "../components/ui/PageHeader";
 import { PrepareReportModal } from "../components/ui/PrepareReportModal";
 import { QuickManualLogModal } from "../components/ui/QuickManualLogModal";
 import { StopFocusModal } from "../components/ui/StopFocusModal";
@@ -693,18 +694,13 @@ export function TodayPage() {
         />
       ) : null}
 
-      <Panel className="relative overflow-hidden p-0">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_16%_20%,rgba(59,130,246,0.22),transparent_28%),radial-gradient(circle_at_84%_10%,rgba(20,184,166,0.14),transparent_26%),linear-gradient(135deg,rgba(15,23,42,0.2),rgba(15,23,42,0.82))]" />
-        <div className="relative flex flex-wrap items-center justify-between gap-4 px-5 py-5">
-          <div>
-            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-cyan-300/15 bg-cyan-300/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
-              <Sparkles className="h-3.5 w-3.5" />
-              Daily workflow
-            </div>
-            <h1 className="text-3xl font-semibold tracking-tight text-white">Today</h1>
-            <p className="mt-2 text-sm text-slate-400">{today.label} / {weekRange.label}</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
+      <PageHeader
+        icon={Sparkles}
+        eyebrow="Daily workflow"
+        title="Today"
+        description={`${today.label} / ${weekRange.label}`}
+        actions={
+          <>
             <Button onClick={() => setTaskModalOpen(true)}>
               <Plus className="h-4 w-4" />
               Full Task
@@ -729,9 +725,9 @@ export function TodayPage() {
               <FileText className="h-4 w-4" />
               Prep
             </Button>
-          </div>
-        </div>
-      </Panel>
+          </>
+        }
+      />
 
       {showOnboardingPanel ? (
         <OnboardingPipelinePanel

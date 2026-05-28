@@ -1,8 +1,10 @@
 pub mod activity;
+pub mod activity_group;
 pub mod calendar;
 pub mod commit;
 pub mod daily_plan;
 pub mod dashboard;
+pub mod embedding;
 pub mod focus_session;
 pub mod git_metadata;
 pub mod github;

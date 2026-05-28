@@ -4,7 +4,10 @@ use std::path::Path;
 use chrono::Utc;
 
 use crate::domain::commit::Commit;
-use crate::domain::git_metadata::{CommitRef, CommitWorktreeRef, GitRef, GitRefKind, GitWorktree};
+use crate::domain::git_metadata::{
+    CommitDiffSnippet, CommitFileChange, CommitRef, CommitWorktreeRef, GitRef, GitRefKind,
+    GitWorktree,
+};
 use crate::infrastructure::git::parser::{
     parse_git_log, with_project, ParsedGitCommit, GIT_FIELD_SEPARATOR, GIT_RECORD_SEPARATOR,
 };
@@ -14,6 +17,8 @@ pub struct GitScanner;
 
 pub struct GitScanResult {
     pub commits: Vec<Commit>,
+    pub file_changes: Vec<CommitFileChange>,
+    pub diff_snippets: Vec<CommitDiffSnippet>,
     pub refs: Vec<GitRef>,
     pub commit_refs: Vec<CommitRef>,
     pub commit_worktree_refs: Vec<CommitWorktreeRef>,
@@ -56,9 +61,15 @@ impl GitScanner {
                     .or_insert(parsed);
             }
 
-            for (hash, stats) in
-                load_commit_stats(repo_path, &git_ref.full_name, from, to, author_email)?
-            {
+            for (hash, stats) in load_commit_stats(
+                project_id,
+                repo_path,
+                &git_ref.full_name,
+                from,
+                to,
+                author_email,
+                &scanned_at,
+            )? {
                 stats_by_hash.entry(hash).or_insert(stats);
             }
         }
@@ -73,7 +84,15 @@ impl GitScanner {
                     .entry(parsed.commit_hash.clone())
                     .or_insert(parsed);
             }
-            for (hash, stats) in load_commit_stats(repo_path, "HEAD", from, to, author_email)? {
+            for (hash, stats) in load_commit_stats(
+                project_id,
+                repo_path,
+                "HEAD",
+                from,
+                to,
+                author_email,
+                &scanned_at,
+            )? {
                 stats_by_hash.entry(hash).or_insert(stats);
             }
             let commit_worktree_refs = scan_worktree_commits(
@@ -98,8 +117,14 @@ impl GitScanner {
                 })
                 .collect::<Vec<_>>();
 
+            let file_changes = collect_file_changes(&stats_by_hash);
+            let diff_snippets =
+                collect_diff_snippets(repo_path, project_id, &file_changes, &scanned_at);
+
             return Ok(GitScanResult {
                 commits,
+                file_changes,
+                diff_snippets,
                 refs,
                 commit_refs: Vec::new(),
                 commit_worktree_refs,
@@ -145,8 +170,14 @@ impl GitScanner {
             })
             .collect::<Vec<_>>();
 
+        let file_changes = collect_file_changes(&stats_by_hash);
+        let diff_snippets =
+            collect_diff_snippets(repo_path, project_id, &file_changes, &scanned_at);
+
         Ok(GitScanResult {
             commits,
+            file_changes,
+            diff_snippets,
             refs,
             commit_refs,
             commit_worktree_refs,
@@ -176,6 +207,7 @@ struct CommitStats {
     files_changed: i64,
     insertions: i64,
     deletions: i64,
+    file_changes: Vec<CommitFileChange>,
 }
 
 fn discover_refs(
@@ -301,16 +333,18 @@ fn current_branch(repo_path: &str) -> Result<String, GitScanError> {
 }
 
 fn load_commit_stats(
+    project_id: &str,
     repo_path: &str,
     rev: &str,
     from: Option<&str>,
     to: Option<&str>,
     author_email: Option<&str>,
+    collected_at: &str,
 ) -> Result<std::collections::HashMap<String, CommitStats>, GitScanError> {
     let mut args = vec![
         "log".to_string(),
         "--numstat".to_string(),
-        format!("--pretty=format:%H{rs}", rs = GIT_RECORD_SEPARATOR),
+        format!("--pretty=format:{rs}%H", rs = GIT_RECORD_SEPARATOR),
     ];
 
     append_filters(&mut args, from, to, author_email);
@@ -331,26 +365,233 @@ fn load_commit_stats(
             continue;
         }
         let mut lines = trimmed.lines();
-        let Some(hash) = lines.next() else {
+        let Some(hash) = lines.next().map(str::trim) else {
             continue;
         };
+        if !is_full_commit_hash(hash) {
+            continue;
+        }
         let mut stats = CommitStats {
             files_changed: 0,
             insertions: 0,
             deletions: 0,
+            file_changes: Vec::new(),
         };
         for line in lines {
             let parts = line.split_whitespace().collect::<Vec<_>>();
             if parts.len() < 3 {
                 continue;
             }
+            let path = parts[2..].join(" ");
+            let is_binary = parts[0] == "-" || parts[1] == "-";
+            let additions = if is_binary {
+                0
+            } else {
+                parts[0].parse::<i64>().unwrap_or_default()
+            };
+            let deletions = if is_binary {
+                0
+            } else {
+                parts[1].parse::<i64>().unwrap_or_default()
+            };
             stats.files_changed += 1;
-            stats.insertions += parts[0].parse::<i64>().unwrap_or_default();
-            stats.deletions += parts[1].parse::<i64>().unwrap_or_default();
+            stats.insertions += additions;
+            stats.deletions += deletions;
+            let normalized_path = normalize_git_path(&path);
+            stats.file_changes.push(CommitFileChange {
+                project_id: project_id.to_string(),
+                commit_hash: hash.to_string(),
+                path: normalized_path.clone(),
+                old_path: None,
+                change_kind: "modified".to_string(),
+                additions,
+                deletions,
+                is_binary,
+                language: language_for_path(&normalized_path),
+                top_level_dir: top_level_dir(&normalized_path),
+                is_test: is_test_path(&normalized_path),
+                is_docs: is_docs_path(&normalized_path),
+                is_config: is_config_path(&normalized_path),
+                is_migration: is_migration_path(&normalized_path),
+                is_generated: is_generated_path(&normalized_path),
+                collected_at: collected_at.to_string(),
+            });
         }
-        map.insert(hash.trim().to_string(), stats);
+        map.insert(hash.to_string(), stats);
     }
     Ok(map)
+}
+
+fn collect_file_changes(stats_by_hash: &HashMap<String, CommitStats>) -> Vec<CommitFileChange> {
+    let mut changes = stats_by_hash
+        .values()
+        .flat_map(|stats| stats.file_changes.iter().cloned())
+        .filter(|change| is_full_commit_hash(&change.commit_hash))
+        .collect::<Vec<_>>();
+    changes.sort_by(|left, right| {
+        left.commit_hash
+            .cmp(&right.commit_hash)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    changes.dedup_by(|left, right| {
+        left.project_id == right.project_id
+            && left.commit_hash == right.commit_hash
+            && left.path == right.path
+    });
+    changes
+}
+
+fn collect_diff_snippets(
+    repo_path: &str,
+    project_id: &str,
+    changes: &[CommitFileChange],
+    collected_at: &str,
+) -> Vec<CommitDiffSnippet> {
+    let mut snippets = Vec::new();
+    let mut per_commit_count: HashMap<&str, usize> = HashMap::new();
+    for change in changes {
+        if !is_full_commit_hash(&change.commit_hash) {
+            continue;
+        }
+        if change.is_binary || change.is_generated || change.is_docs {
+            continue;
+        }
+        let count = per_commit_count.entry(&change.commit_hash).or_default();
+        if *count >= 8 {
+            continue;
+        }
+        *count += 1;
+
+        let Ok(output) = runner::run_git(
+            repo_path,
+            &[
+                "show",
+                "--format=",
+                "--unified=3",
+                "--no-ext-diff",
+                &change.commit_hash,
+                "--",
+                &change.path,
+            ],
+        ) else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        let snippet = bounded_diff_text(&String::from_utf8_lossy(&output.stdout));
+        if snippet.trim().is_empty() {
+            continue;
+        }
+        snippets.push(CommitDiffSnippet {
+            project_id: project_id.to_string(),
+            commit_hash: change.commit_hash.clone(),
+            path: change.path.clone(),
+            snippet,
+            collected_at: collected_at.to_string(),
+        });
+    }
+    snippets
+}
+
+fn bounded_diff_text(diff: &str) -> String {
+    diff.lines()
+        .filter(|line| {
+            line.starts_with("@@")
+                || line.starts_with('+')
+                || line.starts_with('-')
+                || line.starts_with("diff --git")
+        })
+        .filter(|line| !line.starts_with("+++") && !line.starts_with("---"))
+        .take(80)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .chars()
+        .take(4_000)
+        .collect()
+}
+
+fn is_full_commit_hash(value: &str) -> bool {
+    value.len() == 40 && value.chars().all(|character| character.is_ascii_hexdigit())
+}
+
+fn normalize_git_path(path: &str) -> String {
+    path.trim()
+        .trim_matches('"')
+        .replace('\\', "/")
+        .split(" => ")
+        .last()
+        .unwrap_or(path)
+        .trim_matches('{')
+        .trim_matches('}')
+        .to_string()
+}
+
+fn top_level_dir(path: &str) -> Option<String> {
+    path.split('/')
+        .next()
+        .filter(|segment| !segment.trim().is_empty())
+        .map(|segment| segment.to_lowercase())
+}
+
+fn language_for_path(path: &str) -> Option<String> {
+    let extension = Path::new(path)
+        .extension()?
+        .to_string_lossy()
+        .to_lowercase();
+    let language = match extension.as_str() {
+        "rs" => "rust",
+        "ts" | "tsx" => "typescript",
+        "js" | "jsx" => "javascript",
+        "css" | "scss" => "css",
+        "html" => "html",
+        "sql" => "sql",
+        "md" | "mdx" => "markdown",
+        "json" | "toml" | "yaml" | "yml" => "config",
+        "cs" => "csharp",
+        "php" => "php",
+        "py" => "python",
+        _ => extension.as_str(),
+    };
+    Some(language.to_string())
+}
+
+fn is_test_path(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    lower.contains("test")
+        || lower.contains("spec")
+        || lower.contains("__tests__")
+        || lower.contains("/tests/")
+}
+
+fn is_docs_path(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    lower.ends_with(".md") || lower.starts_with("docs/") || lower.contains("/docs/")
+}
+
+fn is_config_path(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    lower.ends_with(".json")
+        || lower.ends_with(".toml")
+        || lower.ends_with(".yml")
+        || lower.ends_with(".yaml")
+        || lower.contains("config")
+        || lower.contains("package-lock")
+}
+
+fn is_migration_path(path: &str) -> bool {
+    path.to_lowercase().contains("migration")
+}
+
+fn is_generated_path(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    lower.contains("node_modules/")
+        || lower.contains("/vendor/")
+        || lower.contains("/dist/")
+        || lower.contains("/target/")
+        || lower.ends_with("package-lock.json")
+        || lower.ends_with("pnpm-lock.yaml")
+        || lower.ends_with("cargo.lock")
 }
 
 fn discover_worktrees(
@@ -453,7 +694,16 @@ fn scan_worktree_commits(
                 .or_insert(parsed);
         }
 
-        for (hash, stats) in load_commit_stats(&worktree.path, revision, from, to, author_email)? {
+        let collected_at = Utc::now().to_rfc3339();
+        for (hash, stats) in load_commit_stats(
+            project_id,
+            &worktree.path,
+            revision,
+            from,
+            to,
+            author_email,
+            &collected_at,
+        )? {
             stats_by_hash.entry(hash).or_insert(stats);
         }
     }
@@ -597,6 +847,58 @@ mod tests {
         assert_eq!(commits[0].message, "feat: verify git scanner");
         assert_eq!(commits[0].files_changed, Some(1));
         assert_eq!(commits[0].insertions, Some(2));
+        assert_eq!(scan.file_changes.len(), 1);
+        assert_eq!(scan.file_changes[0].commit_hash, commits[0].commit_hash);
+        assert_eq!(scan.file_changes[0].path, "activity.txt");
+
+        fs::remove_dir_all(repo_path).ok();
+    }
+
+    #[test]
+    fn scanner_keys_multiple_numstat_blocks_by_real_commit_hashes() {
+        let repo_path = create_temp_repo_path();
+        fs::create_dir_all(&repo_path).expect("create temp repo");
+        run_git(&repo_path, &["init"]);
+        run_git(&repo_path, &["config", "user.name", "WorkTrace Tester"]);
+        run_git(
+            &repo_path,
+            &["config", "user.email", "tester@worktrace.local"],
+        );
+
+        fs::write(repo_path.join("first.txt"), "first\n").expect("write first file");
+        run_git(&repo_path, &["add", "."]);
+        run_git_with_dates(
+            &repo_path,
+            &["commit", "-m", "feat: first grouped evidence"],
+            "2026-05-20T10:00:00+00:00",
+        );
+        fs::write(repo_path.join("second.txt"), "second\n").expect("write second file");
+        run_git(&repo_path, &["add", "."]);
+        run_git_with_dates(
+            &repo_path,
+            &["commit", "-m", "feat: second grouped evidence"],
+            "2026-05-20T10:10:00+00:00",
+        );
+
+        let scan = GitScanner::scan(
+            "project_test",
+            repo_path.to_str().expect("repo path string"),
+            Some("2026-05-19"),
+            Some("2026-05-21"),
+            Some("tester@worktrace.local"),
+        )
+        .expect("scan commits");
+
+        assert_eq!(scan.commits.len(), 2);
+        assert_eq!(scan.file_changes.len(), 2);
+        for change in &scan.file_changes {
+            assert_eq!(change.commit_hash.len(), 40);
+            assert!(change
+                .commit_hash
+                .chars()
+                .all(|character| character.is_ascii_hexdigit()));
+            assert!(!change.commit_hash.contains('\t'));
+        }
 
         fs::remove_dir_all(repo_path).ok();
     }

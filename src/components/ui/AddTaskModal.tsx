@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Save, X, ListTodo, AlertCircle, CheckCircle2, Clock, FolderKanban, Flag } from "lucide-react";
+import { Save, ListTodo, AlertCircle, CheckCircle2, Clock, FolderKanban, Flag } from "lucide-react";
 import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -12,7 +12,7 @@ import type {
   WeeklyTaskType,
 } from "../../types/weeklyTask";
 import { Button } from "./Button";
-import { Panel } from "./Panel";
+import { ModalShell } from "./ModalShell";
 import { SelectField } from "./SelectField";
 
 const taskSchema = z.object({
@@ -136,22 +136,11 @@ export function AddTaskModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <Panel className="relative w-full max-w-lg max-h-[90vh] overflow-y-auto p-0">
-        <div className="flex items-center justify-between border-b border-white/8 px-5 py-4">
-          <div>
-            <h2 className="text-base font-semibold text-white">
-              {editingTask ? "Edit Plan Item" : "Add Plan Item"}
-            </h2>
-            <p className="mt-0.5 text-xs text-slate-400">
-              {editingTask ? "Modify task details" : "Create a new weekly task"}
-            </p>
-          </div>
-          <Button variant="ghost" onClick={onClose}>
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
-
+    <ModalShell
+      title={editingTask ? "Edit Plan Item" : "Add Plan Item"}
+      description={editingTask ? "Modify task details" : "Create a new weekly task"}
+      onClose={onClose}
+    >
         <form
           className="space-y-4 p-5"
           onSubmit={form.handleSubmit((values) => onSubmit(values))}
@@ -289,8 +278,7 @@ export function AddTaskModal({
             </Button>
           </div>
         </form>
-      </Panel>
-    </div>
+    </ModalShell>
   );
 }
 

@@ -42,6 +42,13 @@ export type Settings = {
   reportAiLocalModelPath: string;
   reportAiGroqModel: string;
   reportAiNvidiaModel: string;
+  embeddingsEnabled: boolean;
+  embeddingProvider: "native_local" | "local_endpoint" | "openai_compatible" | string;
+  embeddingLocalEndpoint: string;
+  embeddingOnlineEndpoint: string;
+  embeddingModel: string;
+  embeddingOnlineAllowed: boolean;
+  embeddingPrivacyAcknowledged: boolean;
   sparcForceAddonEnabled: boolean;
   onboardingCompleted: boolean;
   onboardingDismissedWelcome: boolean;

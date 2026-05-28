@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Save, X, FolderKanban, Users, Code, Bug, FlaskConical, Rocket, Eye, FileText, CalendarDays, Headphones, MessageSquare } from "lucide-react";
+import { Save, FolderKanban, Users, Code, Bug, FlaskConical, Rocket, Eye, FileText, CalendarDays, Headphones, MessageSquare } from "lucide-react";
 import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -7,7 +7,7 @@ import { useEscapeKey } from "../../hooks/useEscapeKey";
 import type { Project } from "../../types/project";
 import type { ActivityType, CreateManualLogInput } from "../../types/manualLog";
 import { Button } from "./Button";
-import { Panel } from "./Panel";
+import { ModalShell } from "./ModalShell";
 import { SelectField } from "./SelectField";
 
 const activityTypes: Array<{ value: ActivityType; label: string; icon: React.ElementType }> = [
@@ -81,18 +81,7 @@ export function QuickManualLogModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-      <Panel className="relative w-full max-w-lg overflow-hidden p-0">
-        <div className="flex items-center justify-between border-b border-white/8 px-5 py-4">
-          <div>
-            <h2 className="text-base font-semibold text-white">Quick Log</h2>
-            <p className="mt-0.5 text-xs text-slate-400">Capture non-code work for today.</p>
-          </div>
-          <Button variant="ghost" onClick={onClose} className="h-9 w-9 px-0">
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
-
+    <ModalShell title="Quick Log" description="Capture non-code work for today." onClose={onClose}>
         <form
           className="grid gap-4 p-5"
           onSubmit={form.handleSubmit((values) => onSubmit(toInput(values)))}
@@ -180,8 +169,7 @@ export function QuickManualLogModal({
             </Button>
           </div>
         </form>
-      </Panel>
-    </div>
+    </ModalShell>
   );
 }
 

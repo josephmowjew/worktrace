@@ -13,6 +13,12 @@ use crate::domain::activity::{
     ActivityDay, ActivityItem, HeatmapCell, HeatmapData, HeatmapInput, KeyHighlight,
     ListActivityInput, TopProject, WeekSummary, WeekSummaryInput,
 };
+use crate::domain::activity_group::{
+    ActivityGroup, ActivityGroupItem, ActivityGroupNarrative, ActivityGroupTitleMemory,
+    CreateActivityGroupInput, GroupingDiffSnippet, GroupingEvidence, ListActivityGroupsInput,
+    RecordActivityGroupTitleFeedbackInput, ReplaceActivityGroupItemsInput,
+    SelectActivityGroupTitleCandidateInput, TitleCandidateDto, UpdateActivityGroupInput,
+};
 use crate::domain::calendar::{
     CalendarEvent, CalendarSource, DayCapacity, GetWeekCapacityInput, ListCalendarEventsInput,
     WeekCapacity,
@@ -22,13 +28,15 @@ use crate::domain::daily_plan::{
     DailyPlan, DailyPlanItem, DailyPlanItemStatus, GetDailyPlanInput, ReplaceDailyPlanItemInput,
     UpdateDailyPlanItemInput, UpsertDailyPlanInput,
 };
+use crate::domain::embedding::{ActivityEmbeddingRecord, UpsertActivityEmbeddingInput};
 use crate::domain::focus_session::{
     CreateFocusSessionInput, FocusSession, FocusSessionStatus, ListFocusSessionsInput,
     StopFocusSessionInput,
 };
 use crate::domain::git_metadata::{
-    CommitRef, CommitRefSummary, CommitWorktreeRef, CommitWorktreeSummary, GitRef, GitRefFilter,
-    GitRefKind, GitWorktree, ProjectGitFocus, SaveProjectGitFocusInput,
+    CommitDiffSnippet, CommitFileChange, CommitRef, CommitRefSummary, CommitWorktreeRef,
+    CommitWorktreeSummary, GitRef, GitRefFilter, GitRefKind, GitWorktree, ProjectGitFocus,
+    SaveProjectGitFocusInput,
 };
 use crate::domain::manual_log::{
     ActivityType, CreateManualLogInput, ManualLog, UpdateManualLogInput,
@@ -1032,6 +1040,146 @@ impl<'a> GitMetadataRepository<'a> {
         tx.commit().await
     }
 
+    pub async fn replace_commit_file_changes(
+        &self,
+        project_id: &str,
+        changes: &[CommitFileChange],
+    ) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM commit_file_changes WHERE project_id = ?1")
+            .bind(project_id)
+            .execute(&mut *tx)
+            .await?;
+
+        for change in changes {
+            sqlx::query(
+                r#"
+                INSERT OR REPLACE INTO commit_file_changes (
+                  project_id, commit_hash, path, old_path, change_kind, additions, deletions,
+                  is_binary, language, top_level_dir, is_test, is_docs, is_config,
+                  is_migration, is_generated, collected_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+                "#,
+            )
+            .bind(&change.project_id)
+            .bind(&change.commit_hash)
+            .bind(&change.path)
+            .bind(&change.old_path)
+            .bind(&change.change_kind)
+            .bind(change.additions)
+            .bind(change.deletions)
+            .bind(bool_to_i64(change.is_binary))
+            .bind(&change.language)
+            .bind(&change.top_level_dir)
+            .bind(bool_to_i64(change.is_test))
+            .bind(bool_to_i64(change.is_docs))
+            .bind(bool_to_i64(change.is_config))
+            .bind(bool_to_i64(change.is_migration))
+            .bind(bool_to_i64(change.is_generated))
+            .bind(&change.collected_at)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await
+    }
+
+    pub async fn replace_commit_diff_snippets(
+        &self,
+        project_id: &str,
+        snippets: &[CommitDiffSnippet],
+    ) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM commit_diff_snippets WHERE project_id = ?1")
+            .bind(project_id)
+            .execute(&mut *tx)
+            .await?;
+
+        for snippet in snippets {
+            sqlx::query(
+                r#"
+                INSERT INTO commit_diff_snippets (
+                  id, project_id, commit_hash, path, snippet, collected_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                "#,
+            )
+            .bind(generate_id("commit_diff_snippet"))
+            .bind(&snippet.project_id)
+            .bind(&snippet.commit_hash)
+            .bind(&snippet.path)
+            .bind(&snippet.snippet)
+            .bind(&snippet.collected_at)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await
+    }
+
+    pub async fn list_file_changes_for_commits(
+        &self,
+        project_id: &str,
+        commit_hashes: &[String],
+    ) -> Result<Vec<CommitFileChange>, sqlx::Error> {
+        if commit_hashes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = sqlx::query(
+            r#"
+            SELECT project_id, commit_hash, path, old_path, change_kind, additions, deletions,
+                   is_binary, language, top_level_dir, is_test, is_docs, is_config,
+                   is_migration, is_generated, collected_at
+            FROM commit_file_changes
+            WHERE project_id = ?1
+            ORDER BY commit_hash ASC, path ASC
+            "#,
+        )
+        .bind(project_id)
+        .fetch_all(self.pool)
+        .await?;
+
+        let wanted = commit_hashes
+            .iter()
+            .collect::<std::collections::HashSet<_>>();
+        Ok(rows
+            .into_iter()
+            .filter(|row| wanted.contains(&row.get::<String, _>("commit_hash")))
+            .map(commit_file_change_from_row)
+            .collect())
+    }
+
+    pub async fn list_diff_snippets_for_commits(
+        &self,
+        project_id: &str,
+        commit_hashes: &[String],
+    ) -> Result<Vec<CommitDiffSnippet>, sqlx::Error> {
+        if commit_hashes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = sqlx::query(
+            r#"
+            SELECT project_id, commit_hash, path, snippet, collected_at
+            FROM commit_diff_snippets
+            WHERE project_id = ?1
+            ORDER BY commit_hash ASC, path ASC
+            "#,
+        )
+        .bind(project_id)
+        .fetch_all(self.pool)
+        .await?;
+
+        let wanted = commit_hashes
+            .iter()
+            .collect::<std::collections::HashSet<_>>();
+        Ok(rows
+            .into_iter()
+            .filter(|row| wanted.contains(&row.get::<String, _>("commit_hash")))
+            .map(commit_diff_snippet_from_row)
+            .collect())
+    }
+
     pub async fn list_refs(&self, project_id: &str) -> Result<Vec<GitRef>, sqlx::Error> {
         let rows = sqlx::query(
             r#"
@@ -1291,7 +1439,10 @@ impl<'a> ActivityRepository<'a> {
                     continue;
                 }
                 let project_classification: String = row.get("project_classification");
-                if !classification_filter_matches(&input.classification, Some(&project_classification)) {
+                if !classification_filter_matches(
+                    &input.classification,
+                    Some(&project_classification),
+                ) {
                     continue;
                 }
                 let commit_hash: String = row.get("commit_hash");
@@ -1767,6 +1918,1078 @@ struct WeekStats {
     meetings: i64,
     deployments: i64,
     testing: i64,
+}
+
+pub struct ActivityGroupRepository<'a> {
+    pool: &'a SqlitePool,
+}
+
+impl<'a> ActivityGroupRepository<'a> {
+    pub fn new(pool: &'a SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn list(
+        &self,
+        input: ListActivityGroupsInput,
+    ) -> Result<Vec<ActivityGroup>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT activity_groups.id,
+                   activity_groups.project_id,
+                   projects.name AS project_name,
+                   projects.classification AS project_classification,
+                   activity_groups.title,
+                   activity_groups.summary,
+                   activity_groups.start_date,
+                   activity_groups.end_date,
+                   activity_groups.source,
+                   activity_groups.confidence,
+                   activity_groups.included_in_report,
+                   activity_groups.fingerprint,
+                   activity_groups.algorithm_version,
+                   activity_groups.confidence_label,
+                   activity_groups.rationale_json,
+                   activity_groups.report_summary,
+                   activity_groups.locked,
+                   activity_groups.user_edited_at,
+                   activity_groups.review_status,
+                   activity_groups.created_at,
+                   activity_groups.updated_at
+            FROM activity_groups
+            LEFT JOIN projects ON projects.id = activity_groups.project_id
+            WHERE activity_groups.start_date <= ?2
+              AND activity_groups.end_date >= ?1
+              AND (
+                activity_groups.project_id IS NULL
+                OR projects.status = 'active'
+              )
+            ORDER BY activity_groups.start_date DESC, activity_groups.updated_at DESC
+            "#,
+        )
+        .bind(&input.from)
+        .bind(&input.to)
+        .fetch_all(self.pool)
+        .await?;
+
+        let mut groups = Vec::new();
+        for row in rows {
+            let project_id: Option<String> = row.get("project_id");
+            if let Some(project_id) = &project_id {
+                if !project_filter_matches(&input.project_ids, project_id) {
+                    continue;
+                }
+                let classification: Option<String> = row.get("project_classification");
+                if !classification_filter_matches(&input.classification, classification.as_deref())
+                {
+                    continue;
+                }
+            } else if input.project_ids.is_some() || input.classification.is_some() {
+                continue;
+            }
+
+            let included_in_report = i64_to_bool(row.get("included_in_report"));
+            if !input.include_hidden.unwrap_or(false) && !included_in_report {
+                continue;
+            }
+
+            let items = self.list_items(row.get("id")).await?;
+            if !group_matches_git_filters(self.pool, &input.git_refs, &input.worktree_paths, &items)
+                .await?
+            {
+                continue;
+            }
+
+            let mut group = ActivityGroup {
+                id: row.get("id"),
+                project_id,
+                project_name: row.get("project_name"),
+                title: row.get("title"),
+                summary: row.get("summary"),
+                start_date: row.get("start_date"),
+                end_date: row.get("end_date"),
+                source: row.get("source"),
+                confidence: row.get("confidence"),
+                included_in_report,
+                fingerprint: row.get("fingerprint"),
+                algorithm_version: row.get("algorithm_version"),
+                confidence_label: row.get("confidence_label"),
+                rationale_json: row.get("rationale_json"),
+                report_summary: row.get("report_summary"),
+                locked: i64_to_bool(row.get("locked")),
+                user_edited_at: row.get("user_edited_at"),
+                review_status: row.get("review_status"),
+                title_confidence: None,
+                title_confidence_label: None,
+                title_quality_label: None,
+                title_strategy: None,
+                title_rationale_json: None,
+                title_candidates_json: None,
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+                items,
+            };
+            self.apply_narrative_metadata(&mut group).await?;
+            groups.push(group);
+        }
+
+        Ok(groups)
+    }
+
+    pub async fn create(
+        &self,
+        input: CreateActivityGroupInput,
+    ) -> Result<ActivityGroup, sqlx::Error> {
+        let now = current_timestamp();
+        let id = generate_id("activity_group");
+        sqlx::query(
+            r#"
+            INSERT INTO activity_groups (
+                id, project_id, title, summary, start_date, end_date, source,
+                confidence, included_in_report, fingerprint, algorithm_version, confidence_label,
+                rationale_json, report_summary, locked, review_status, created_at, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+            "#,
+        )
+        .bind(&id)
+        .bind(&input.project_id)
+        .bind(input.title.trim())
+        .bind(input.summary.as_deref().map(str::trim))
+        .bind(&input.start_date)
+        .bind(&input.end_date)
+        .bind(
+            input
+                .source
+                .clone()
+                .unwrap_or_else(|| "local_rule".to_string()),
+        )
+        .bind(input.confidence.unwrap_or(0.7))
+        .bind(if input.included_in_report.unwrap_or(true) {
+            1
+        } else {
+            0
+        })
+        .bind(&input.fingerprint)
+        .bind(input.algorithm_version.as_deref().unwrap_or("graph-v1"))
+        .bind(input.confidence_label.as_deref().unwrap_or("likely"))
+        .bind(&input.rationale_json)
+        .bind(&input.report_summary)
+        .bind(if input.locked.unwrap_or(false) { 1 } else { 0 })
+        .bind(input.review_status.as_deref().unwrap_or("draft"))
+        .bind(&now)
+        .bind(&now)
+        .execute(self.pool)
+        .await?;
+
+        self.upsert_narrative_from_input(&id, &input).await?;
+        self.replace_items(&id, ReplaceActivityGroupItemsInput { items: input.items })
+            .await?;
+        self.get(&id).await?.ok_or(sqlx::Error::RowNotFound)
+    }
+
+    pub async fn update(
+        &self,
+        id: &str,
+        input: UpdateActivityGroupInput,
+    ) -> Result<Option<ActivityGroup>, sqlx::Error> {
+        let Some(mut group) = self.get(id).await? else {
+            return Ok(None);
+        };
+        let original_group = group.clone();
+
+        if let Some(title) = input.title {
+            group.title = title.trim().to_string();
+        }
+        if input.summary.is_some() {
+            group.summary = input.summary.map(|value| value.trim().to_string());
+        }
+        if let Some(start_date) = input.start_date {
+            group.start_date = start_date;
+        }
+        if let Some(end_date) = input.end_date {
+            group.end_date = end_date;
+        }
+        if let Some(source) = input.source {
+            group.source = source;
+        }
+        if let Some(confidence) = input.confidence {
+            group.confidence = confidence;
+        }
+        if let Some(included) = input.included_in_report {
+            group.included_in_report = included;
+        }
+        if input.report_summary.is_some() {
+            group.report_summary = input.report_summary.map(|value| value.trim().to_string());
+        }
+        if let Some(locked) = input.locked {
+            group.locked = locked;
+        }
+        if let Some(review_status) = input.review_status {
+            group.review_status = review_status;
+        }
+        group.updated_at = current_timestamp();
+        group.user_edited_at = Some(group.updated_at.clone());
+
+        sqlx::query(
+            r#"
+            UPDATE activity_groups
+            SET title = ?2,
+                summary = ?3,
+                start_date = ?4,
+                end_date = ?5,
+                source = ?6,
+                confidence = ?7,
+                included_in_report = ?8,
+                report_summary = ?9,
+                locked = ?10,
+                user_edited_at = ?11,
+                review_status = ?12,
+                updated_at = ?13
+            WHERE id = ?1
+            "#,
+        )
+        .bind(id)
+        .bind(&group.title)
+        .bind(&group.summary)
+        .bind(&group.start_date)
+        .bind(&group.end_date)
+        .bind(&group.source)
+        .bind(group.confidence)
+        .bind(if group.included_in_report { 1 } else { 0 })
+        .bind(&group.report_summary)
+        .bind(if group.locked { 1 } else { 0 })
+        .bind(&group.user_edited_at)
+        .bind(&group.review_status)
+        .bind(&group.updated_at)
+        .execute(self.pool)
+        .await?;
+
+        self.remember_title_correction(&original_group, &group)
+            .await?;
+
+        self.get(id).await
+    }
+
+    pub async fn delete(&self, id: &str) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query("DELETE FROM activity_groups WHERE id = ?1")
+            .bind(id)
+            .execute(self.pool)
+            .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn replace_items(
+        &self,
+        group_id: &str,
+        input: ReplaceActivityGroupItemsInput,
+    ) -> Result<Vec<ActivityGroupItem>, sqlx::Error> {
+        sqlx::query("DELETE FROM activity_group_items WHERE group_id = ?1")
+            .bind(group_id)
+            .execute(self.pool)
+            .await?;
+
+        let now = current_timestamp();
+        for item in input.items {
+            sqlx::query(
+                r#"
+                INSERT INTO activity_group_items (
+                    id, group_id, source_type, source_id, occurred_at, summary_snapshot, created_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                "#,
+            )
+            .bind(generate_id("activity_group_item"))
+            .bind(group_id)
+            .bind(item.source_type)
+            .bind(item.source_id)
+            .bind(item.occurred_at)
+            .bind(item.summary_snapshot)
+            .bind(&now)
+            .execute(self.pool)
+            .await?;
+        }
+
+        self.list_items(group_id).await
+    }
+
+    pub async fn get(&self, id: &str) -> Result<Option<ActivityGroup>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            SELECT activity_groups.id,
+                   activity_groups.project_id,
+                   projects.name AS project_name,
+                   activity_groups.title,
+                   activity_groups.summary,
+                   activity_groups.start_date,
+                   activity_groups.end_date,
+                   activity_groups.source,
+                   activity_groups.confidence,
+                   activity_groups.included_in_report,
+                   activity_groups.fingerprint,
+                   activity_groups.algorithm_version,
+                   activity_groups.confidence_label,
+                   activity_groups.rationale_json,
+                   activity_groups.report_summary,
+                   activity_groups.locked,
+                   activity_groups.user_edited_at,
+                   activity_groups.review_status,
+                   activity_groups.created_at,
+                   activity_groups.updated_at
+            FROM activity_groups
+            LEFT JOIN projects ON projects.id = activity_groups.project_id
+            WHERE activity_groups.id = ?1
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            let mut group = ActivityGroup {
+                id: row.get("id"),
+                project_id: row.get("project_id"),
+                project_name: row.get("project_name"),
+                title: row.get("title"),
+                summary: row.get("summary"),
+                start_date: row.get("start_date"),
+                end_date: row.get("end_date"),
+                source: row.get("source"),
+                confidence: row.get("confidence"),
+                included_in_report: i64_to_bool(row.get("included_in_report")),
+                fingerprint: row.get("fingerprint"),
+                algorithm_version: row.get("algorithm_version"),
+                confidence_label: row.get("confidence_label"),
+                rationale_json: row.get("rationale_json"),
+                report_summary: row.get("report_summary"),
+                locked: i64_to_bool(row.get("locked")),
+                user_edited_at: row.get("user_edited_at"),
+                review_status: row.get("review_status"),
+                title_confidence: None,
+                title_confidence_label: None,
+                title_quality_label: None,
+                title_strategy: None,
+                title_rationale_json: None,
+                title_candidates_json: None,
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+                items: self.list_items(id).await?,
+            };
+            self.apply_narrative_metadata(&mut group).await?;
+            Ok(Some(group))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub async fn find_by_fingerprint(
+        &self,
+        fingerprint: &str,
+    ) -> Result<Option<ActivityGroup>, sqlx::Error> {
+        let row = sqlx::query("SELECT id FROM activity_groups WHERE fingerprint = ?1")
+            .bind(fingerprint)
+            .fetch_optional(self.pool)
+            .await?;
+
+        if let Some(row) = row {
+            let id: String = row.get("id");
+            self.get(&id).await
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn apply_narrative_metadata(&self, group: &mut ActivityGroup) -> Result<(), sqlx::Error> {
+        if let Some(narrative) = self.get_narrative(&group.id).await? {
+            group.title_confidence = Some(narrative.title_confidence);
+            group.title_confidence_label = Some(narrative.title_confidence_label);
+            group.title_quality_label = Some(narrative.title_quality_label);
+            group.title_strategy = Some(narrative.naming_strategy);
+            group.title_rationale_json = Some(narrative.rationale_json);
+            group.title_candidates_json = Some(narrative.candidates_json);
+        }
+        Ok(())
+    }
+
+    async fn upsert_narrative_from_input(
+        &self,
+        group_id: &str,
+        input: &CreateActivityGroupInput,
+    ) -> Result<(), sqlx::Error> {
+        let Some(title_confidence) = input.title_confidence else {
+            return Ok(());
+        };
+        let now = current_timestamp();
+        sqlx::query(
+            r#"
+            INSERT INTO activity_group_narratives (
+                group_id, title, summary, report_summary, title_confidence,
+                title_confidence_label, title_quality_label, naming_strategy,
+                classification_json, candidates_json, rationale_json, rejected_terms_json,
+                algorithm_version, created_at, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14)
+            ON CONFLICT(group_id) DO UPDATE SET
+                title = excluded.title,
+                summary = excluded.summary,
+                report_summary = excluded.report_summary,
+                title_confidence = excluded.title_confidence,
+                title_confidence_label = excluded.title_confidence_label,
+                title_quality_label = excluded.title_quality_label,
+                naming_strategy = excluded.naming_strategy,
+                classification_json = excluded.classification_json,
+                candidates_json = excluded.candidates_json,
+                rationale_json = excluded.rationale_json,
+                rejected_terms_json = excluded.rejected_terms_json,
+                algorithm_version = excluded.algorithm_version,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(group_id)
+        .bind(input.title.trim())
+        .bind(input.summary.as_deref().map(str::trim))
+        .bind(input.report_summary.as_deref().map(str::trim))
+        .bind(title_confidence)
+        .bind(input.title_confidence_label.as_deref().unwrap_or("likely"))
+        .bind(input.title_quality_label.as_deref().unwrap_or("acceptable"))
+        .bind(input.title_strategy.as_deref().unwrap_or("domain_phrase"))
+        .bind(input.title_classification_json.as_deref().unwrap_or("{}"))
+        .bind(input.title_candidates_json.as_deref().unwrap_or("[]"))
+        .bind(input.title_rationale_json.as_deref().unwrap_or("{}"))
+        .bind(&input.title_rejected_terms_json)
+        .bind(input.algorithm_version.as_deref().unwrap_or("graph-v1"))
+        .bind(&now)
+        .execute(self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_narrative(
+        &self,
+        group_id: &str,
+    ) -> Result<Option<ActivityGroupNarrative>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            SELECT group_id, title, summary, report_summary, title_confidence,
+                   title_confidence_label, title_quality_label, naming_strategy,
+                   classification_json, candidates_json, rationale_json, rejected_terms_json,
+                   algorithm_version, created_at, updated_at
+            FROM activity_group_narratives
+            WHERE group_id = ?1
+            "#,
+        )
+        .bind(group_id)
+        .fetch_optional(self.pool)
+        .await?;
+
+        Ok(row.map(|row| ActivityGroupNarrative {
+            group_id: row.get("group_id"),
+            title: row.get("title"),
+            summary: row.get("summary"),
+            report_summary: row.get("report_summary"),
+            title_confidence: row.get("title_confidence"),
+            title_confidence_label: row.get("title_confidence_label"),
+            title_quality_label: row.get("title_quality_label"),
+            naming_strategy: row.get("naming_strategy"),
+            classification_json: row.get("classification_json"),
+            candidates_json: row.get("candidates_json"),
+            rationale_json: row.get("rationale_json"),
+            rejected_terms_json: row.get("rejected_terms_json"),
+            algorithm_version: row.get("algorithm_version"),
+            created_at: row.get("created_at"),
+            updated_at: row.get("updated_at"),
+        }))
+    }
+
+    pub async fn select_title_candidate(
+        &self,
+        input: SelectActivityGroupTitleCandidateInput,
+    ) -> Result<Option<ActivityGroup>, sqlx::Error> {
+        let Some(group) = self.get(&input.group_id).await? else {
+            return Ok(None);
+        };
+        let Some(narrative) = self.get_narrative(&input.group_id).await? else {
+            return Ok(Some(group));
+        };
+        let candidates = serde_json::from_str::<Vec<TitleCandidateDto>>(&narrative.candidates_json)
+            .unwrap_or_default();
+        let selected = candidates.iter().find(|candidate| {
+            input
+                .candidate_id
+                .as_deref()
+                .is_some_and(|id| candidate.id == id)
+                || candidate.title == input.candidate_title
+        });
+        let Some(selected) = selected else {
+            return Ok(Some(group));
+        };
+
+        self.update(
+            &input.group_id,
+            UpdateActivityGroupInput {
+                title: Some(selected.title.clone()),
+                summary: Some(selected.summary.clone()),
+                start_date: None,
+                end_date: None,
+                source: None,
+                confidence: None,
+                included_in_report: None,
+                report_summary: Some(selected.report_summary.clone()),
+                locked: None,
+                review_status: Some("reviewed".to_string()),
+            },
+        )
+        .await?;
+
+        let now = current_timestamp();
+        sqlx::query(
+            r#"
+            UPDATE activity_group_narratives
+            SET title = ?2,
+                summary = ?3,
+                report_summary = ?4,
+                naming_strategy = ?5,
+                title_confidence = ?6,
+                title_confidence_label = ?7,
+                title_quality_label = ?8,
+                updated_at = ?9
+            WHERE group_id = ?1
+            "#,
+        )
+        .bind(&input.group_id)
+        .bind(&selected.title)
+        .bind(&selected.summary)
+        .bind(&selected.report_summary)
+        .bind(&selected.strategy)
+        .bind(selected.score)
+        .bind(if selected.score >= 0.78 {
+            "strong"
+        } else if selected.score >= 0.58 {
+            "likely"
+        } else {
+            "needs_review"
+        })
+        .bind(&selected.quality_label)
+        .bind(&now)
+        .execute(self.pool)
+        .await?;
+
+        self.record_title_event(RecordActivityGroupTitleFeedbackInput {
+            group_id: input.group_id.clone(),
+            event_type: "candidate_selected".to_string(),
+            previous_title: Some(group.title),
+            new_title: Some(selected.title.clone()),
+            previous_summary: group.report_summary,
+            new_summary: Some(selected.report_summary.clone()),
+            metadata_json: serde_json::to_string(selected).ok(),
+        })
+        .await?;
+
+        self.get(&input.group_id).await
+    }
+
+    pub async fn record_title_event(
+        &self,
+        input: RecordActivityGroupTitleFeedbackInput,
+    ) -> Result<(), sqlx::Error> {
+        let group = self.get(&input.group_id).await?;
+        let now = current_timestamp();
+        sqlx::query(
+            r#"
+            INSERT INTO activity_group_title_events (
+                id, group_id, project_id, event_type, previous_title, new_title,
+                previous_summary, new_summary, selected_candidate_json,
+                evidence_fingerprint, evidence_terms_json, created_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            "#,
+        )
+        .bind(generate_id("activity_group_title_event"))
+        .bind(&input.group_id)
+        .bind(group.as_ref().and_then(|group| group.project_id.clone()))
+        .bind(&input.event_type)
+        .bind(&input.previous_title)
+        .bind(&input.new_title)
+        .bind(&input.previous_summary)
+        .bind(&input.new_summary)
+        .bind(&input.metadata_json)
+        .bind(group.as_ref().and_then(|group| group.fingerprint.clone()))
+        .bind(
+            group
+                .as_ref()
+                .map(group_memory_terms)
+                .map(|(_, json)| json)
+                .flatten(),
+        )
+        .bind(&now)
+        .execute(self.pool)
+        .await?;
+
+        if matches!(
+            input.event_type.as_str(),
+            "title_renamed" | "candidate_selected" | "title_accepted"
+        ) {
+            if let Some(new_title) = input.new_title {
+                self.upsert_title_vocabulary(
+                    group.as_ref(),
+                    &new_title,
+                    input.metadata_json.as_deref(),
+                )
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn upsert_title_vocabulary(
+        &self,
+        group: Option<&ActivityGroup>,
+        title: &str,
+        evidence_terms_json: Option<&str>,
+    ) -> Result<(), sqlx::Error> {
+        let normalized = title.split(" - ").nth(1).unwrap_or(title).to_lowercase();
+        let now = current_timestamp();
+        sqlx::query(
+            r#"
+            INSERT INTO activity_group_title_vocabulary (
+                id, project_id, project_name, project_family, preferred_term,
+                normalized_term, evidence_terms_json, source, confidence, use_count,
+                last_used_at, created_at, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'feedback', 0.75, 1, ?8, ?8, ?8)
+            "#,
+        )
+        .bind(generate_id("activity_group_title_vocabulary"))
+        .bind(group.and_then(|group| group.project_id.clone()))
+        .bind(group.and_then(|group| group.project_name.clone()))
+        .bind(group.and_then(|group| group.project_name.clone()))
+        .bind(title)
+        .bind(normalized)
+        .bind(evidence_terms_json)
+        .bind(&now)
+        .execute(self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_title_memories(
+        &self,
+        project_ids: Option<&[String]>,
+    ) -> Result<Vec<ActivityGroupTitleMemory>, sqlx::Error> {
+        let rows = if let Some(project_ids) = project_ids {
+            if project_ids.is_empty() {
+                Vec::new()
+            } else {
+                let placeholders = std::iter::repeat("?")
+                    .take(project_ids.len())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let sql = format!(
+                    r#"
+                    SELECT edited_title, edited_summary, project_id, evidence_terms, evidence_terms_json
+                    FROM activity_group_title_memory
+                    WHERE project_id IN ({placeholders}) OR project_id IS NULL
+                    ORDER BY updated_at DESC
+                    LIMIT 200
+                    "#
+                );
+                let mut query = sqlx::query(&sql);
+                for id in project_ids {
+                    query = query.bind(id);
+                }
+                query.fetch_all(self.pool).await?
+            }
+        } else {
+            sqlx::query(
+                r#"
+                SELECT edited_title, edited_summary, project_id, evidence_terms, evidence_terms_json
+                FROM activity_group_title_memory
+                ORDER BY updated_at DESC
+                LIMIT 200
+                "#,
+            )
+            .fetch_all(self.pool)
+            .await?
+        };
+
+        let mut memories = rows
+            .into_iter()
+            .map(|row| ActivityGroupTitleMemory {
+                edited_title: row.get("edited_title"),
+                edited_summary: row.get("edited_summary"),
+                project_id: row.get("project_id"),
+                evidence_terms: row.get("evidence_terms"),
+                evidence_terms_json: row.get("evidence_terms_json"),
+            })
+            .collect::<Vec<_>>();
+
+        memories.extend(self.list_title_vocabulary_as_memories(project_ids).await?);
+        Ok(memories)
+    }
+
+    async fn list_title_vocabulary_as_memories(
+        &self,
+        project_ids: Option<&[String]>,
+    ) -> Result<Vec<ActivityGroupTitleMemory>, sqlx::Error> {
+        let rows = if let Some(project_ids) = project_ids {
+            if project_ids.is_empty() {
+                Vec::new()
+            } else {
+                let placeholders = std::iter::repeat("?")
+                    .take(project_ids.len())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let sql = format!(
+                    r#"
+                    SELECT preferred_term, project_id, normalized_term, evidence_terms_json
+                    FROM activity_group_title_vocabulary
+                    WHERE project_id IN ({placeholders}) OR project_id IS NULL
+                    ORDER BY confidence DESC, use_count DESC, updated_at DESC
+                    LIMIT 100
+                    "#
+                );
+                let mut query = sqlx::query(&sql);
+                for id in project_ids {
+                    query = query.bind(id);
+                }
+                query.fetch_all(self.pool).await?
+            }
+        } else {
+            sqlx::query(
+                r#"
+                SELECT preferred_term, project_id, normalized_term, evidence_terms_json
+                FROM activity_group_title_vocabulary
+                ORDER BY confidence DESC, use_count DESC, updated_at DESC
+                LIMIT 100
+                "#,
+            )
+            .fetch_all(self.pool)
+            .await?
+        };
+
+        Ok(rows
+            .into_iter()
+            .map(|row| ActivityGroupTitleMemory {
+                edited_title: row.get("preferred_term"),
+                edited_summary: None,
+                project_id: row.get("project_id"),
+                evidence_terms: row.get("normalized_term"),
+                evidence_terms_json: row.get("evidence_terms_json"),
+            })
+            .collect())
+    }
+
+    async fn remember_title_correction(
+        &self,
+        original: &ActivityGroup,
+        updated: &ActivityGroup,
+    ) -> Result<(), sqlx::Error> {
+        let title_changed = original.title.trim() != updated.title.trim();
+        let summary_changed = original.report_summary.as_deref().map(str::trim)
+            != updated.report_summary.as_deref().map(str::trim);
+        if !title_changed && !summary_changed {
+            return Ok(());
+        }
+
+        let (terms, terms_json) = group_memory_terms(original);
+        if terms.is_empty() {
+            return Ok(());
+        }
+        let now = current_timestamp();
+        sqlx::query(
+            r#"
+            INSERT INTO activity_group_title_memory (
+              id, original_title, edited_title, edited_summary, project_id, project_name,
+              evidence_fingerprint, evidence_terms, evidence_terms_json, created_at, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)
+            "#,
+        )
+        .bind(generate_id("activity_group_title_memory"))
+        .bind(&original.title)
+        .bind(&updated.title)
+        .bind(&updated.report_summary)
+        .bind(&updated.project_id)
+        .bind(&updated.project_name)
+        .bind(&original.fingerprint)
+        .bind(terms)
+        .bind(terms_json)
+        .bind(&now)
+        .execute(self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn update_generated_group(
+        &self,
+        id: &str,
+        input: CreateActivityGroupInput,
+    ) -> Result<Option<ActivityGroup>, sqlx::Error> {
+        let Some(group) = self.get(id).await? else {
+            return Ok(None);
+        };
+        if group.locked || group.user_edited_at.is_some() {
+            return Ok(Some(group));
+        }
+
+        let now = current_timestamp();
+        sqlx::query(
+            r#"
+            UPDATE activity_groups
+            SET project_id = ?2,
+                title = ?3,
+                summary = ?4,
+                start_date = ?5,
+                end_date = ?6,
+                source = ?7,
+                confidence = ?8,
+                included_in_report = ?9,
+                algorithm_version = ?10,
+                confidence_label = ?11,
+                rationale_json = ?12,
+                report_summary = ?13,
+                review_status = ?14,
+                updated_at = ?15
+            WHERE id = ?1
+            "#,
+        )
+        .bind(id)
+        .bind(&input.project_id)
+        .bind(input.title.trim())
+        .bind(input.summary.as_deref().map(str::trim))
+        .bind(&input.start_date)
+        .bind(&input.end_date)
+        .bind(
+            input
+                .source
+                .clone()
+                .unwrap_or_else(|| "local_rule".to_string()),
+        )
+        .bind(input.confidence.unwrap_or(0.7))
+        .bind(if input.included_in_report.unwrap_or(true) {
+            1
+        } else {
+            0
+        })
+        .bind(input.algorithm_version.as_deref().unwrap_or("graph-v1"))
+        .bind(input.confidence_label.as_deref().unwrap_or("likely"))
+        .bind(&input.rationale_json)
+        .bind(&input.report_summary)
+        .bind(input.review_status.as_deref().unwrap_or("draft"))
+        .bind(&now)
+        .execute(self.pool)
+        .await?;
+
+        self.upsert_narrative_from_input(id, &input).await?;
+        self.replace_items(id, ReplaceActivityGroupItemsInput { items: input.items })
+            .await?;
+        self.get(id).await
+    }
+
+    pub async fn move_item(
+        &self,
+        item_id: &str,
+        target_group_id: &str,
+    ) -> Result<Option<ActivityGroup>, sqlx::Error> {
+        let now = current_timestamp();
+        sqlx::query(
+            r#"
+            UPDATE activity_group_items
+            SET group_id = ?2
+            WHERE id = ?1
+            "#,
+        )
+        .bind(item_id)
+        .bind(target_group_id)
+        .execute(self.pool)
+        .await?;
+        sqlx::query(
+            "UPDATE activity_groups SET user_edited_at = ?2, updated_at = ?2 WHERE id = ?1",
+        )
+        .bind(target_group_id)
+        .bind(&now)
+        .execute(self.pool)
+        .await?;
+        self.get(target_group_id).await
+    }
+
+    pub async fn set_lock(
+        &self,
+        id: &str,
+        locked: bool,
+    ) -> Result<Option<ActivityGroup>, sqlx::Error> {
+        let now = current_timestamp();
+        sqlx::query(
+            r#"
+            UPDATE activity_groups
+            SET locked = ?2,
+                review_status = CASE WHEN ?2 = 1 THEN 'reviewed' ELSE review_status END,
+                user_edited_at = ?3,
+                updated_at = ?3
+            WHERE id = ?1
+            "#,
+        )
+        .bind(id)
+        .bind(if locked { 1 } else { 0 })
+        .bind(&now)
+        .execute(self.pool)
+        .await?;
+        self.get(id).await
+    }
+
+    pub async fn evidence_for_group(
+        &self,
+        id: &str,
+    ) -> Result<Option<GroupingEvidence>, sqlx::Error> {
+        let Some(group) = self.get(id).await? else {
+            return Ok(None);
+        };
+        let commit_hashes = group
+            .items
+            .iter()
+            .filter(|item| item.source_type == "commit")
+            .filter_map(|item| {
+                item.activity
+                    .as_ref()
+                    .and_then(|activity| activity.commit_hash.clone())
+            })
+            .collect::<Vec<_>>();
+
+        let project_id = group.project_id.clone().or_else(|| {
+            group.items.iter().find_map(|item| {
+                item.activity
+                    .as_ref()
+                    .and_then(|activity| activity.project_id.clone())
+            })
+        });
+        let mut changed_paths = Vec::new();
+        let mut diff_snippets = Vec::new();
+        if let Some(project_id) = project_id {
+            for change in self
+                .list_file_changes_for_project_commits(&project_id, &commit_hashes)
+                .await?
+            {
+                changed_paths.push(change.path);
+            }
+            for snippet in self
+                .list_diff_snippets_for_project_commits(&project_id, &commit_hashes)
+                .await?
+            {
+                diff_snippets.push(GroupingDiffSnippet {
+                    commit_hash: snippet.commit_hash,
+                    path: snippet.path,
+                    snippet: snippet.snippet,
+                });
+            }
+        }
+
+        let reasons = group
+            .rationale_json
+            .as_deref()
+            .and_then(|json| serde_json::from_str::<Vec<String>>(json).ok())
+            .unwrap_or_else(|| vec!["Grouped by local evidence graph".to_string()]);
+
+        Ok(Some(GroupingEvidence {
+            group,
+            reasons,
+            changed_paths,
+            diff_snippets,
+        }))
+    }
+
+    async fn list_items(&self, group_id: &str) -> Result<Vec<ActivityGroupItem>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, group_id, source_type, source_id, occurred_at, summary_snapshot, created_at
+            FROM activity_group_items
+            WHERE group_id = ?1
+            ORDER BY occurred_at ASC
+            "#,
+        )
+        .bind(group_id)
+        .fetch_all(self.pool)
+        .await?;
+
+        let mut items = Vec::new();
+        for row in rows {
+            let source_type: String = row.get("source_type");
+            let source_id: String = row.get("source_id");
+            items.push(ActivityGroupItem {
+                id: row.get("id"),
+                group_id: row.get("group_id"),
+                source_type: source_type.clone(),
+                source_id: source_id.clone(),
+                occurred_at: row.get("occurred_at"),
+                summary_snapshot: row.get("summary_snapshot"),
+                activity: activity_item_for_source(self.pool, &source_type, &source_id).await?,
+                created_at: row.get("created_at"),
+            });
+        }
+
+        Ok(items)
+    }
+
+    pub async fn list_file_changes_for_project_commits(
+        &self,
+        project_id: &str,
+        commit_hashes: &[String],
+    ) -> Result<Vec<CommitFileChange>, sqlx::Error> {
+        if commit_hashes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let wanted = commit_hashes
+            .iter()
+            .collect::<std::collections::HashSet<_>>();
+        let rows = sqlx::query(
+            r#"
+            SELECT project_id, commit_hash, path, old_path, change_kind, additions, deletions,
+                   is_binary, language, top_level_dir, is_test, is_docs, is_config,
+                   is_migration, is_generated, collected_at
+            FROM commit_file_changes
+            WHERE project_id = ?1
+            ORDER BY path ASC
+            "#,
+        )
+        .bind(project_id)
+        .fetch_all(self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .filter(|row| wanted.contains(&row.get::<String, _>("commit_hash")))
+            .map(commit_file_change_from_row)
+            .collect())
+    }
+
+    pub async fn list_diff_snippets_for_project_commits(
+        &self,
+        project_id: &str,
+        commit_hashes: &[String],
+    ) -> Result<Vec<CommitDiffSnippet>, sqlx::Error> {
+        if commit_hashes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let wanted = commit_hashes
+            .iter()
+            .collect::<std::collections::HashSet<_>>();
+        let rows = sqlx::query(
+            r#"
+            SELECT project_id, commit_hash, path, snippet, collected_at
+            FROM commit_diff_snippets
+            WHERE project_id = ?1
+            ORDER BY path ASC
+            "#,
+        )
+        .bind(project_id)
+        .fetch_all(self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .filter(|row| wanted.contains(&row.get::<String, _>("commit_hash")))
+            .map(commit_diff_snippet_from_row)
+            .collect())
+    }
 }
 
 pub struct ManualLogRepository<'a> {
@@ -2369,6 +3592,129 @@ impl ReportNoteStore for ReportNoteRepository<'_> {
 
 pub struct SettingsRepository<'a> {
     pool: &'a SqlitePool,
+}
+
+pub struct ActivityEmbeddingRepository<'a> {
+    pool: &'a SqlitePool,
+}
+
+impl<'a> ActivityEmbeddingRepository<'a> {
+    pub fn new(pool: &'a SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn upsert(
+        &self,
+        input: UpsertActivityEmbeddingInput,
+    ) -> Result<ActivityEmbeddingRecord, sqlx::Error> {
+        let now = current_timestamp();
+        let id = generate_id("activity_embedding");
+        sqlx::query(
+            r#"
+            INSERT INTO activity_embeddings (
+              id, source_type, source_id, evidence_kind, model, provider,
+              text_hash, vector_path, dimensions, created_at, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)
+            ON CONFLICT(source_type, source_id, evidence_kind, model, provider) DO UPDATE SET
+              text_hash = excluded.text_hash,
+              vector_path = excluded.vector_path,
+              dimensions = excluded.dimensions,
+              updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(id)
+        .bind(&input.source_type)
+        .bind(&input.source_id)
+        .bind(&input.evidence_kind)
+        .bind(&input.model)
+        .bind(&input.provider)
+        .bind(&input.text_hash)
+        .bind(&input.vector_path)
+        .bind(input.dimensions)
+        .bind(&now)
+        .execute(self.pool)
+        .await?;
+
+        self.find(
+            &input.source_type,
+            &input.source_id,
+            &input.evidence_kind,
+            &input.model,
+            &input.provider,
+        )
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)
+    }
+
+    pub async fn find(
+        &self,
+        source_type: &str,
+        source_id: &str,
+        evidence_kind: &str,
+        model: &str,
+        provider: &str,
+    ) -> Result<Option<ActivityEmbeddingRecord>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, source_type, source_id, evidence_kind, model, provider,
+                   text_hash, vector_path, dimensions, created_at, updated_at
+            FROM activity_embeddings
+            WHERE source_type = ?1 AND source_id = ?2 AND evidence_kind = ?3
+              AND model = ?4 AND provider = ?5
+            "#,
+        )
+        .bind(source_type)
+        .bind(source_id)
+        .bind(evidence_kind)
+        .bind(model)
+        .bind(provider)
+        .fetch_optional(self.pool)
+        .await?;
+
+        Ok(row.map(activity_embedding_from_row))
+    }
+
+    pub async fn list_by_sources(
+        &self,
+        sources: &[(String, String)],
+        evidence_kind: &str,
+        model: &str,
+        provider: &str,
+    ) -> Result<Vec<ActivityEmbeddingRecord>, sqlx::Error> {
+        if sources.is_empty() {
+            return Ok(Vec::new());
+        }
+        let wanted = sources
+            .iter()
+            .map(|(source_type, source_id)| format!("{source_type}\u{1f}{source_id}"))
+            .collect::<std::collections::HashSet<_>>();
+        let rows = sqlx::query(
+            r#"
+            SELECT id, source_type, source_id, evidence_kind, model, provider,
+                   text_hash, vector_path, dimensions, created_at, updated_at
+            FROM activity_embeddings
+            WHERE evidence_kind = ?1 AND model = ?2 AND provider = ?3
+            "#,
+        )
+        .bind(evidence_kind)
+        .bind(model)
+        .bind(provider)
+        .fetch_all(self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .filter(|row| {
+                wanted.contains(&format!(
+                    "{}\u{1f}{}",
+                    row.get::<String, _>("source_type"),
+                    row.get::<String, _>("source_id")
+                ))
+            })
+            .map(activity_embedding_from_row)
+            .collect())
+    }
 }
 
 pub struct SparcForceConnectionRepository<'a> {
@@ -4375,6 +5721,27 @@ impl<'a> SettingsRepository<'a> {
         if let Some(value) = input.report_ai_nvidia_model {
             settings.report_ai_nvidia_model = value;
         }
+        if let Some(value) = input.embeddings_enabled {
+            settings.embeddings_enabled = value;
+        }
+        if let Some(value) = input.embedding_provider {
+            settings.embedding_provider = value;
+        }
+        if let Some(value) = input.embedding_local_endpoint {
+            settings.embedding_local_endpoint = value;
+        }
+        if let Some(value) = input.embedding_online_endpoint {
+            settings.embedding_online_endpoint = value;
+        }
+        if let Some(value) = input.embedding_model {
+            settings.embedding_model = value;
+        }
+        if let Some(value) = input.embedding_online_allowed {
+            settings.embedding_online_allowed = value;
+        }
+        if let Some(value) = input.embedding_privacy_acknowledged {
+            settings.embedding_privacy_acknowledged = value;
+        }
         if let Some(value) = input.sparc_force_addon_enabled {
             settings.sparc_force_addon_enabled = value;
         }
@@ -4604,6 +5971,47 @@ impl<'a> SettingsRepository<'a> {
             .await?;
         self.upsert("report_ai.nvidia_model", &settings.report_ai_nvidia_model)
             .await?;
+        self.upsert(
+            "embeddings.enabled",
+            if settings.embeddings_enabled {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
+        self.upsert("embeddings.provider", &settings.embedding_provider)
+            .await?;
+        self.upsert(
+            "embeddings.local_endpoint",
+            &settings.embedding_local_endpoint,
+        )
+        .await?;
+        self.upsert(
+            "embeddings.online_endpoint",
+            &settings.embedding_online_endpoint,
+        )
+        .await?;
+        self.upsert("embeddings.model", &settings.embedding_model)
+            .await?;
+        self.upsert(
+            "embeddings.online_allowed",
+            if settings.embedding_online_allowed {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
+        self.upsert(
+            "embeddings.privacy_acknowledged",
+            if settings.embedding_privacy_acknowledged {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
         self.upsert(
             "sparc_force.addon_enabled",
             if settings.sparc_force_addon_enabled {
@@ -5481,7 +6889,9 @@ fn apply_setting(settings: &mut Settings, key: &str, value: String) {
     match key {
         "profile.name" => settings.name = value,
         "profile.email" => settings.email = value,
-        "profile.use_gravatar_profile_image" => settings.use_gravatar_profile_image = value == "true",
+        "profile.use_gravatar_profile_image" => {
+            settings.use_gravatar_profile_image = value == "true"
+        }
         "profile.default_manager_name" => settings.default_manager_name = value,
         "git.author_email" => settings.git_author_email = value,
         "reports.default_template" => settings.default_report_template = value,
@@ -5537,6 +6947,15 @@ fn apply_setting(settings: &mut Settings, key: &str, value: String) {
         "report_ai.local_model_path" => settings.report_ai_local_model_path = value,
         "report_ai.groq_model" => settings.report_ai_groq_model = value,
         "report_ai.nvidia_model" => settings.report_ai_nvidia_model = value,
+        "embeddings.enabled" => settings.embeddings_enabled = value == "true",
+        "embeddings.provider" => settings.embedding_provider = value,
+        "embeddings.local_endpoint" => settings.embedding_local_endpoint = value,
+        "embeddings.online_endpoint" => settings.embedding_online_endpoint = value,
+        "embeddings.model" => settings.embedding_model = value,
+        "embeddings.online_allowed" => settings.embedding_online_allowed = value == "true",
+        "embeddings.privacy_acknowledged" => {
+            settings.embedding_privacy_acknowledged = value == "true"
+        }
         "sparc_force.addon_enabled" => settings.sparc_force_addon_enabled = value == "true",
         "onboarding.completed" => settings.onboarding_completed = value == "true",
         "onboarding.dismissed_welcome" => settings.onboarding_dismissed_welcome = value == "true",
@@ -5733,6 +7152,53 @@ fn git_worktree_from_row(row: sqlx::sqlite::SqliteRow) -> GitWorktree {
     }
 }
 
+fn commit_file_change_from_row(row: sqlx::sqlite::SqliteRow) -> CommitFileChange {
+    CommitFileChange {
+        project_id: row.get("project_id"),
+        commit_hash: row.get("commit_hash"),
+        path: row.get("path"),
+        old_path: row.get("old_path"),
+        change_kind: row.get("change_kind"),
+        additions: row.get("additions"),
+        deletions: row.get("deletions"),
+        is_binary: i64_to_bool(row.get("is_binary")),
+        language: row.get("language"),
+        top_level_dir: row.get("top_level_dir"),
+        is_test: i64_to_bool(row.get("is_test")),
+        is_docs: i64_to_bool(row.get("is_docs")),
+        is_config: i64_to_bool(row.get("is_config")),
+        is_migration: i64_to_bool(row.get("is_migration")),
+        is_generated: i64_to_bool(row.get("is_generated")),
+        collected_at: row.get("collected_at"),
+    }
+}
+
+fn commit_diff_snippet_from_row(row: sqlx::sqlite::SqliteRow) -> CommitDiffSnippet {
+    CommitDiffSnippet {
+        project_id: row.get("project_id"),
+        commit_hash: row.get("commit_hash"),
+        path: row.get("path"),
+        snippet: row.get("snippet"),
+        collected_at: row.get("collected_at"),
+    }
+}
+
+fn activity_embedding_from_row(row: sqlx::sqlite::SqliteRow) -> ActivityEmbeddingRecord {
+    ActivityEmbeddingRecord {
+        id: row.get("id"),
+        source_type: row.get("source_type"),
+        source_id: row.get("source_id"),
+        evidence_kind: row.get("evidence_kind"),
+        model: row.get("model"),
+        provider: row.get("provider"),
+        text_hash: row.get("text_hash"),
+        vector_path: row.get("vector_path"),
+        dimensions: row.get("dimensions"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    }
+}
+
 async fn refs_for_commit(
     pool: &SqlitePool,
     project_id: &str,
@@ -5905,6 +7371,113 @@ async fn worktree_for_commit(
     }))
 }
 
+async fn activity_item_for_source(
+    pool: &SqlitePool,
+    source_type: &str,
+    source_id: &str,
+) -> Result<Option<ActivityItem>, sqlx::Error> {
+    if source_type != "commit" {
+        return Ok(None);
+    }
+
+    let row = sqlx::query(
+        r#"
+        SELECT commits.id,
+               commits.project_id,
+               projects.name AS project_name,
+               commits.message,
+               commits.committed_at,
+               commits.included_in_report,
+               commits.commit_hash,
+               commits.author_name,
+               commits.author_email,
+               commits.branch,
+               commits.files_changed,
+               commits.insertions,
+               commits.deletions
+        FROM commits
+        JOIN projects ON projects.id = commits.project_id
+        WHERE commits.id = ?1
+        LIMIT 1
+        "#,
+    )
+    .bind(source_id)
+    .fetch_optional(pool)
+    .await?;
+
+    let Some(row) = row else {
+        return Ok(None);
+    };
+
+    let project_id: String = row.get("project_id");
+    let commit_hash: String = row.get("commit_hash");
+    let refs = refs_for_commit(pool, &project_id, &commit_hash).await?;
+    let worktree = worktree_for_commit(pool, &project_id, &commit_hash).await?;
+
+    Ok(Some(ActivityItem {
+        id: row.get("id"),
+        project_id: Some(project_id),
+        project_name: row.get("project_name"),
+        activity_type: "commit".to_string(),
+        summary: row.get("message"),
+        occurred_at: row.get("committed_at"),
+        included_in_report: i64_to_bool(row.get("included_in_report")),
+        commit_hash: Some(commit_hash),
+        author_name: row.get("author_name"),
+        author_email: row.get("author_email"),
+        branch: row.get("branch"),
+        files_changed: row.get("files_changed"),
+        insertions: row.get("insertions"),
+        deletions: row.get("deletions"),
+        refs,
+        worktree,
+    }))
+}
+
+async fn group_matches_git_filters(
+    pool: &SqlitePool,
+    git_refs: &Option<Vec<GitRefFilter>>,
+    worktree_paths: &Option<Vec<String>>,
+    items: &[ActivityGroupItem],
+) -> Result<bool, sqlx::Error> {
+    let has_ref_filters = git_refs
+        .as_ref()
+        .map(|filters| filters.iter().any(|filter| !filter.name.trim().is_empty()))
+        .unwrap_or(false);
+    let has_worktree_filters = worktree_paths
+        .as_ref()
+        .map(|paths| paths.iter().any(|path| !path.trim().is_empty()))
+        .unwrap_or(false);
+
+    if !has_ref_filters && !has_worktree_filters {
+        return Ok(true);
+    }
+
+    for item in items {
+        if let Some(activity) = &item.activity {
+            if let (Some(project_id), Some(commit_hash)) = (
+                activity.project_id.as_deref(),
+                activity.commit_hash.as_deref(),
+            ) {
+                if commit_matches_git_filters(
+                    pool,
+                    git_refs,
+                    worktree_paths,
+                    project_id,
+                    commit_hash,
+                    &activity.refs,
+                )
+                .await?
+                {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+
+    Ok(false)
+}
+
 fn relative_path(root_path: &str, repo_path: &str) -> String {
     let root = std::path::Path::new(root_path);
     let repo = std::path::Path::new(repo_path);
@@ -5989,6 +7562,85 @@ fn bool_to_i64(value: bool) -> i64 {
 
 fn i64_to_bool(value: i64) -> bool {
     value == 1
+}
+
+fn group_memory_terms(group: &ActivityGroup) -> (String, Option<String>) {
+    let mut terms = Vec::new();
+    let mut branch_phrases = Vec::new();
+    let mut issue_tokens = Vec::new();
+    let mut source_titles = Vec::new();
+    let mut commit_subjects = Vec::new();
+    if let Some(project_name) = &group.project_name {
+        terms.push(project_name.clone());
+    }
+    terms.push(group.title.clone());
+    if let Some(summary) = &group.summary {
+        terms.push(summary.clone());
+    }
+    if let Some(report_summary) = &group.report_summary {
+        terms.push(report_summary.clone());
+    }
+    for item in &group.items {
+        terms.push(item.summary_snapshot.clone());
+        commit_subjects.push(item.summary_snapshot.clone());
+        issue_tokens.extend(memory_issue_tokens(&item.summary_snapshot));
+        if let Some(activity) = &item.activity {
+            if let Some(branch) = &activity.branch {
+                terms.push(branch.clone());
+                branch_phrases.push(memory_branch_phrase(branch));
+                issue_tokens.extend(memory_issue_tokens(branch));
+            }
+            if let Some(project_name) = &activity.project_name {
+                terms.push(project_name.clone());
+            }
+            if activity.activity_type != "commit" {
+                source_titles.push(activity.summary.clone());
+            }
+        }
+    }
+    let json = serde_json::json!({
+        "projectFamily": group.project_name,
+        "branchPhrases": memory_normalize(branch_phrases),
+        "issueTokens": memory_normalize(issue_tokens),
+        "moduleTerms": Vec::<String>::new(),
+        "pathTerms": Vec::<String>::new(),
+        "diffTerms": Vec::<String>::new(),
+        "sourceTitles": memory_normalize(source_titles),
+        "commitSubjects": memory_normalize(commit_subjects),
+        "changeTerms": Vec::<String>::new(),
+    });
+    (terms.join(" "), Some(json.to_string()))
+}
+
+fn memory_branch_phrase(branch: &str) -> String {
+    branch
+        .rsplit('/')
+        .next()
+        .unwrap_or(branch)
+        .replace(['_', '-'], " ")
+        .trim()
+        .to_lowercase()
+}
+
+fn memory_issue_tokens(text: &str) -> Vec<String> {
+    text.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'))
+        .filter_map(|part| {
+            let lower = part.to_lowercase();
+            let has_digit = lower.chars().any(|ch| ch.is_ascii_digit());
+            let has_alpha = lower.chars().any(|ch| ch.is_ascii_alphabetic());
+            (has_digit && has_alpha && lower.len() >= 3).then_some(lower)
+        })
+        .collect()
+}
+
+fn memory_normalize(values: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    values
+        .into_iter()
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty())
+        .filter(|value| seen.insert(value.clone()))
+        .collect()
 }
 
 fn minutes_between(started_at: &str, ended_at: &str) -> i64 {
@@ -7506,5 +9158,3 @@ mod tests {
         );
     }
 }
-
-

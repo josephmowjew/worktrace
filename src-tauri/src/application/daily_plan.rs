@@ -500,5 +500,3 @@ fn compute_distraction_risk(
         reasons,
     }
 }
-
-

@@ -103,6 +103,22 @@ a {
   -webkit-user-select: none;
 }
 
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+
+p,
+li {
+  text-wrap: pretty;
+}
+
+.tabular,
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
 .sparc-force-html {
   overflow-wrap: anywhere;
 }

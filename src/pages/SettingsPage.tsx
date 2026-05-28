@@ -18,6 +18,7 @@ import { z } from "zod";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Panel } from "../components/ui/Panel";
+import { PageHeader } from "../components/ui/PageHeader";
 import { SegmentedTabs } from "../components/ui/SegmentedTabs";
 import { SelectField } from "../components/ui/SelectField";
 import { useSpeech } from "../components/ui/SpeechProvider";
@@ -42,6 +43,12 @@ import {
   listReportAiProviderModels,
   testReportAiProvider,
 } from "../lib/api/reports";
+import {
+  connectEmbeddingProvider,
+  disconnectEmbeddingProvider,
+  getEmbeddingStatus,
+  testEmbeddingProvider,
+} from "../lib/api/embeddings";
 import {
   connectSparcForce,
   disconnectSparcForce,
@@ -122,6 +129,13 @@ const settingsSchema = z.object({
   reportAiLocalModelPath: z.string(),
   reportAiGroqModel: z.string(),
   reportAiNvidiaModel: z.string(),
+  embeddingsEnabled: z.boolean(),
+  embeddingProvider: z.enum(["native_local", "local_endpoint", "openai_compatible"]),
+  embeddingLocalEndpoint: z.string(),
+  embeddingOnlineEndpoint: z.string(),
+  embeddingModel: z.string(),
+  embeddingOnlineAllowed: z.boolean(),
+  embeddingPrivacyAcknowledged: z.boolean(),
   sparcForceAddonEnabled: z.boolean(),
 });
 
@@ -184,9 +198,14 @@ export function SettingsPage() {
     queryKey: ["reportAiStatus"],
     queryFn: getReportAiStatus,
   });
+  const embeddingStatusQuery = useQuery({
+    queryKey: ["embeddingStatus"],
+    queryFn: getEmbeddingStatus,
+  });
   const [openRouterKey, setOpenRouterKey] = useState("");
   const [groqKey, setGroqKey] = useState("");
   const [nvidiaBuildKey, setNvidiaBuildKey] = useState("");
+  const [embeddingApiKey, setEmbeddingApiKey] = useState("");
   const [providerModels, setProviderModels] = useState<
     Partial<Record<ReportAiProvider, ReportAiModelList>>
   >({});
@@ -225,6 +244,13 @@ export function SettingsPage() {
       reportAiLocalModelPath: "",
       reportAiGroqModel: "llama-3.1-8b-instant",
       reportAiNvidiaModel: "meta/llama-3.1-70b-instruct",
+      embeddingsEnabled: false,
+      embeddingProvider: "native_local",
+      embeddingLocalEndpoint: "",
+      embeddingOnlineEndpoint: "https://api.openai.com/v1/embeddings",
+      embeddingModel: "BGESmallENV15",
+      embeddingOnlineAllowed: false,
+      embeddingPrivacyAcknowledged: false,
       sparcForceAddonEnabled: false,
     },
   });
@@ -306,6 +332,13 @@ export function SettingsPage() {
         reportAiLocalModelPath: values.reportAiLocalModelPath,
         reportAiGroqModel: values.reportAiGroqModel,
         reportAiNvidiaModel: values.reportAiNvidiaModel,
+        embeddingsEnabled: values.embeddingsEnabled,
+        embeddingProvider: values.embeddingProvider,
+        embeddingLocalEndpoint: values.embeddingLocalEndpoint,
+        embeddingOnlineEndpoint: values.embeddingOnlineEndpoint,
+        embeddingModel: values.embeddingModel,
+        embeddingOnlineAllowed: values.embeddingOnlineAllowed,
+        embeddingPrivacyAcknowledged: values.embeddingPrivacyAcknowledged,
         sparcForceAddonEnabled: values.sparcForceAddonEnabled,
     }),
     onSuccess: async (settings) => {
@@ -581,6 +614,36 @@ export function SettingsPage() {
       toast.error("Model refresh failed", error instanceof Error ? error.message : "Provider models could not be loaded.");
     },
   });
+  const connectEmbeddingMutation = useMutation({
+    mutationFn: (apiKey: string) => connectEmbeddingProvider({ apiKey }),
+    onSuccess: async () => {
+      setEmbeddingApiKey("");
+      await embeddingStatusQuery.refetch();
+      toast.success("Embedding provider connected");
+    },
+    onError: (error) => {
+      toast.error("Embedding connect failed", error instanceof Error ? error.message : "The embedding key could not be stored.");
+    },
+  });
+  const testEmbeddingMutation = useMutation({
+    mutationFn: testEmbeddingProvider,
+    onSuccess: (message) => {
+      toast.success("Embedding provider ready", message);
+    },
+    onError: (error) => {
+      toast.error("Embedding test failed", error instanceof Error ? error.message : "The embedding provider could not be tested.");
+    },
+  });
+  const disconnectEmbeddingMutation = useMutation({
+    mutationFn: disconnectEmbeddingProvider,
+    onSuccess: async () => {
+      await embeddingStatusQuery.refetch();
+      toast.success("Embedding provider disconnected");
+    },
+    onError: (error) => {
+      toast.error("Embedding disconnect failed", error instanceof Error ? error.message : "The embedding provider could not be disconnected.");
+    },
+  });
 
   const selectedWorkingDays = form.watch("workingDays");
   const profileName = form.watch("name");
@@ -737,21 +800,13 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-4">
-      <Panel className="relative overflow-hidden p-0">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_25%,rgba(59,130,246,0.18),transparent_28%),radial-gradient(circle_at_78%_8%,rgba(20,184,166,0.14),transparent_24%)]" />
-        <div className="relative flex flex-wrap items-center justify-between gap-4 px-5 py-4">
-          <div>
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-cyan-300/15 bg-cyan-300/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
-              <SettingsIcon className="h-3.5 w-3.5" />
-              Local preferences
-            </div>
-            <h1 className="text-2xl font-semibold tracking-tight text-white">Settings</h1>
-            <p className="mt-1 max-w-2xl text-sm text-slate-400">
-              Profile, reporting defaults, Git author, working days, and appearance
-              preferences stored locally in SQLite.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
+      <PageHeader
+        icon={SettingsIcon}
+        eyebrow="Local preferences"
+        title="Settings"
+        description="Profile, reporting defaults, Git author, working days, and appearance preferences stored locally in SQLite."
+        actions={
+          <>
             {saveMutation.isSuccess ? (
               <Badge tone="green">
                 <Check className="mr-1 h-3 w-3" />
@@ -767,9 +822,9 @@ export function SettingsPage() {
               <Save className="h-4 w-4" />
               {saveMutation.isPending ? "Saving..." : "Save Changes"}
             </Button>
-          </div>
-        </div>
-      </Panel>
+          </>
+        }
+      />
 
       <Panel className="p-2">
         <SegmentedTabs
@@ -1223,6 +1278,94 @@ export function SettingsPage() {
                   </Field>
                 </div>
               </div>
+            </div>
+          </Panel>
+          ) : null}
+
+          {activeTab === "reporting" ? (
+          <Panel>
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-base font-semibold text-white">
+                <Search className="h-4 w-4 text-cyan-300" />
+                Semantic Grouping
+              </div>
+              <Badge tone={embeddingStatusQuery.data?.available ? "green" : "slate"}>
+                {embeddingStatusQuery.data?.message ?? "Local endpoint optional"}
+              </Badge>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <ToggleField
+                label="Embeddings"
+                description="Use semantic similarity as a supporting signal for grouping and timeline search."
+                checked={form.watch("embeddingsEnabled")}
+                onChange={(checked) =>
+                  form.setValue("embeddingsEnabled", checked, { shouldDirty: true })
+                }
+              />
+              <Field label="Provider">
+                <SelectField
+                  control={form.control}
+                  name="embeddingProvider"
+                  disabled={settingsQuery.isLoading}
+                  options={[
+                    { value: "native_local", label: "Native local", icon: Database },
+                    { value: "local_endpoint", label: "Local endpoint", icon: Monitor },
+                    { value: "openai_compatible", label: "OpenAI-compatible", icon: PlugZap },
+                  ]}
+                  size="sm"
+                />
+              </Field>
+              <Field label="Local Endpoint">
+                <input
+                  className={inputClass}
+                  disabled={settingsQuery.isLoading}
+                  placeholder="http://127.0.0.1:11434/v1/embeddings"
+                  {...form.register("embeddingLocalEndpoint")}
+                />
+              </Field>
+              <Field label="Embedding Model">
+                <input
+                  className={inputClass}
+                  disabled={settingsQuery.isLoading}
+                  placeholder="BGESmallENV15"
+                  {...form.register("embeddingModel")}
+                />
+              </Field>
+              <Field label="Online Endpoint">
+                <input
+                  className={inputClass}
+                  disabled={settingsQuery.isLoading}
+                  placeholder="https://api.openai.com/v1/embeddings"
+                  {...form.register("embeddingOnlineEndpoint")}
+                />
+              </Field>
+              <ToggleField
+                label="Allow online fallback"
+                description="Permit privacy-bounded embedding payloads to be sent to the online endpoint."
+                checked={form.watch("embeddingOnlineAllowed")}
+                onChange={(checked) =>
+                  form.setValue("embeddingOnlineAllowed", checked, { shouldDirty: true })
+                }
+              />
+              <ToggleField
+                label="Embedding privacy acknowledgement"
+                description="I understand online embeddings may send titles, paths, summaries, and bounded context to the provider."
+                checked={form.watch("embeddingPrivacyAcknowledged")}
+                onChange={(checked) =>
+                  form.setValue("embeddingPrivacyAcknowledged", checked, { shouldDirty: true })
+                }
+              />
+              <ProviderKeyRow
+                label="Online Embeddings"
+                value={embeddingApiKey}
+                status={embeddingStatusQuery.data?.message ?? "Status unavailable."}
+                configured={embeddingStatusQuery.data?.configured ?? false}
+                isPending={connectEmbeddingMutation.isPending || testEmbeddingMutation.isPending || disconnectEmbeddingMutation.isPending}
+                onChange={setEmbeddingApiKey}
+                onConnect={() => connectEmbeddingMutation.mutate(embeddingApiKey)}
+                onTest={() => testEmbeddingMutation.mutate()}
+                onDisconnect={() => disconnectEmbeddingMutation.mutate()}
+              />
             </div>
           </Panel>
           ) : null}
@@ -3904,6 +4047,15 @@ function toFormValues(settings: Settings): SettingsFormValues {
     reportAiLocalModelPath: settings.reportAiLocalModelPath,
     reportAiGroqModel: settings.reportAiGroqModel || "llama-3.1-8b-instant",
     reportAiNvidiaModel: settings.reportAiNvidiaModel || "meta/llama-3.1-70b-instruct",
+    embeddingsEnabled: settings.embeddingsEnabled ?? false,
+    embeddingProvider: isEmbeddingProvider(settings.embeddingProvider)
+      ? settings.embeddingProvider
+      : "native_local",
+    embeddingLocalEndpoint: settings.embeddingLocalEndpoint || "",
+    embeddingOnlineEndpoint: settings.embeddingOnlineEndpoint || "https://api.openai.com/v1/embeddings",
+    embeddingModel: settings.embeddingModel || "BGESmallENV15",
+    embeddingOnlineAllowed: settings.embeddingOnlineAllowed ?? false,
+    embeddingPrivacyAcknowledged: settings.embeddingPrivacyAcknowledged ?? false,
     sparcForceAddonEnabled: settings.sparcForceAddonEnabled,
   };
 }
@@ -3922,6 +4074,12 @@ function isReportAiProvider(
   value: string,
 ): value is SettingsFormValues["reportAiProvider"] {
   return ["local_llama_cpp", "openrouter_free", "groq", "nvidia_build"].includes(value);
+}
+
+function isEmbeddingProvider(
+  value: string,
+): value is SettingsFormValues["embeddingProvider"] {
+  return ["native_local", "local_endpoint", "openai_compatible"].includes(value);
 }
 
 function isVoiceTranscriptionProvider(

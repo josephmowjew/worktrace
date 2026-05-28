@@ -1,8 +1,10 @@
 pub mod activity;
+pub mod activity_groups;
 pub mod app_updates;
 pub mod calendar;
 pub mod daily_plan;
 pub mod dashboard;
+pub mod embeddings;
 pub mod focus_sessions;
 pub mod git_sync;
 pub mod github;
@@ -42,7 +44,31 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         daily_plan::replace_daily_plan_items,
         daily_plan::update_daily_plan_item,
         daily_plan::get_today_command_center,
+        embeddings::get_embedding_status,
+        embeddings::test_embedding_provider,
+        embeddings::connect_embedding_provider,
+        embeddings::disconnect_embedding_provider,
+        embeddings::refresh_activity_embeddings,
+        embeddings::semantic_activity_search,
         activity::list_activity,
+        activity_groups::list_activity_groups,
+        activity_groups::suggest_activity_groups,
+        activity_groups::preview_activity_group_suggestions,
+        activity_groups::refresh_activity_group_suggestions,
+        activity_groups::create_activity_group,
+        activity_groups::update_activity_group,
+        activity_groups::delete_activity_group,
+        activity_groups::replace_activity_group_items,
+        activity_groups::list_grouping_evidence,
+        activity_groups::merge_activity_groups,
+        activity_groups::split_activity_group,
+        activity_groups::move_activity_group_item,
+        activity_groups::lock_activity_group,
+        activity_groups::reset_activity_group,
+        activity_groups::preview_activity_group_title,
+        activity_groups::regenerate_activity_group_title,
+        activity_groups::select_activity_group_title_candidate,
+        activity_groups::record_activity_group_title_feedback,
         app_updates::get_app_version,
         app_updates::get_release_notes,
         app_updates::check_for_app_update,

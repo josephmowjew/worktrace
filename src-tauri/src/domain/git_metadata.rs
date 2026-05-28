@@ -99,6 +99,37 @@ pub struct CommitWorktreeSummary {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct CommitFileChange {
+    pub project_id: String,
+    pub commit_hash: String,
+    pub path: String,
+    pub old_path: Option<String>,
+    pub change_kind: String,
+    pub additions: i64,
+    pub deletions: i64,
+    pub is_binary: bool,
+    pub language: Option<String>,
+    pub top_level_dir: Option<String>,
+    pub is_test: bool,
+    pub is_docs: bool,
+    pub is_config: bool,
+    pub is_migration: bool,
+    pub is_generated: bool,
+    pub collected_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitDiffSnippet {
+    pub project_id: String,
+    pub commit_hash: String,
+    pub path: String,
+    pub snippet: String,
+    pub collected_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct ProjectGitFocus {
     pub project_id: String,
     pub refs: Vec<GitRefFilter>,

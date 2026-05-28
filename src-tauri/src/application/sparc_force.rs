@@ -10,9 +10,8 @@ use std::error::Error;
 use crate::domain::sparc_force::{
     ConnectSparcForceInput, ListSparcForceRecordsInput, SparcForceCacheRecord,
     SparcForceConnection, SparcForceImportedData, SparcForceImportedItem,
-    SparcForceIntegrationStatus,
-    SparcForceLoginOutcome, SparcForceRecordQueryResult, SparcForceSyncResult,
-    VerifySparcForceOtpInput,
+    SparcForceIntegrationStatus, SparcForceLoginOutcome, SparcForceRecordQueryResult,
+    SparcForceSyncResult, VerifySparcForceOtpInput,
 };
 use crate::infrastructure::database::repositories::SparcForceConnectionRepository;
 

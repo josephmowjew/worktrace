@@ -12,7 +12,6 @@ import {
   ListChecks,
   RefreshCw,
   Search,
-  Sparkles,
   Users,
   Zap,
 } from "lucide-react";
@@ -24,6 +23,7 @@ import { Badge } from "../components/ui/Badge";
 import { BlockersPanel } from "../components/ui/BlockersPanel";
 import { Button } from "../components/ui/Button";
 import { Panel } from "../components/ui/Panel";
+import { PageHeader } from "../components/ui/PageHeader";
 import { ProjectBreakdownPanel } from "../components/ui/ProjectBreakdownPanel";
 import { RecentActivityItem } from "../components/ui/RecentActivityItem";
 import { UpcomingWorkPanel } from "../components/ui/UpcomingWorkPanel";
@@ -43,30 +43,26 @@ type StatTone = "blue" | "purple" | "cyan" | "violet";
 
 const statToneClasses: Record<
   StatTone,
-  { panel: string; icon: string; glow: string; border: string }
+  { panel: string; icon: string; border: string }
 > = {
   blue: {
-    panel: "from-blue-500/18 via-slate-950/70 to-slate-950/80",
+    panel: "bg-slate-950/58",
     icon: "border-blue-300/25 bg-blue-500/15 text-blue-200 shadow-blue-500/20",
-    glow: "bg-blue-500/25",
     border: "hover:border-blue-300/40",
   },
   purple: {
-    panel: "from-purple-500/18 via-slate-950/70 to-slate-950/80",
+    panel: "bg-slate-950/58",
     icon: "border-purple-300/25 bg-purple-500/15 text-purple-200 shadow-purple-500/20",
-    glow: "bg-purple-500/25",
     border: "hover:border-purple-300/40",
   },
   cyan: {
-    panel: "from-cyan-500/16 via-slate-950/70 to-slate-950/80",
+    panel: "bg-slate-950/58",
     icon: "border-cyan-300/25 bg-cyan-500/15 text-cyan-200 shadow-cyan-500/20",
-    glow: "bg-cyan-500/25",
     border: "hover:border-cyan-300/40",
   },
   violet: {
-    panel: "from-fuchsia-500/18 via-slate-950/70 to-slate-950/80",
+    panel: "bg-slate-950/58",
     icon: "border-fuchsia-300/25 bg-fuchsia-500/15 text-fuchsia-200 shadow-fuchsia-500/20",
-    glow: "bg-fuchsia-500/25",
     border: "hover:border-fuchsia-300/40",
   },
 };
@@ -91,11 +87,8 @@ function DashboardStatCard({
 
   return (
     <div
-      className={`group relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br ${toneClasses.panel} p-5 shadow-2xl shadow-slate-950/25 transition-all duration-200 ${toneClasses.border}`}
+      className={`group relative overflow-hidden rounded-2xl border border-white/10 ${toneClasses.panel} p-5 shadow-[0_18px_48px_rgba(2,6,23,0.24),inset_0_1px_0_rgba(255,255,255,0.035)] transition-[border-color,background-color,box-shadow] duration-150 ${toneClasses.border}`}
     >
-      <div
-        className={`absolute -right-12 -top-14 h-32 w-32 rounded-full blur-3xl ${toneClasses.glow} opacity-70 transition-opacity group-hover:opacity-100`}
-      />
       <div className="relative flex items-center gap-4">
         <div
           className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border shadow-xl ${toneClasses.icon}`}
@@ -104,10 +97,10 @@ function DashboardStatCard({
         </div>
         <div className="min-w-0">
           <p className="text-sm font-medium text-slate-300">{label}</p>
-          <p className="mt-1 text-3xl font-semibold tracking-tight text-white">
+          <p className="mt-1 text-3xl font-semibold tracking-tight text-white tabular-nums">
             {value}
           </p>
-          <p className="mt-1 flex items-center gap-1 text-xs text-slate-400">
+          <p className="mt-1 flex items-center gap-1 text-xs text-slate-400 tabular-nums">
             <span className={isPositive ? "text-emerald-300" : "text-rose-300"}>
               {isPositive ? "+" : "-"}{Math.abs(delta)}
             </span>
@@ -283,27 +276,20 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-4 pb-4">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex min-w-0 flex-wrap items-center gap-4">
-          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-blue-300/20 bg-blue-500/12 text-blue-100 shadow-2xl shadow-blue-500/15">
-            <BarChart3 className="h-7 w-7" />
-          </div>
-          <div>
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-cyan-300/15 bg-cyan-300/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
-              <Sparkles className="h-3.5 w-3.5" />
-              Work intelligence
-            </div>
-            <h1 className="text-3xl font-semibold tracking-tight text-white">
-              Dashboard
-            </h1>
-          </div>
+      <PageHeader
+        icon={BarChart3}
+        eyebrow="Work intelligence"
+        title="Dashboard"
+        description="Scan weekly project activity, blockers, and report readiness."
+        meta={
           <WeekRangePicker
             label={weekRange.label}
             onPrev={() => setAnchorDate(shiftWeek(anchorDate, -1))}
             onNext={() => setAnchorDate(shiftWeek(anchorDate, 1))}
           />
-        </div>
-        <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-3">
+        }
+        actions={
+          <>
           <div className="flex min-w-[260px] max-w-md flex-1 items-center gap-2 rounded-2xl border border-white/10 bg-slate-950/70 px-3 py-2.5 shadow-xl shadow-slate-950/20">
             <Search className="h-4 w-4 shrink-0 text-slate-400" />
             <input
@@ -328,8 +314,9 @@ export function DashboardPage() {
             />
             {syncMutation.isPending ? "Syncing..." : "Sync Now"}
           </Button>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-4">
         <DashboardStatCard

@@ -1,19 +1,22 @@
 use crate::domain::activity::{ActivityDay, ListActivityInput};
+use crate::domain::activity_group::{ActivityGroup, ListActivityGroupsInput};
 use crate::domain::report::{
     CreateReportNoteInput, GenerateReportInput, GeneratedReport, ListReportNotesInput, Report,
     ReportNote, ReportSummary, SaveDailyReviewNoteInput, SaveReportInput, UpdateReportNoteInput,
 };
 use crate::domain::weekly_task::{ListWeeklyTasksInput, WeeklyTask, WeeklyTaskType};
 use crate::infrastructure::database::repositories::{
-    ActivityRepository, GitMetadataRepository, ReportNoteRepository, ReportRepository,
-    WeeklyTaskRepository,
+    ActivityGroupRepository, ActivityRepository, GitMetadataRepository, ReportNoteRepository,
+    ReportRepository, WeeklyTaskRepository,
 };
+use std::collections::HashSet;
 
 pub struct ReportService;
 
 impl ReportService {
     pub async fn generate(
         activity_repository: &ActivityRepository<'_>,
+        activity_group_repository: &ActivityGroupRepository<'_>,
         weekly_task_repository: &WeeklyTaskRepository<'_>,
         report_note_repository: &ReportNoteRepository<'_>,
         git_metadata_repository: &GitMetadataRepository<'_>,
@@ -45,8 +48,20 @@ impl ReportService {
                 activity_type: None,
                 project_ids: input.project_ids.clone(),
                 classification: normalize_report_classification(&input.classification),
-                git_refs,
-                worktree_paths,
+                git_refs: git_refs.clone(),
+                worktree_paths: worktree_paths.clone(),
+            })
+            .await
+            .map_err(ReportServiceError::Database)?;
+        let activity_groups = activity_group_repository
+            .list(ListActivityGroupsInput {
+                from: input.start_date.clone(),
+                to: input.end_date.clone(),
+                project_ids: input.project_ids.clone(),
+                classification: normalize_report_classification(&input.classification),
+                git_refs: git_refs.clone(),
+                worktree_paths: worktree_paths.clone(),
+                include_hidden: input.include_hidden,
             })
             .await
             .map_err(ReportServiceError::Database)?;
@@ -82,6 +97,7 @@ impl ReportService {
             &input.end_date,
             input.recipient_name.as_deref(),
             &activity,
+            &activity_groups,
             &weekly_tasks,
             &report_notes,
             &sections,
@@ -259,6 +275,7 @@ fn render_markdown(
     end_date: &str,
     recipient_name: Option<&str>,
     days: &[ActivityDay],
+    activity_groups: &[ActivityGroup],
     weekly_tasks: &[WeeklyTask],
     report_notes: &[ReportNote],
     sections: &[String],
@@ -286,10 +303,18 @@ fn render_markdown(
     lines.push(format!("- Total report items: {}", items.len()));
     lines.push(format!(
         "- Commits: {}",
-        items
-            .iter()
-            .filter(|(_, item)| item.activity_type == "commit")
-            .count()
+        if activity_groups.is_empty() {
+            items
+                .iter()
+                .filter(|(_, item)| item.activity_type == "commit")
+                .count()
+        } else {
+            activity_groups
+                .iter()
+                .filter(|group| include_hidden || group.included_in_report)
+                .map(|group| group.items.len())
+                .sum()
+        }
     ));
     lines.push(format!(
         "- Manual activities: {}",
@@ -309,18 +334,33 @@ fn render_markdown(
 
     render_daily_review_notes(&mut lines, report_notes, include_hidden);
 
-    if items.is_empty() && weekly_tasks.is_empty() {
+    if items.is_empty() && activity_groups.is_empty() && weekly_tasks.is_empty() {
         lines.push("## Activity".to_string());
         lines.push("- No report-ready activity found for this range.".to_string());
         return lines.join("\n");
     }
 
-    if !items.is_empty() {
+    if !activity_groups.is_empty() && sections.iter().any(|section| section == "commit") {
+        render_activity_groups(&mut lines, activity_groups, include_hidden);
+    }
+
+    let grouped_commit_ids = activity_groups
+        .iter()
+        .flat_map(|group| group.items.iter().map(|item| item.source_id.as_str()))
+        .collect::<HashSet<_>>();
+    let raw_items = items
+        .into_iter()
+        .filter(|(_, item)| {
+            item.activity_type != "commit" || !grouped_commit_ids.contains(item.id.as_str())
+        })
+        .collect::<Vec<_>>();
+
+    if !raw_items.is_empty() {
         lines.push("## Activity".to_string());
         let mut current_date = "";
         let mut current_project = "";
 
-        for (date, item) in items {
+        for (date, item) in raw_items {
             if date != current_date {
                 current_date = date;
                 current_project = "";
@@ -369,6 +409,42 @@ fn render_daily_review_notes(
         lines.push(String::new());
         lines.push(format!("### {}", note.date));
         lines.push(note.content.clone());
+    }
+    lines.push(String::new());
+}
+
+fn render_activity_groups(
+    lines: &mut Vec<String>,
+    activity_groups: &[ActivityGroup],
+    include_hidden: bool,
+) {
+    let groups = activity_groups
+        .iter()
+        .filter(|group| include_hidden || group.included_in_report)
+        .collect::<Vec<_>>();
+
+    if groups.is_empty() {
+        return;
+    }
+
+    lines.push("## Grouped Work".to_string());
+    let mut current_project = "";
+    for group in groups {
+        let project = group.project_name.as_deref().unwrap_or("General");
+        if project != current_project {
+            current_project = project;
+            lines.push(String::new());
+            lines.push(format!("### {project}"));
+        }
+
+        let details = group
+            .report_summary
+            .as_ref()
+            .or(group.summary.as_ref())
+            .filter(|value| !value.trim().is_empty())
+            .map(|summary| format!(" - {}", summary.replace('\n', "; ")))
+            .unwrap_or_default();
+        lines.push(format!("- **{}**{}", group.title, details));
     }
     lines.push(String::new());
 }
@@ -528,6 +604,7 @@ mod tests {
 
         let report = ReportService::generate(
             &ActivityRepository::new(&pool),
+            &ActivityGroupRepository::new(&pool),
             &WeeklyTaskRepository::new(&pool),
             &ReportNoteRepository::new(&pool),
             &GitMetadataRepository::new(&pool),
@@ -626,6 +703,7 @@ mod tests {
 
         let report = ReportService::generate(
             &ActivityRepository::new(&pool),
+            &ActivityGroupRepository::new(&pool),
             &WeeklyTaskRepository::new(&pool),
             &repository,
             &GitMetadataRepository::new(&pool),
@@ -719,6 +797,7 @@ mod tests {
 
         let report = ReportService::generate(
             &ActivityRepository::new(&pool),
+            &ActivityGroupRepository::new(&pool),
             &WeeklyTaskRepository::new(&pool),
             &ReportNoteRepository::new(&pool),
             &GitMetadataRepository::new(&pool),

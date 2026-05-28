@@ -16,17 +16,24 @@ pub struct UpdateCheckResult {
 }
 
 #[tauri::command]
-pub async fn get_app_version(app: tauri::AppHandle) -> Result<AppResult<app_updates::AppVersionInfo>, String> {
+pub async fn get_app_version(
+    app: tauri::AppHandle,
+) -> Result<AppResult<app_updates::AppVersionInfo>, String> {
     Ok(AppResult::ok(app_updates::current_version(&app)))
 }
 
 #[tauri::command]
-pub async fn get_release_notes(app: tauri::AppHandle) -> Result<AppResult<ReleaseNotesPayload>, String> {
+pub async fn get_release_notes(
+    app: tauri::AppHandle,
+) -> Result<AppResult<ReleaseNotesPayload>, String> {
     Ok(AppResult::ok(app_updates::fallback_release_notes(&app)))
 }
 
 #[tauri::command]
-pub async fn check_for_app_update(app: tauri::AppHandle, _state: State<'_, AppState>) -> Result<AppResult<UpdateCheckResult>, String> {
+pub async fn check_for_app_update(
+    app: tauri::AppHandle,
+    _state: State<'_, AppState>,
+) -> Result<AppResult<UpdateCheckResult>, String> {
     let current_version = app.package_info().version.to_string();
     let updater = match app.updater() {
         Ok(updater) => updater,
@@ -73,15 +80,13 @@ pub async fn install_app_update(app: tauri::AppHandle) -> Result<AppResult<bool>
         Err(error) => return Ok(AppResult::err("UPDATER_UNAVAILABLE", error.to_string())),
     };
 
-    let Some(update) = updater
-        .check()
-        .await
-        .map_err(|error| error.to_string())?
-    else {
+    let Some(update) = updater.check().await.map_err(|error| error.to_string())? else {
         return Ok(AppResult::ok(false));
     };
 
-    update.download_and_install(|_, _| {}, || {}).await
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
         .map_err(|error| error.to_string())?;
     app.restart();
 }

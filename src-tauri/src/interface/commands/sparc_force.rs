@@ -271,12 +271,7 @@ async fn sparc_force_addon_available(
         .await
         .map(|settings| settings.sparc_force_addon_enabled)
         .unwrap_or(false)
-        || sparc_repository
-            .get()
-            .await
-            .ok()
-            .flatten()
-            .is_some()
+        || sparc_repository.get().await.ok().flatten().is_some()
 }
 
 async fn apply_addon_availability(

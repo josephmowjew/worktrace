@@ -22,6 +22,7 @@ import type { InputHTMLAttributes } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/Button";
 import { Panel } from "../components/ui/Panel";
+import { PageHeader } from "../components/ui/PageHeader";
 import { Select } from "../components/ui/Select";
 import { ProjectCard } from "../components/ui/ProjectCard";
 import { ProjectFormPanel } from "../components/ui/ProjectFormPanel";
@@ -574,23 +575,12 @@ export function ProjectsPage() {
 
   return (
     <div className="space-y-4">
-      <Panel className="relative overflow-hidden p-0">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_16%_28%,rgba(56,189,248,0.18),transparent_26%),radial-gradient(circle_at_72%_12%,rgba(37,99,235,0.18),transparent_24%)]" />
-        <div className="relative flex flex-wrap items-center justify-between gap-4 px-5 py-4">
-          <div className="min-w-0">
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-cyan-300/15 bg-cyan-300/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
-              <ShieldCheck className="h-3.5 w-3.5" />
-              Project Management
-            </div>
-            <h1 className="text-2xl font-semibold tracking-tight text-white">
-              Projects
-            </h1>
-            <p className="mt-1 max-w-2xl text-sm text-slate-400">
-              View and manage all your software projects and repositories.
-            </p>
-          </div>
-
-          <div className="flex shrink-0 items-center gap-3">
+      <PageHeader
+        icon={ShieldCheck}
+        eyebrow="Project Management"
+        title="Projects"
+        description="View and manage all your software projects and repositories."
+        meta={
             <div className="hidden items-center gap-4 rounded-xl border border-white/8 bg-slate-950/45 px-4 py-3 shadow-2xl shadow-blue-950/20 backdrop-blur-xl lg:flex">
               <div className="text-right">
                 <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-slate-500">
@@ -601,6 +591,9 @@ export function ProjectsPage() {
                 </p>
               </div>
             </div>
+        }
+        actions={
+          <>
             <Button variant="primary" onClick={openCreateForm}>
               <Plus className="h-4 w-4" />
               New Project
@@ -609,9 +602,9 @@ export function ProjectsPage() {
               <Layers className="h-4 w-4" />
               Add Workspace
             </Button>
-          </div>
-        </div>
-      </Panel>
+          </>
+        }
+      />
 
       <div
         ref={projectFormRef}

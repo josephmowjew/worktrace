@@ -1,7 +1,10 @@
 pub mod activity;
+pub mod activity_group_narrative;
+pub mod activity_groups;
 pub mod app_updates;
 pub mod calendar;
 pub mod daily_plan;
+pub mod embeddings;
 pub mod focus_sessions;
 pub mod git_sync;
 pub mod github;

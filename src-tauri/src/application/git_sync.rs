@@ -88,6 +88,24 @@ impl GitSyncService {
                             project.name, error
                         ));
                     }
+                    if let Err(error) = git_metadata_repository
+                        .replace_commit_file_changes(&project.id, &scan.file_changes)
+                        .await
+                    {
+                        result.errors.push(format!(
+                            "{}: failed to save commit file evidence: {}",
+                            project.name, error
+                        ));
+                    }
+                    if let Err(error) = git_metadata_repository
+                        .replace_commit_diff_snippets(&project.id, &scan.diff_snippets)
+                        .await
+                    {
+                        result.errors.push(format!(
+                            "{}: failed to save commit diff evidence: {}",
+                            project.name, error
+                        ));
+                    }
 
                     for commit in scan.commits {
                         match commit_repository.upsert(&commit).await {
@@ -267,5 +285,3 @@ mod tests {
         );
     }
 }
-
-

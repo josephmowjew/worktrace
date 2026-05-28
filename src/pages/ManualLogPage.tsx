@@ -32,6 +32,7 @@ import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { DatePicker } from "../components/ui/DatePicker";
 import { Panel } from "../components/ui/Panel";
+import { PageHeader } from "../components/ui/PageHeader";
 import { SelectField } from "../components/ui/SelectField";
 import { useSpeech } from "../components/ui/SpeechProvider";
 import { useToast } from "../components/ui/ToastProvider";
@@ -506,39 +507,19 @@ function ManualLogHero({
   totalMinutes: number;
 }) {
   return (
-    <Panel className="relative overflow-hidden p-0">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_14%_20%,rgba(59,130,246,0.20),transparent_24%),radial-gradient(circle_at_84%_36%,rgba(20,184,166,0.18),transparent_30%),linear-gradient(135deg,rgba(15,23,42,0.2),rgba(15,23,42,0.82))]" />
-      <div className="absolute inset-0 opacity-30 [background-image:linear-gradient(rgba(148,163,184,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.08)_1px,transparent_1px)] [background-size:32px_32px]" />
-      <div className="relative grid gap-6 px-5 py-6 lg:grid-cols-[minmax(0,1fr)_minmax(420px,0.9fr)] lg:items-center">
-        <div className="flex items-center gap-5">
-          <div className="relative hidden h-24 w-24 shrink-0 place-items-center rounded-[28px] border border-cyan-300/25 bg-gradient-to-br from-blue-500/20 to-purple-500/20 shadow-2xl shadow-blue-500/20 sm:grid">
-            <div className="absolute inset-3 rounded-[22px] border border-white/10 bg-slate-950/40" />
-            <NotebookText className="relative h-12 w-12 text-cyan-200 drop-shadow-[0_0_18px_rgba(34,211,238,0.55)]" />
-          </div>
-          <div>
-            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
-              <ClipboardCheck className="h-3.5 w-3.5" />
-              Explicit work capture
-            </div>
-            <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-              Manual Log
-            </h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
-              Capture meetings, planning, testing, support, reviews, and other non-code work for the current reporting week.
-            </p>
-            <p className="mt-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-              {weekLabel}
-            </p>
-          </div>
-        </div>
-
-        <div className="grid gap-3 rounded-2xl border border-white/10 bg-slate-950/35 p-4 shadow-2xl shadow-black/20 sm:grid-cols-3">
+    <PageHeader
+      icon={NotebookText}
+      eyebrow="Explicit work capture"
+      title="Manual Log"
+      description={`Capture meetings, planning, testing, support, reviews, and other non-code work for ${weekLabel}.`}
+      meta={
+        <div className="grid min-w-[340px] gap-3 rounded-xl border border-white/10 bg-slate-950/45 p-3 sm:grid-cols-3">
           <HeroStat icon={FileText} label="Logs" value={totalLogs.toString()} detail="Total logs" tone="blue" />
           <HeroStat icon={Check} label="Included" value={includedCount.toString()} detail="Included in report" tone="green" />
           <HeroStat icon={Clock3} label="Logged Time" value={formatMinutes(totalMinutes)} detail="This week" tone="orange" />
         </div>
-      </div>
-    </Panel>
+      }
+    />
   );
 }
 

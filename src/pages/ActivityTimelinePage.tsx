@@ -14,9 +14,11 @@ import {
   FolderOpen,
   LayoutGrid,
   ListChecks,
+  Sparkles,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Panel } from "../components/ui/Panel";
+import { PageHeader } from "../components/ui/PageHeader";
 import { Button } from "../components/ui/Button";
 import { Select } from "../components/ui/Select";
 import { useSpeech } from "../components/ui/SpeechProvider";
@@ -25,16 +27,22 @@ import { ActivityHeatmap } from "../components/timeline/ActivityHeatmap";
 import { WeekSummary } from "../components/timeline/WeekSummary";
 import { KeyHighlights } from "../components/timeline/KeyHighlights";
 import { TimelineItem } from "../components/timeline/TimelineItem";
+import { TimelineGroupItem } from "../components/timeline/TimelineGroupItem";
 import { TaskDetailModal } from "../components/ui/TaskDetailModal";
 import { Badge } from "../components/ui/Badge";
+import { ModalShell } from "../components/ui/ModalShell";
 import { listActivity, getActivityHeatmap, getWeekSummary, getKeyHighlights } from "../lib/api/activity";
+import { listActivityGroups, recordActivityGroupTitleFeedback, refreshActivityGroupSuggestions, selectActivityGroupTitleCandidate, suggestActivityGroups, updateActivityGroup } from "../lib/api/activityGroups";
+import { getEmbeddingStatus, refreshActivityEmbeddings, semanticActivitySearch } from "../lib/api/embeddings";
 import { syncCommits } from "../lib/api/gitSync";
 import { listProjects } from "../lib/api/projects";
 import { listWeeklyTasks } from "../lib/api/weeklyTasks";
 import { syncAnnouncement, syncStartedAnnouncement } from "../lib/announcements";
 import { currentWeekRange, shiftWeek } from "../lib/dates";
 import type { ActivityItem } from "../types/activity";
+import type { ActivityGroup, TitleCandidate } from "../types/activityGroup";
 import type { WeeklyTask } from "../types/weeklyTask";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 
 const activityFilters = [
   { label: "All", value: "all", icon: BarChart3 },
@@ -54,6 +62,8 @@ export function ActivityTimelinePage() {
   const [projectId, setProjectId] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [viewingTask, setViewingTask] = useState<WeeklyTask | null>(null);
+  const [editingGroup, setEditingGroup] = useState<ActivityGroup | null>(null);
+  const [organizePhase, setOrganizePhase] = useState<"idle" | "evidence" | "embedding" | "grouping">("idle");
 
   const weekRange = useMemo(() => currentWeekRange(currentDate), [currentDate]);
 
@@ -76,6 +86,197 @@ export function ActivityTimelinePage() {
         activityType: activityType === "all" ? null : activityType,
         projectIds,
       }),
+  });
+
+  const activityGroupsQuery = useQuery({
+    queryKey: ["activityGroups", weekRange.from, weekRange.to, projectId],
+    queryFn: () =>
+      listActivityGroups({
+        from: weekRange.from,
+        to: weekRange.to,
+        projectIds,
+        includeHidden: true,
+      }),
+  });
+
+  const embeddingStatusQuery = useQuery({
+    queryKey: ["embeddingStatus"],
+    queryFn: getEmbeddingStatus,
+    retry: false,
+  });
+
+  const smartOrganizeMutation = useMutation({
+    mutationFn: async () => {
+      const status = embeddingStatusQuery.data ?? await getEmbeddingStatus();
+      let embeddingsIndexed = 0;
+      let embeddingsSkipped = 0;
+      let embeddingsAttempted = false;
+      let evidenceWarning: string | null = null;
+      let embeddingWarning: string | null = null;
+
+      setOrganizePhase("evidence");
+      try {
+        const syncResult = await syncCommits({
+          from: weekRange.from,
+          to: weekRange.to,
+          projectIds,
+        });
+        if (syncResult.errors.length > 0) {
+          evidenceWarning = syncResult.errors.join(" ");
+        }
+      } catch (error) {
+        evidenceWarning =
+          error instanceof Error ? error.message : "Git evidence could not be refreshed.";
+      }
+
+      if (status.available) {
+        embeddingsAttempted = true;
+        try {
+          setOrganizePhase("embedding");
+          const result = await refreshActivityEmbeddings({
+            from: weekRange.from,
+            to: weekRange.to,
+            projectIds,
+          });
+          embeddingsIndexed = result.indexed;
+          embeddingsSkipped = result.skipped;
+        } catch (error) {
+          embeddingWarning =
+            error instanceof Error ? error.message : "Embeddings could not be refreshed.";
+        }
+      }
+
+      setOrganizePhase("grouping");
+      const groups = await refreshActivityGroupSuggestions({
+        from: weekRange.from,
+        to: weekRange.to,
+        projectIds,
+        useAi: false,
+        useEmbeddings: status.available,
+      });
+      const commitCount = countCommitItems(activityQuery.data ?? []);
+      const groupedCommitCount = new Set(groups.flatMap((group) => group.items.map((item) => item.sourceId))).size;
+      const needsReviewCount = groups.filter((group) => group.reviewStatus === "needs_review" || group.confidenceLabel === "needs_review").length;
+      const titleNeedsReviewCount = groups.filter((group) =>
+        group.titleConfidenceLabel === "needs_review"
+        || group.titleQualityLabel === "needs_user_review"
+        || group.titleQualityLabel === "fallback_only"
+      ).length;
+      const fallbackTitleCount = groups.filter((group) => group.titleQualityLabel === "fallback_only").length;
+
+      return {
+        groups,
+        commitCount,
+        groupedCommitCount,
+        ungroupedCount: Math.max(commitCount - groupedCommitCount, 0),
+        needsReviewCount,
+        titleNeedsReviewCount,
+        fallbackTitleCount,
+        evidenceWarning,
+        embeddingsAttempted,
+        embeddingsIndexed,
+        embeddingsSkipped,
+        embeddingWarning,
+      };
+    },
+    onSuccess: async (result) => {
+      setOrganizePhase("idle");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["activity"] }),
+        queryClient.invalidateQueries({ queryKey: ["activityGroups"] }),
+        queryClient.invalidateQueries({ queryKey: ["semanticActivitySearch"] }),
+        queryClient.invalidateQueries({ queryKey: ["reports"] }),
+      ]);
+      const suffix = result.embeddingsAttempted
+        ? ` ${result.embeddingsIndexed} semantic signals indexed, ${result.embeddingsSkipped} already fresh.`
+        : " Deterministic grouping used.";
+      const organizeMessage =
+        result.ungroupedCount > 0
+          ? `${result.groups.length} work items found from ${result.commitCount} commits; ${result.ungroupedCount} left ungrouped.${titleReviewSuffix(result.titleNeedsReviewCount, result.fallbackTitleCount)}${suffix}`
+          : `${result.groups.length} work items organized from ${result.commitCount} commits.${titleReviewSuffix(result.titleNeedsReviewCount, result.fallbackTitleCount)}${suffix}`;
+      toast.success("Work organized", organizeMessage);
+      if (result.embeddingWarning) {
+        toast.error("Semantic layer skipped", result.embeddingWarning);
+      }
+      if (result.evidenceWarning) {
+        toast.error("Some Git evidence was skipped", result.evidenceWarning);
+      }
+    },
+    onError: (error) => {
+      setOrganizePhase("idle");
+      toast.error("Grouping failed", error instanceof Error ? error.message : "Activity groups could not be refreshed.");
+    },
+  });
+
+  const suggestGroupsMutation = useMutation({
+    mutationFn: () =>
+      suggestActivityGroups({
+        from: weekRange.from,
+        to: weekRange.to,
+        projectIds,
+        useAi: false,
+        useEmbeddings: embeddingStatusQuery.data?.available ?? false,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["activityGroups"] });
+      queryClient.invalidateQueries({ queryKey: ["reports"] });
+    },
+  });
+
+  const semanticSearchQuery = useQuery({
+    queryKey: ["semanticActivitySearch", weekRange.from, weekRange.to, projectId, searchQuery],
+    queryFn: () =>
+      semanticActivitySearch({
+        query: searchQuery,
+        from: weekRange.from,
+        to: weekRange.to,
+        projectIds,
+        limit: 80,
+      }),
+    enabled: searchQuery.trim().length >= 3,
+    retry: false,
+  });
+
+  const updateGroupMutation = useMutation({
+    mutationFn: ({ id, group }: { id: string; group: { title: string; summary?: string | null; reportSummary?: string | null; includedInReport: boolean; reviewStatus?: string } }) =>
+      updateActivityGroup(id, group),
+    onSuccess: (_, variables) => {
+      const original = editingGroup;
+      setEditingGroup(null);
+      queryClient.invalidateQueries({ queryKey: ["activityGroups"] });
+      queryClient.invalidateQueries({ queryKey: ["reports"] });
+      if (original && (original.title !== variables.group.title || original.reportSummary !== variables.group.reportSummary)) {
+        recordActivityGroupTitleFeedback({
+          groupId: variables.id,
+          eventType: original.title !== variables.group.title ? "title_renamed" : "summary_edited",
+          previousTitle: original.title,
+          newTitle: variables.group.title,
+          previousSummary: original.reportSummary,
+          newSummary: variables.group.reportSummary,
+        }).catch(() => undefined);
+      }
+      toast.success("Activity group updated", "The polished work item is ready for reports.");
+    },
+    onError: (error) => {
+      toast.error("Group update failed", error instanceof Error ? error.message : "Activity group could not be updated.");
+    },
+  });
+
+  const selectTitleCandidateMutation = useMutation({
+    mutationFn: ({ group, candidate }: { group: ActivityGroup; candidate: TitleCandidate }) =>
+      selectActivityGroupTitleCandidate({
+        groupId: group.id,
+        candidateId: candidate.id,
+        candidateTitle: candidate.title,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["activityGroups"] });
+      queryClient.invalidateQueries({ queryKey: ["reports"] });
+      toast.success("Title updated", "The selected title was saved and will improve future naming.");
+    },
+    onError: (error) => {
+      toast.error("Title update failed", error instanceof Error ? error.message : "The title candidate could not be saved.");
+    },
   });
 
   const tasksQuery = useQuery({
@@ -129,11 +330,14 @@ export function ActivityTimelinePage() {
     onMutate: () => {
       speech.announce(syncStartedAnnouncement("activity timeline"), { category: "sync" });
     },
-    onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ["activity"] });
-      queryClient.invalidateQueries({ queryKey: ["heatmap"] });
-      queryClient.invalidateQueries({ queryKey: ["weekSummary"] });
-      queryClient.invalidateQueries({ queryKey: ["keyHighlights"] });
+    onSuccess: async (result) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["activity"] }),
+        queryClient.invalidateQueries({ queryKey: ["activityGroups"] }),
+        queryClient.invalidateQueries({ queryKey: ["heatmap"] }),
+        queryClient.invalidateQueries({ queryKey: ["weekSummary"] }),
+        queryClient.invalidateQueries({ queryKey: ["keyHighlights"] }),
+      ]);
       toast.success(
         "Sync complete",
         `Added ${result.newCommits} commits and updated ${result.updatedCommits}.`,
@@ -142,6 +346,9 @@ export function ActivityTimelinePage() {
       if (result.errors.length) {
         toast.error("Some repositories did not sync", result.errors.join(" "));
       }
+      if (result.newCommits > 0 || result.updatedCommits > 0) {
+        smartOrganizeMutation.mutate();
+      }
     },
     onError: (error) => {
       toast.error("Sync failed", error instanceof Error ? error.message : "Repository sync could not be completed.");
@@ -149,47 +356,58 @@ export function ActivityTimelinePage() {
   });
 
   const filteredDays = useMemo(() => {
-    let days = combineTimelineDays(activityQuery.data ?? [], activityType === "all" ? tasksQuery.data ?? [] : []);
+    const currentOrganizedGroupIds = new Set((smartOrganizeMutation.data?.groups ?? []).map((group) => group.id));
+    const groupedCommits = activityType === "all" || activityType === "commit"
+      ? (activityGroupsQuery.data ?? []).filter((group) => shouldDisplayActivityGroup(group, currentOrganizedGroupIds))
+      : [];
+    let days = combineTimelineDays(
+      activityQuery.data ?? [],
+      groupedCommits,
+      activityType === "all" ? tasksQuery.data ?? [] : [],
+    );
 
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
+      const semanticIds = new Set((semanticSearchQuery.data ?? []).map((result) => result.sourceId));
       days = days
         .map((day) => ({
           ...day,
           items: day.items.filter(
             (entry) =>
-              entryMatchesSearch(entry, query)
+              entryMatchesSearch(entry, query) || entryMatchesSemantic(entry, semanticIds)
           ),
         }))
         .filter((day) => day.items.length > 0);
     }
 
     return days;
-  }, [activityQuery.data, activityType, searchQuery, tasksQuery.data]);
+  }, [activityGroupsQuery.data, activityQuery.data, activityType, searchQuery, semanticSearchQuery.data, smartOrganizeMutation.data?.groups, tasksQuery.data]);
+
+  useEffect(() => {
+    if (
+      !activityGroupsQuery.isLoading &&
+      !activityGroupsQuery.isError &&
+      (activityGroupsQuery.data ?? []).length === 0 &&
+      !suggestGroupsMutation.isPending &&
+      !suggestGroupsMutation.data &&
+      (activityQuery.data ?? []).some((day) => day.items.some((item) => item.activityType === "commit"))
+    ) {
+      suggestGroupsMutation.mutate();
+    }
+  }, [activityGroupsQuery.data, activityGroupsQuery.isError, activityGroupsQuery.isLoading, activityQuery.data, suggestGroupsMutation]);
 
   const handlePrevWeek = () => setCurrentDate((d) => shiftWeek(d, -1));
   const handleNextWeek = () => setCurrentDate((d) => shiftWeek(d, 1));
 
   return (
-    <div className="-m-2 min-h-full space-y-4 rounded-[28px] bg-[radial-gradient(circle_at_8%_0%,rgba(59,130,246,0.18),transparent_26%),radial-gradient(circle_at_76%_10%,rgba(14,165,233,0.12),transparent_24%),linear-gradient(180deg,rgba(2,6,23,0.72),rgba(2,6,23,0.22))] p-2">
-      <Panel className="relative overflow-hidden rounded-[18px] border-blue-200/10 bg-slate-950/45 p-0 shadow-[0_24px_80px_rgba(2,6,23,0.42),inset_0_1px_0_rgba(255,255,255,0.05)]">
-        <div className="absolute inset-0 bg-[linear-gradient(120deg,rgba(37,99,235,0.14),transparent_34%),radial-gradient(circle_at_88%_16%,rgba(45,212,191,0.1),transparent_24%)]" />
-        <div className="relative flex flex-wrap items-center justify-between gap-5 px-6 py-5">
-          <div className="flex min-w-0 items-center gap-4">
-            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-blue-200/20 bg-blue-500 shadow-[0_14px_32px_rgba(37,99,235,0.36),inset_0_1px_0_rgba(255,255,255,0.32)]">
-              <BarChart3 className="h-7 w-7 text-white" />
-            </div>
-            <div className="min-w-0">
-              <h1 className="text-2xl font-semibold tracking-tight text-white [text-wrap:balance]">
-                Activity Timeline
-              </h1>
-              <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-300 [text-wrap:pretty]">
-                Track commits, meetings, reviews, testing, and deployments across your projects.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex flex-1 flex-wrap items-center justify-end gap-3">
+    <div className="min-h-full space-y-4">
+      <PageHeader
+        icon={BarChart3}
+        eyebrow="Activity review"
+        title="Activity Timeline"
+        description="Track commits, meetings, reviews, testing, and deployments across your projects."
+        actions={
+          <>
             <div className="flex h-12 items-center rounded-xl border border-blue-200/10 bg-slate-950/42 px-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
               <button
                 onClick={handlePrevWeek}
@@ -228,7 +446,7 @@ export function ActivityTimelinePage() {
             <Button
               variant="primary"
               onClick={() => syncMutation.mutate()}
-              disabled={syncMutation.isPending}
+              disabled={syncMutation.isPending || smartOrganizeMutation.isPending}
               className="h-12 rounded-xl px-5 shadow-[0_16px_34px_rgba(37,99,235,0.32)] transition-[background-color,box-shadow,transform] active:scale-[0.96]"
             >
               <RefreshCw
@@ -236,9 +454,9 @@ export function ActivityTimelinePage() {
               />
               {syncMutation.isPending ? "Syncing..." : "Sync Repositories"}
             </Button>
-          </div>
-        </div>
-      </Panel>
+          </>
+        }
+      />
 
       <Panel className="rounded-[18px] border-blue-200/10 bg-slate-950/38 p-3 shadow-[0_16px_52px_rgba(2,6,23,0.28),inset_0_1px_0_rgba(255,255,255,0.04)]">
         <div className="flex flex-wrap items-center gap-3">
@@ -277,6 +495,31 @@ export function ActivityTimelinePage() {
             ]}
             size="sm"
           />
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <Badge tone={embeddingStatusQuery.data?.available ? "green" : "slate"}>
+              {embeddingStatusQuery.data?.available ? "Semantic on" : "Rules only"}
+            </Badge>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => smartOrganizeMutation.mutate()}
+              disabled={
+                smartOrganizeMutation.isPending ||
+                syncMutation.isPending ||
+                activityQuery.isLoading
+              }
+              className="h-10 rounded-xl px-4"
+            >
+              <Sparkles className={`h-4 w-4 ${smartOrganizeMutation.isPending ? "animate-pulse" : ""}`} />
+              {smartOrganizeMutation.isPending
+                ? organizePhase === "evidence"
+                  ? "Refreshing..."
+                  : organizePhase === "embedding"
+                  ? "Indexing..."
+                  : "Organizing..."
+                : "Smart Organize"}
+            </Button>
+          </div>
         </div>
       </Panel>
 
@@ -307,8 +550,37 @@ export function ActivityTimelinePage() {
             </div>
           ) : null}
 
+          {smartOrganizeMutation.isPending ? (
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-cyan-300/20 bg-cyan-300/10 p-3 text-xs text-cyan-100">
+              <div className="flex min-w-0 items-center gap-2">
+                <Sparkles className="h-3.5 w-3.5 shrink-0 animate-pulse" />
+                <span className="truncate">
+                  {organizePhase === "embedding"
+                    ? "Generating local semantic index for this activity range."
+                    : organizePhase === "evidence"
+                      ? "Refreshing Git file evidence before organizing."
+                      : "Grouping related activity into work items."}
+                </span>
+              </div>
+              <span className="shrink-0 rounded-md border border-cyan-200/15 bg-slate-950/40 px-2 py-1 font-semibold text-cyan-50">
+                {organizePhase === "embedding"
+                  ? "Embeddings"
+                  : organizePhase === "evidence"
+                    ? "Evidence"
+                    : "Grouping"}
+              </span>
+            </div>
+          ) : smartOrganizeMutation.data ? (
+            <div className="flex items-center gap-2 rounded-xl border border-blue-300/20 bg-blue-500/10 p-3 text-xs text-blue-100">
+              <Sparkles className="h-3.5 w-3.5" />
+              {smartOrganizeMutation.data.groups.length} work items from {smartOrganizeMutation.data.commitCount} commits.
+              {smartOrganizeMutation.data.ungroupedCount > 0 ? ` ${smartOrganizeMutation.data.ungroupedCount} commits left ungrouped.` : null}
+              {smartOrganizeMutation.data.needsReviewCount > 0 ? ` ${smartOrganizeMutation.data.needsReviewCount} need review.` : null}
+            </div>
+          ) : null}
+
           <Panel className="min-h-[520px] overflow-hidden rounded-[18px] border-blue-200/10 bg-slate-950/36 p-5 shadow-[0_24px_70px_rgba(2,6,23,0.34),inset_0_1px_0_rgba(255,255,255,0.045)]">
-            {activityQuery.isLoading || (activityType === "all" && tasksQuery.isLoading) ? (
+            {activityQuery.isLoading || activityGroupsQuery.isLoading || (activityType === "all" && tasksQuery.isLoading) ? (
               <TimelineSkeleton />
             ) : activityQuery.isError || tasksQuery.isError ? (
               <div className="rounded-xl border border-red-400/20 bg-red-500/10 p-4 text-sm text-red-100">
@@ -321,7 +593,15 @@ export function ActivityTimelinePage() {
             ) : filteredDays.length > 0 ? (
               <div className="space-y-7">
                 {filteredDays.map((day) => (
-                  <MixedTimelineDay key={day.date} day={day} onViewTask={setViewingTask} />
+                  <MixedTimelineDay
+                    key={day.date}
+                    day={day}
+                    onViewTask={setViewingTask}
+                    onEditGroup={setEditingGroup}
+                    onSelectTitleCandidate={(group, candidate) =>
+                      selectTitleCandidateMutation.mutate({ group, candidate })
+                    }
+                  />
                 ))}
               </div>
             ) : (
@@ -363,12 +643,21 @@ export function ActivityTimelinePage() {
         task={viewingTask}
         onClose={() => setViewingTask(null)}
       />
+      {editingGroup ? (
+        <ActivityGroupEditModal
+          group={editingGroup}
+          isSaving={updateGroupMutation.isPending}
+          onClose={() => setEditingGroup(null)}
+          onSave={(values) => updateGroupMutation.mutate({ id: editingGroup.id, group: values })}
+        />
+      ) : null}
     </div>
   );
 }
 
 type TimelineEntry =
   | { kind: "activity"; id: string; occurredAt: string; item: ActivityItem }
+  | { kind: "group"; id: string; occurredAt: string; group: ActivityGroup }
   | { kind: "task"; id: string; occurredAt: string; task: WeeklyTask };
 
 type MixedTimelineDay = {
@@ -379,9 +668,13 @@ type MixedTimelineDay = {
 function MixedTimelineDay({
   day,
   onViewTask,
+  onEditGroup,
+  onSelectTitleCandidate,
 }: {
   day: MixedTimelineDay;
   onViewTask: (task: WeeklyTask) => void;
+  onEditGroup: (group: ActivityGroup) => void;
+  onSelectTitleCandidate: (group: ActivityGroup, candidate: TitleCandidate) => void;
 }) {
   return (
     <section className="relative">
@@ -406,6 +699,12 @@ function MixedTimelineDay({
               <div className="pointer-events-none absolute -left-[72px] top-9 z-20 h-4 w-4 -translate-x-1/2 rounded-full border border-blue-100/40 bg-blue-500 shadow-[0_0_0_6px_rgba(15,23,42,0.92),0_0_26px_rgba(59,130,246,0.42)] max-sm:hidden" />
               {entry.kind === "activity" ? (
                 <TimelineItem item={entry.item} />
+              ) : entry.kind === "group" ? (
+                <TimelineGroupItem
+                  group={entry.group}
+                  onEdit={onEditGroup}
+                  onSelectTitleCandidate={onSelectTitleCandidate}
+                />
               ) : (
                 <TaskTimelineItem task={entry.task} occurredAt={entry.occurredAt} onView={() => onViewTask(entry.task)} />
               )}
@@ -459,13 +758,16 @@ function TaskTimelineItem({
   );
 }
 
-function combineTimelineDays(activityDays: Array<{ date: string; items: ActivityItem[] }>, tasks: WeeklyTask[]): MixedTimelineDay[] {
+function combineTimelineDays(activityDays: Array<{ date: string; items: ActivityItem[] }>, groups: ActivityGroup[], tasks: WeeklyTask[]): MixedTimelineDay[] {
   const grouped = new Map<string, TimelineEntry[]>();
+  const groupedCommitIds = new Set(groups.flatMap((group) => group.items.map((item) => item.sourceId)));
 
   for (const day of activityDays) {
     const entries = grouped.get(day.date) ?? [];
     entries.push(
-      ...day.items.map((item) => ({
+      ...day.items
+        .filter((item) => item.activityType !== "commit" || !groupedCommitIds.has(item.id))
+        .map((item) => ({
         kind: "activity" as const,
         id: item.id,
         occurredAt: item.occurredAt,
@@ -473,6 +775,14 @@ function combineTimelineDays(activityDays: Array<{ date: string; items: Activity
       })),
     );
     grouped.set(day.date, entries);
+  }
+
+  for (const group of groups) {
+    const occurredAt = group.items[0]?.occurredAt ?? `${group.startDate}T00:00:00Z`;
+    const date = occurredAt.slice(0, 10);
+    const entries = grouped.get(date) ?? [];
+    entries.push({ kind: "group", id: group.id, occurredAt, group });
+    grouped.set(date, entries);
   }
 
   for (const task of tasks) {
@@ -491,12 +801,41 @@ function combineTimelineDays(activityDays: Array<{ date: string; items: Activity
     .sort((left, right) => right.date.localeCompare(left.date));
 }
 
+function shouldDisplayActivityGroup(group: ActivityGroup, currentOrganizedGroupIds: Set<string>) {
+  if (group.items.length > 1) {
+    return true;
+  }
+  if (currentOrganizedGroupIds.has(group.id) || group.locked || group.userEditedAt || group.reviewStatus === "reviewed") {
+    return true;
+  }
+  const isGeneratedLocalGroup =
+    group.source === "local_rule" || group.source === "ai" || Boolean(group.fingerprint) || Boolean(group.algorithmVersion);
+  return !isGeneratedLocalGroup || group.confidenceLabel === "strong";
+}
+
+function countCommitItems(activityDays: Array<{ date: string; items: ActivityItem[] }>) {
+  return activityDays.reduce(
+    (total, day) => total + day.items.filter((item) => item.activityType === "commit").length,
+    0,
+  );
+}
+
 function entryMatchesSearch(entry: TimelineEntry, query: string) {
   if (entry.kind === "activity") {
     return (
       entry.item.summary.toLowerCase().includes(query) ||
       Boolean(entry.item.projectName?.toLowerCase().includes(query)) ||
       entry.item.activityType.toLowerCase().includes(query)
+    );
+  }
+
+  if (entry.kind === "group") {
+    return (
+      entry.group.title.toLowerCase().includes(query) ||
+      Boolean(entry.group.summary?.toLowerCase().includes(query)) ||
+      Boolean(entry.group.reportSummary?.toLowerCase().includes(query)) ||
+      Boolean(entry.group.projectName?.toLowerCase().includes(query)) ||
+      entry.group.items.some((item) => item.summarySnapshot.toLowerCase().includes(query))
     );
   }
 
@@ -507,6 +846,101 @@ function entryMatchesSearch(entry: TimelineEntry, query: string) {
     entry.task.status.toLowerCase().includes(query) ||
     entry.task.taskType.toLowerCase().includes(query)
   );
+}
+
+function entryMatchesSemantic(entry: TimelineEntry, sourceIds: Set<string>) {
+  if (entry.kind === "activity") {
+    return sourceIds.has(entry.item.id);
+  }
+  if (entry.kind === "group") {
+    return entry.group.items.some((item) => sourceIds.has(item.sourceId));
+  }
+  return sourceIds.has(entry.task.id);
+}
+
+function ActivityGroupEditModal({
+  group,
+  isSaving,
+  onClose,
+  onSave,
+}: {
+  group: ActivityGroup;
+  isSaving: boolean;
+  onClose: () => void;
+  onSave: (values: { title: string; summary?: string | null; reportSummary?: string | null; includedInReport: boolean; reviewStatus?: string }) => void;
+}) {
+  const [title, setTitle] = useState(group.title);
+  const [summary, setSummary] = useState(group.reportSummary ?? group.summary ?? "");
+  const [includedInReport, setIncludedInReport] = useState(group.includedInReport);
+  const reasons = safeGroupReasons(group.rationaleJson);
+  useEscapeKey(onClose, true);
+
+  return (
+    <ModalShell title="Edit work item" description="Rename this group into the report language you want WorkTrace to remember." onClose={onClose} size="md">
+      <form
+        className="space-y-4 p-5"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSave({ title, summary: summary.trim() || null, reportSummary: summary.trim() || null, includedInReport, reviewStatus: "reviewed" });
+        }}
+      >
+        <label className="block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+          Work item title
+          <input
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            className="mt-2 h-11 w-full rounded-xl border border-white/10 bg-slate-950/55 px-3 text-sm normal-case tracking-normal text-slate-100 outline-none focus:border-blue-300/45 focus:ring-2 focus:ring-blue-500/15"
+          />
+        </label>
+        <label className="block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+          Report summary
+          <textarea
+            value={summary}
+            onChange={(event) => setSummary(event.target.value)}
+            rows={5}
+            className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/55 px-3 py-3 text-sm normal-case leading-6 tracking-normal text-slate-100 outline-none focus:border-blue-300/45 focus:ring-2 focus:ring-blue-500/15"
+          />
+        </label>
+        <div className="grid gap-2 rounded-xl border border-cyan-300/10 bg-cyan-400/[0.04] p-3 text-xs text-cyan-100/80">
+          <p>Renames like this improve future grouping names on this machine.</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 font-semibold capitalize">{group.confidenceLabel.replace("_", " ")}</span>
+            <span>{Math.round(group.confidence * 100)}% confidence</span>
+            <span>{group.reviewStatus.replace("_", " ")}</span>
+          </div>
+          {reasons.length ? <p>{reasons.slice(0, 3).join(" · ")}</p> : null}
+        </div>
+        <label className="flex items-center gap-3 rounded-xl border border-white/8 bg-white/[0.03] p-3 text-sm text-slate-200">
+          <input type="checkbox" checked={includedInReport} onChange={(event) => setIncludedInReport(event.target.checked)} />
+          Include this work item in generated reports
+        </label>
+        <div className="rounded-xl border border-white/8 bg-slate-950/35 p-3">
+          <p className="text-xs font-semibold text-slate-400">{group.items.length} source commit{group.items.length === 1 ? "" : "s"}</p>
+          <div className="mt-2 max-h-40 space-y-1 overflow-y-auto text-xs leading-5 text-slate-500">
+            {group.items.map((item) => (
+              <div key={item.id} className="truncate">{item.summarySnapshot}</div>
+            ))}
+          </div>
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button type="submit" variant="primary" disabled={isSaving || !title.trim()}>
+            {isSaving ? "Saving..." : "Save work item"}
+          </Button>
+        </div>
+      </form>
+    </ModalShell>
+  );
+}
+
+function safeGroupReasons(value?: string | null) {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 function formatDayLabel(value: string) {
@@ -528,6 +962,17 @@ function formatActivityTime(value: string) {
     hour: "numeric",
     minute: "2-digit",
   }).format(date);
+}
+
+function titleReviewSuffix(needsReview: number, fallback: number) {
+  const parts = [];
+  if (needsReview > 0) {
+    parts.push(`${needsReview} title${needsReview === 1 ? "" : "s"} need review`);
+  }
+  if (fallback > 0) {
+    parts.push(`${fallback} fallback title${fallback === 1 ? "" : "s"}`);
+  }
+  return parts.length ? ` ${parts.join("; ")}.` : "";
 }
 
 function TimelineSkeleton() {

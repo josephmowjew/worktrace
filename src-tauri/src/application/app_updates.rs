@@ -53,7 +53,9 @@ pub fn fallback_release_notes(app: &AppHandle) -> ReleaseNotesPayload {
 }
 
 fn changelog_path(app: &AppHandle) -> Option<PathBuf> {
-    app.path().resolve("CHANGELOG.md", tauri::path::BaseDirectory::Resource).ok()
+    app.path()
+        .resolve("CHANGELOG.md", tauri::path::BaseDirectory::Resource)
+        .ok()
 }
 
 fn parse_changelog(changelog: &str) -> Vec<ReleaseNoteItem> {

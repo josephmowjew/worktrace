@@ -10,8 +10,8 @@ use crate::domain::report::{
     SaveReportInput, TestReportAiProviderInput,
 };
 use crate::infrastructure::database::repositories::{
-    ActivityRepository, GitMetadataRepository, ProjectRepository, ReportNoteRepository,
-    ReportRepository, SettingsRepository, WeeklyTaskRepository,
+    ActivityGroupRepository, ActivityRepository, GitMetadataRepository, ProjectRepository,
+    ReportNoteRepository, ReportRepository, SettingsRepository, WeeklyTaskRepository,
 };
 use crate::interface::dto::app_result::AppResult;
 use crate::AppState;
@@ -22,6 +22,7 @@ pub async fn generate_report(
     input: GenerateReportInput,
 ) -> Result<AppResult<GeneratedReport>, String> {
     let activity_repository = ActivityRepository::new(state.database.pool());
+    let activity_group_repository = ActivityGroupRepository::new(state.database.pool());
     let weekly_task_repository = WeeklyTaskRepository::new(state.database.pool());
     let report_note_repository = ReportNoteRepository::new(state.database.pool());
     let git_metadata_repository = GitMetadataRepository::new(state.database.pool());
@@ -29,6 +30,7 @@ pub async fn generate_report(
     Ok(
         match ReportService::generate(
             &activity_repository,
+            &activity_group_repository,
             &weekly_task_repository,
             &report_note_repository,
             &git_metadata_repository,
@@ -194,6 +196,7 @@ pub async fn polish_report(
 ) -> Result<AppResult<ReportPolishResult>, String> {
     let settings_repository = SettingsRepository::new(state.database.pool());
     let activity_repository = ActivityRepository::new(state.database.pool());
+    let activity_group_repository = ActivityGroupRepository::new(state.database.pool());
     let weekly_task_repository = WeeklyTaskRepository::new(state.database.pool());
     let report_note_repository = ReportNoteRepository::new(state.database.pool());
     let project_repository = ProjectRepository::new(state.database.pool());
@@ -204,6 +207,7 @@ pub async fn polish_report(
             Some(&app),
             &settings_repository,
             &activity_repository,
+            &activity_group_repository,
             &weekly_task_repository,
             &report_note_repository,
             &project_repository,
@@ -225,6 +229,7 @@ pub async fn analyze_report_readiness(
 ) -> Result<AppResult<ReportReadinessAnalysis>, String> {
     let settings_repository = SettingsRepository::new(state.database.pool());
     let activity_repository = ActivityRepository::new(state.database.pool());
+    let activity_group_repository = ActivityGroupRepository::new(state.database.pool());
     let weekly_task_repository = WeeklyTaskRepository::new(state.database.pool());
     let report_note_repository = ReportNoteRepository::new(state.database.pool());
     let project_repository = ProjectRepository::new(state.database.pool());
@@ -234,6 +239,7 @@ pub async fn analyze_report_readiness(
         match ReportAiService::analyze_readiness(
             &settings_repository,
             &activity_repository,
+            &activity_group_repository,
             &weekly_task_repository,
             &report_note_repository,
             &project_repository,
