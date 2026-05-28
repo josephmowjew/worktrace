@@ -1,6 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Briefcase, Building2, CalendarDays, Check, CheckCircle2, ChevronDown, Clock3, Database, Download, ExternalLink, FileJson, FileText, Filter, Folder, Hash, Layers, Link2, LockKeyhole, Mail, Mic, Monitor, MoreHorizontal, PlugZap, Save, Search, Settings as SettingsIcon, Sparkles, Upload, User, Users, Volume2, X } from "lucide-react";
+import { Bell, Briefcase, Building2, CalendarDays, Check, CheckCircle2, ChevronDown, Clock3, Database, Download, ExternalLink, FileJson, FileText, Filter, Folder, Hash, Keyboard, Layers, Link2, LockKeyhole, Mail, Mic, Monitor, MoreHorizontal, PlugZap, Save, Search, Settings as SettingsIcon, Sparkles, Upload, User, Users, Volume2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { SimpleIcon } from "simple-icons";
@@ -70,6 +70,7 @@ import { currentWeekRange } from "../lib/dates";
 import { weeklyTaskQueryRoots } from "../lib/api/queryKeys";
 import { gravatarUrl } from "../lib/gravatar";
 import { appSignature } from "../lib/appSignature";
+import { configureQuickCaptureShortcut, getQuickCaptureStatus, showQuickCapture } from "../lib/api/windows";
 
 const workingDays = [
   { label: "Mon", value: "monday" },
@@ -136,6 +137,15 @@ const settingsSchema = z.object({
   embeddingModel: z.string(),
   embeddingOnlineAllowed: z.boolean(),
   embeddingPrivacyAcknowledged: z.boolean(),
+  quickCaptureEnabled: z.boolean(),
+  quickCaptureShortcut: z.string().trim().min(1, "Shortcut is required"),
+  quickCaptureIncludeInReport: z.boolean(),
+  priorityRemindersEnabled: z.boolean(),
+  priorityReminderDesktopEnabled: z.boolean(),
+  priorityReminderCheckpoints: z.string().trim().min(1, "Add at least one checkpoint"),
+  priorityReminderSnoozeMinutes: z.number().min(5).max(480),
+  priorityReminderQuietStart: z.string().regex(/^\d{2}:\d{2}$/, "Use HH:MM"),
+  priorityReminderQuietEnd: z.string().regex(/^\d{2}:\d{2}$/, "Use HH:MM"),
   sparcForceAddonEnabled: z.boolean(),
 });
 
@@ -202,6 +212,10 @@ export function SettingsPage() {
     queryKey: ["embeddingStatus"],
     queryFn: getEmbeddingStatus,
   });
+  const quickCaptureStatusQuery = useQuery({
+    queryKey: ["quickCaptureStatus"],
+    queryFn: getQuickCaptureStatus,
+  });
   const [openRouterKey, setOpenRouterKey] = useState("");
   const [groqKey, setGroqKey] = useState("");
   const [nvidiaBuildKey, setNvidiaBuildKey] = useState("");
@@ -251,6 +265,15 @@ export function SettingsPage() {
       embeddingModel: "BGESmallENV15",
       embeddingOnlineAllowed: false,
       embeddingPrivacyAcknowledged: false,
+      quickCaptureEnabled: true,
+      quickCaptureShortcut: "CommandOrControl+Shift+Space",
+      quickCaptureIncludeInReport: true,
+      priorityRemindersEnabled: true,
+      priorityReminderDesktopEnabled: false,
+      priorityReminderCheckpoints: "10:00, 13:00, 16:00",
+      priorityReminderSnoozeMinutes: 45,
+      priorityReminderQuietStart: "09:00",
+      priorityReminderQuietEnd: "17:30",
       sparcForceAddonEnabled: false,
     },
   });
@@ -339,11 +362,28 @@ export function SettingsPage() {
         embeddingModel: values.embeddingModel,
         embeddingOnlineAllowed: values.embeddingOnlineAllowed,
         embeddingPrivacyAcknowledged: values.embeddingPrivacyAcknowledged,
+        quickCaptureEnabled: values.quickCaptureEnabled,
+        quickCaptureShortcut: values.quickCaptureShortcut,
+        quickCaptureIncludeInReport: values.quickCaptureIncludeInReport,
+        priorityRemindersEnabled: values.priorityRemindersEnabled,
+        priorityReminderDesktopEnabled: values.priorityReminderDesktopEnabled,
+        priorityReminderCheckpoints: values.priorityReminderCheckpoints
+          .split(",")
+          .map((time) => time.trim())
+          .filter(Boolean),
+        priorityReminderSnoozeMinutes: values.priorityReminderSnoozeMinutes,
+        priorityReminderQuietStart: values.priorityReminderQuietStart,
+        priorityReminderQuietEnd: values.priorityReminderQuietEnd,
         sparcForceAddonEnabled: values.sparcForceAddonEnabled,
     }),
     onSuccess: async (settings) => {
+      await configureQuickCaptureShortcut({
+        enabled: settings.quickCaptureEnabled,
+        shortcut: settings.quickCaptureShortcut,
+      }).catch(() => null);
       form.reset(toFormValues(settings));
       await queryClient.invalidateQueries({ queryKey: ["settings"] });
+      await queryClient.invalidateQueries({ queryKey: ["quickCaptureStatus"] });
       toast.success("Preferences saved", "Settings have been updated.");
     },
     onError: (error) => {
@@ -896,6 +936,104 @@ export function SettingsPage() {
                   </Field>
                 </div>
               </div>
+            </Panel>
+            <Panel>
+              <div className="mb-4 flex items-center gap-2 text-base font-semibold text-white">
+                <Bell className="h-4 w-4 text-cyan-300" />
+                Priority Reminders
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <ToggleField
+                  label="Today focus reminders"
+                  description="Remind me at work-block checkpoints when top priorities are still incomplete."
+                  checked={form.watch("priorityRemindersEnabled")}
+                  onChange={(checked) =>
+                    form.setValue("priorityRemindersEnabled", checked, { shouldDirty: true })
+                  }
+                />
+                <ToggleField
+                  label="Desktop notifications"
+                  description="Mirror due reminders as native OS notifications when permissions allow it."
+                  checked={form.watch("priorityReminderDesktopEnabled")}
+                  onChange={(checked) =>
+                    form.setValue("priorityReminderDesktopEnabled", checked, { shouldDirty: true })
+                  }
+                />
+                <Field label="Checkpoints" error={form.formState.errors.priorityReminderCheckpoints?.message}>
+                  <input
+                    className={inputClass}
+                    disabled={settingsQuery.isLoading}
+                    placeholder="10:00, 13:00, 16:00"
+                    {...form.register("priorityReminderCheckpoints")}
+                  />
+                </Field>
+                <Field label="Snooze minutes" error={form.formState.errors.priorityReminderSnoozeMinutes?.message}>
+                  <input
+                    className={inputClass}
+                    type="number"
+                    min={5}
+                    max={480}
+                    disabled={settingsQuery.isLoading}
+                    {...form.register("priorityReminderSnoozeMinutes", { valueAsNumber: true })}
+                  />
+                </Field>
+                <Field label="Quiet start" error={form.formState.errors.priorityReminderQuietStart?.message}>
+                  <input className={inputClass} type="time" disabled={settingsQuery.isLoading} {...form.register("priorityReminderQuietStart")} />
+                </Field>
+                <Field label="Quiet end" error={form.formState.errors.priorityReminderQuietEnd?.message}>
+                  <input className={inputClass} type="time" disabled={settingsQuery.isLoading} {...form.register("priorityReminderQuietEnd")} />
+                </Field>
+              </div>
+              <p className="mt-3 text-xs leading-5 text-slate-500">
+                In-app reminders are always local. Desktop notifications may ask the OS for permission the first time they are shown.
+              </p>
+            </Panel>
+            <Panel>
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-base font-semibold text-white">
+                  <Keyboard className="h-4 w-4 text-cyan-300" />
+                  Quick Capture
+                </div>
+                <Badge tone={quickCaptureStatusQuery.data?.registered ? "green" : "orange"}>
+                  {quickCaptureStatusQuery.data?.registered ? "Shortcut active" : "Shortcut inactive"}
+                </Badge>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <ToggleField
+                  label="Global quick capture"
+                  description="Open a small capture window from anywhere and save non-code work as a local manual log."
+                  checked={form.watch("quickCaptureEnabled")}
+                  onChange={(checked) =>
+                    form.setValue("quickCaptureEnabled", checked, { shouldDirty: true })
+                  }
+                />
+                <ToggleField
+                  label="Include captures in reports"
+                  description="New quick captures are report-ready by default."
+                  checked={form.watch("quickCaptureIncludeInReport")}
+                  onChange={(checked) =>
+                    form.setValue("quickCaptureIncludeInReport", checked, { shouldDirty: true })
+                  }
+                />
+                <Field label="Shortcut" error={form.formState.errors.quickCaptureShortcut?.message}>
+                  <input
+                    className={inputClass}
+                    disabled={settingsQuery.isLoading}
+                    placeholder="CommandOrControl+Shift+Space"
+                    {...form.register("quickCaptureShortcut")}
+                  />
+                </Field>
+                <div className="flex items-end gap-2">
+                  <Button type="button" variant="secondary" onClick={() => showQuickCapture()}>
+                    Test Capture
+                  </Button>
+                </div>
+              </div>
+              {quickCaptureStatusQuery.data?.lastError ? (
+                <p className="mt-3 rounded-xl border border-orange-300/20 bg-orange-500/10 p-3 text-xs leading-5 text-orange-100">
+                  {quickCaptureStatusQuery.data.lastError}
+                </p>
+              ) : null}
             </Panel>
             <Panel>
               <div className="flex flex-wrap items-center justify-between gap-4">
@@ -4056,6 +4194,18 @@ function toFormValues(settings: Settings): SettingsFormValues {
     embeddingModel: settings.embeddingModel || "BGESmallENV15",
     embeddingOnlineAllowed: settings.embeddingOnlineAllowed ?? false,
     embeddingPrivacyAcknowledged: settings.embeddingPrivacyAcknowledged ?? false,
+    quickCaptureEnabled: settings.quickCaptureEnabled ?? true,
+    quickCaptureShortcut: settings.quickCaptureShortcut || "CommandOrControl+Shift+Space",
+    quickCaptureIncludeInReport: settings.quickCaptureIncludeInReport ?? true,
+    priorityRemindersEnabled: settings.priorityRemindersEnabled ?? true,
+    priorityReminderDesktopEnabled: settings.priorityReminderDesktopEnabled ?? false,
+    priorityReminderCheckpoints: (settings.priorityReminderCheckpoints?.length
+      ? settings.priorityReminderCheckpoints
+      : ["10:00", "13:00", "16:00"]
+    ).join(", "),
+    priorityReminderSnoozeMinutes: settings.priorityReminderSnoozeMinutes ?? 45,
+    priorityReminderQuietStart: settings.priorityReminderQuietStart || "09:00",
+    priorityReminderQuietEnd: settings.priorityReminderQuietEnd || "17:30",
     sparcForceAddonEnabled: settings.sparcForceAddonEnabled,
   };
 }

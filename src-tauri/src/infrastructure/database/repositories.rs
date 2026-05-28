@@ -45,6 +45,7 @@ use crate::domain::manual_log::{
     ActivityType, CreateManualLogInput, ManualLog, UpdateManualLogInput,
 };
 use crate::domain::nudge::{DismissNudgeInput, ListNudgeDismissalsInput, NudgeDismissal};
+use crate::domain::priority_reminder::PriorityReminder;
 use crate::domain::project::{CreateProjectInput, Project, UpdateProjectInput};
 use crate::domain::report::{
     CreateReportItemInput, CreateReportNoteInput, Report, ReportItem, ReportNote, ReportSummary,
@@ -6124,6 +6125,162 @@ impl NudgeDismissalStore for NudgeDismissalRepository<'_> {
     }
 }
 
+pub struct PriorityReminderRepository<'a> {
+    pool: &'a SqlitePool,
+}
+
+impl<'a> PriorityReminderRepository<'a> {
+    pub fn new(pool: &'a SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn list_by_date(&self, date: &str) -> Result<Vec<PriorityReminder>, sqlx::Error> {
+        let sql = priority_reminder_select_sql(
+            "WHERE pr.date = ?1 ORDER BY pr.checkpoint_time ASC, dpi.rank ASC",
+        );
+        let rows = sqlx::query(&sql)
+        .bind(date)
+        .fetch_all(self.pool)
+        .await?;
+        Ok(rows.into_iter().map(priority_reminder_from_row).collect())
+    }
+
+    pub async fn list_eligible_items(
+        &self,
+        date: &str,
+    ) -> Result<Vec<(DailyPlanItem, Option<String>)>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT dpi.id,
+                   dpi.daily_plan_id,
+                   dpi.rank,
+                   dpi.title,
+                   dpi.weekly_task_id,
+                   dpi.planned_minutes,
+                   dpi.status,
+                   dpi.created_at,
+                   dpi.updated_at,
+                   projects.name AS project_name
+            FROM daily_plan_items dpi
+            INNER JOIN daily_plans dp ON dp.id = dpi.daily_plan_id
+            LEFT JOIN weekly_tasks wt ON wt.id = dpi.weekly_task_id
+            LEFT JOIN projects ON projects.id = wt.project_id
+            WHERE dp.date = ?1
+              AND dpi.status = 'todo'
+              AND (wt.id IS NULL OR wt.status NOT IN ('completed', 'dropped'))
+            ORDER BY dpi.rank ASC
+            "#,
+        )
+        .bind(date)
+        .fetch_all(self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                let project_name: Option<String> = row.get("project_name");
+                (daily_plan_item_from_row(row), project_name)
+            })
+            .collect())
+    }
+
+    pub async fn upsert_shown(
+        &self,
+        reminder_key: &str,
+        date: &str,
+        daily_plan_item_id: &str,
+        checkpoint_time: &str,
+    ) -> Result<PriorityReminder, sqlx::Error> {
+        let now = current_timestamp();
+        sqlx::query(
+            r#"
+            INSERT INTO priority_reminders (
+              id, reminder_key, date, daily_plan_item_id, checkpoint_time, status, shown_at, created_at, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, 'shown', ?6, ?7, ?8)
+            ON CONFLICT(reminder_key, date, checkpoint_time) DO UPDATE SET
+              daily_plan_item_id = excluded.daily_plan_item_id,
+              shown_at = COALESCE(priority_reminders.shown_at, excluded.shown_at),
+              updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(generate_id("priority_reminder"))
+        .bind(reminder_key)
+        .bind(date)
+        .bind(daily_plan_item_id)
+        .bind(checkpoint_time)
+        .bind(&now)
+        .bind(&now)
+        .bind(&now)
+        .execute(self.pool)
+        .await?;
+
+        self.get_by_key(date, reminder_key, checkpoint_time).await
+    }
+
+    pub async fn get_by_key(
+        &self,
+        date: &str,
+        reminder_key: &str,
+        checkpoint_time: &str,
+    ) -> Result<PriorityReminder, sqlx::Error> {
+        let sql = priority_reminder_select_sql(
+            "WHERE pr.date = ?1 AND pr.reminder_key = ?2 AND pr.checkpoint_time = ?3 LIMIT 1",
+        );
+        let row = sqlx::query(&sql)
+        .bind(date)
+        .bind(reminder_key)
+        .bind(checkpoint_time)
+        .fetch_one(self.pool)
+        .await?;
+        Ok(priority_reminder_from_row(row))
+    }
+
+    pub async fn snooze(
+        &self,
+        date: &str,
+        reminder_key: &str,
+        snoozed_until: &str,
+    ) -> Result<Vec<PriorityReminder>, sqlx::Error> {
+        let now = current_timestamp();
+        sqlx::query(
+            r#"
+            UPDATE priority_reminders
+            SET status = 'snoozed', snoozed_until = ?3, updated_at = ?4
+            WHERE date = ?1 AND reminder_key = ?2 AND dismissed_at IS NULL
+            "#,
+        )
+        .bind(date)
+        .bind(reminder_key)
+        .bind(snoozed_until)
+        .bind(now)
+        .execute(self.pool)
+        .await?;
+        self.list_by_date(date).await
+    }
+
+    pub async fn dismiss(
+        &self,
+        date: &str,
+        reminder_key: &str,
+    ) -> Result<Vec<PriorityReminder>, sqlx::Error> {
+        let now = current_timestamp();
+        sqlx::query(
+            r#"
+            UPDATE priority_reminders
+            SET status = 'dismissed', dismissed_at = ?3, updated_at = ?3
+            WHERE date = ?1 AND reminder_key = ?2
+            "#,
+        )
+        .bind(date)
+        .bind(reminder_key)
+        .bind(now)
+        .execute(self.pool)
+        .await?;
+        self.list_by_date(date).await
+    }
+}
+
 impl<'a> SettingsRepository<'a> {
     pub fn new(pool: &'a SqlitePool) -> Self {
         Self { pool }
@@ -6296,6 +6453,33 @@ impl<'a> SettingsRepository<'a> {
         }
         if let Some(value) = input.embedding_privacy_acknowledged {
             settings.embedding_privacy_acknowledged = value;
+        }
+        if let Some(value) = input.quick_capture_enabled {
+            settings.quick_capture_enabled = value;
+        }
+        if let Some(value) = input.quick_capture_shortcut {
+            settings.quick_capture_shortcut = value;
+        }
+        if let Some(value) = input.quick_capture_include_in_report {
+            settings.quick_capture_include_in_report = value;
+        }
+        if let Some(value) = input.priority_reminders_enabled {
+            settings.priority_reminders_enabled = value;
+        }
+        if let Some(value) = input.priority_reminder_desktop_enabled {
+            settings.priority_reminder_desktop_enabled = value;
+        }
+        if let Some(value) = input.priority_reminder_checkpoints {
+            settings.priority_reminder_checkpoints = value;
+        }
+        if let Some(value) = input.priority_reminder_snooze_minutes {
+            settings.priority_reminder_snooze_minutes = value;
+        }
+        if let Some(value) = input.priority_reminder_quiet_start {
+            settings.priority_reminder_quiet_start = value;
+        }
+        if let Some(value) = input.priority_reminder_quiet_end {
+            settings.priority_reminder_quiet_end = value;
         }
         if let Some(value) = input.sparc_force_addon_enabled {
             settings.sparc_force_addon_enabled = value;
@@ -6565,6 +6749,57 @@ impl<'a> SettingsRepository<'a> {
             } else {
                 "false"
             },
+        )
+        .await?;
+        self.upsert(
+            "quick_capture.enabled",
+            if settings.quick_capture_enabled {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
+        self.upsert("quick_capture.shortcut", &settings.quick_capture_shortcut)
+            .await?;
+        self.upsert(
+            "quick_capture.include_in_report",
+            if settings.quick_capture_include_in_report {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
+        self.upsert(
+            "priority_reminders.enabled",
+            if settings.priority_reminders_enabled { "true" } else { "false" },
+        )
+        .await?;
+        self.upsert(
+            "priority_reminders.desktop_enabled",
+            if settings.priority_reminder_desktop_enabled { "true" } else { "false" },
+        )
+        .await?;
+        self.upsert(
+            "priority_reminders.checkpoints",
+            &serde_json::to_string(&settings.priority_reminder_checkpoints)
+                .unwrap_or_else(|_| "[]".to_string()),
+        )
+        .await?;
+        self.upsert(
+            "priority_reminders.snooze_minutes",
+            &settings.priority_reminder_snooze_minutes.to_string(),
+        )
+        .await?;
+        self.upsert(
+            "priority_reminders.quiet_start",
+            &settings.priority_reminder_quiet_start,
+        )
+        .await?;
+        self.upsert(
+            "priority_reminders.quiet_end",
+            &settings.priority_reminder_quiet_end,
         )
         .await?;
         self.upsert(
@@ -7408,6 +7643,54 @@ fn nudge_dismissal_from_row(row: sqlx::sqlite::SqliteRow) -> NudgeDismissal {
     }
 }
 
+fn priority_reminder_from_row(row: sqlx::sqlite::SqliteRow) -> PriorityReminder {
+    PriorityReminder {
+        id: row.get("id"),
+        reminder_key: row.get("reminder_key"),
+        date: row.get("date"),
+        daily_plan_item_id: row.get("daily_plan_item_id"),
+        checkpoint_time: row.get("checkpoint_time"),
+        title: row.get("title"),
+        planned_minutes: row.get("planned_minutes"),
+        weekly_task_id: row.get("weekly_task_id"),
+        project_name: row.get("project_name"),
+        status: row.get("status"),
+        snoozed_until: row.get("snoozed_until"),
+        shown_at: row.get("shown_at"),
+        dismissed_at: row.get("dismissed_at"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    }
+}
+
+fn priority_reminder_select_sql(where_clause: &str) -> String {
+    format!(
+        r#"
+        SELECT pr.id,
+               pr.reminder_key,
+               pr.date,
+               pr.daily_plan_item_id,
+               pr.checkpoint_time,
+               dpi.title,
+               dpi.planned_minutes,
+               dpi.weekly_task_id,
+               projects.name AS project_name,
+               pr.status,
+               pr.snoozed_until,
+               pr.shown_at,
+               pr.dismissed_at,
+               pr.created_at,
+               pr.updated_at
+        FROM priority_reminders pr
+        INNER JOIN daily_plan_items dpi ON dpi.id = pr.daily_plan_item_id
+        INNER JOIN daily_plans dp ON dp.id = dpi.daily_plan_id
+        LEFT JOIN weekly_tasks ON weekly_tasks.id = dpi.weekly_task_id
+        LEFT JOIN projects ON projects.id = weekly_tasks.project_id
+        {where_clause}
+        "#
+    )
+}
+
 fn focus_session_select_sql(where_clause: &str) -> String {
     format!(
         r#"
@@ -7511,6 +7794,26 @@ fn apply_setting(settings: &mut Settings, key: &str, value: String) {
         "embeddings.privacy_acknowledged" => {
             settings.embedding_privacy_acknowledged = value == "true"
         }
+        "quick_capture.enabled" => settings.quick_capture_enabled = value == "true",
+        "quick_capture.shortcut" => settings.quick_capture_shortcut = value,
+        "quick_capture.include_in_report" => {
+            settings.quick_capture_include_in_report = value == "true"
+        }
+        "priority_reminders.enabled" => settings.priority_reminders_enabled = value == "true",
+        "priority_reminders.desktop_enabled" => {
+            settings.priority_reminder_desktop_enabled = value == "true"
+        }
+        "priority_reminders.checkpoints" => {
+            settings.priority_reminder_checkpoints = serde_json::from_str(&value)
+                .unwrap_or_else(|_| Settings::default().priority_reminder_checkpoints)
+        }
+        "priority_reminders.snooze_minutes" => {
+            settings.priority_reminder_snooze_minutes = value
+                .parse()
+                .unwrap_or(Settings::default().priority_reminder_snooze_minutes)
+        }
+        "priority_reminders.quiet_start" => settings.priority_reminder_quiet_start = value,
+        "priority_reminders.quiet_end" => settings.priority_reminder_quiet_end = value,
         "sparc_force.addon_enabled" => settings.sparc_force_addon_enabled = value == "true",
         "onboarding.completed" => settings.onboarding_completed = value == "true",
         "onboarding.dismissed_welcome" => settings.onboarding_dismissed_welcome = value == "true",

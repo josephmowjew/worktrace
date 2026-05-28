@@ -1083,6 +1083,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_nudge_dismissals_unique
 CREATE INDEX IF NOT EXISTS idx_nudge_dismissals_date
   ON nudge_dismissals(dismissed_for_date);
 
+CREATE TABLE IF NOT EXISTS priority_reminders (
+  id TEXT PRIMARY KEY,
+  reminder_key TEXT NOT NULL,
+  date TEXT NOT NULL,
+  daily_plan_item_id TEXT NOT NULL,
+  checkpoint_time TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'shown',
+  snoozed_until TEXT,
+  shown_at TEXT,
+  dismissed_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_priority_reminders_unique
+  ON priority_reminders(reminder_key, date, checkpoint_time);
+
+CREATE INDEX IF NOT EXISTS idx_priority_reminders_date
+  ON priority_reminders(date);
+
 CREATE TABLE IF NOT EXISTS daily_plans (
   id TEXT PRIMARY KEY,
   date TEXT NOT NULL UNIQUE,

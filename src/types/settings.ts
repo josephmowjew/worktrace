@@ -49,6 +49,15 @@ export type Settings = {
   embeddingModel: string;
   embeddingOnlineAllowed: boolean;
   embeddingPrivacyAcknowledged: boolean;
+  quickCaptureEnabled: boolean;
+  quickCaptureShortcut: string;
+  quickCaptureIncludeInReport: boolean;
+  priorityRemindersEnabled: boolean;
+  priorityReminderDesktopEnabled: boolean;
+  priorityReminderCheckpoints: string[];
+  priorityReminderSnoozeMinutes: number;
+  priorityReminderQuietStart: string;
+  priorityReminderQuietEnd: string;
   sparcForceAddonEnabled: boolean;
   onboardingCompleted: boolean;
   onboardingDismissedWelcome: boolean;

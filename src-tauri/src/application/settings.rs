@@ -293,6 +293,45 @@ fn validate_update(input: &UpdateSettingsInput) -> Result<(), SettingsServiceErr
         }
     }
 
+    if let Some(shortcut) = &input.quick_capture_shortcut {
+        if shortcut.trim().is_empty() {
+            return Err(SettingsServiceError::Validation(
+                "Quick capture shortcut cannot be empty".to_string(),
+            ));
+        }
+    }
+    if let Some(checkpoints) = &input.priority_reminder_checkpoints {
+        if checkpoints.is_empty() || checkpoints.iter().any(|time| !is_hhmm(time)) {
+            return Err(SettingsServiceError::Validation(
+                "Reminder checkpoints must be HH:MM times".to_string(),
+            ));
+        }
+    }
+    if input
+        .priority_reminder_snooze_minutes
+        .map(|minutes| minutes < 5 || minutes > 480)
+        .unwrap_or(false)
+    {
+        return Err(SettingsServiceError::Validation(
+            "Reminder snooze must be between 5 and 480 minutes".to_string(),
+        ));
+    }
+    if input
+        .priority_reminder_quiet_start
+        .as_ref()
+        .map(|time| !is_hhmm(time))
+        .unwrap_or(false)
+        || input
+            .priority_reminder_quiet_end
+            .as_ref()
+            .map(|time| !is_hhmm(time))
+            .unwrap_or(false)
+    {
+        return Err(SettingsServiceError::Validation(
+            "Reminder quiet hours must be HH:MM times".to_string(),
+        ));
+    }
+
     if let Some(steps) = &input.onboarding_completed_steps {
         let supported_steps = ["profile", "projects", "sync", "capture", "report"];
         if steps
@@ -506,6 +545,54 @@ fn merge_settings(mut settings: Settings, input: &UpdateSettingsInput) -> Settin
     if let Some(value) = &input.report_ai_nvidia_model {
         settings.report_ai_nvidia_model = value.clone();
     }
+    if let Some(value) = input.embeddings_enabled {
+        settings.embeddings_enabled = value;
+    }
+    if let Some(value) = &input.embedding_provider {
+        settings.embedding_provider = value.clone();
+    }
+    if let Some(value) = &input.embedding_local_endpoint {
+        settings.embedding_local_endpoint = value.clone();
+    }
+    if let Some(value) = &input.embedding_online_endpoint {
+        settings.embedding_online_endpoint = value.clone();
+    }
+    if let Some(value) = &input.embedding_model {
+        settings.embedding_model = value.clone();
+    }
+    if let Some(value) = input.embedding_online_allowed {
+        settings.embedding_online_allowed = value;
+    }
+    if let Some(value) = input.embedding_privacy_acknowledged {
+        settings.embedding_privacy_acknowledged = value;
+    }
+    if let Some(value) = input.quick_capture_enabled {
+        settings.quick_capture_enabled = value;
+    }
+    if let Some(value) = &input.quick_capture_shortcut {
+        settings.quick_capture_shortcut = value.clone();
+    }
+    if let Some(value) = input.quick_capture_include_in_report {
+        settings.quick_capture_include_in_report = value;
+    }
+    if let Some(value) = input.priority_reminders_enabled {
+        settings.priority_reminders_enabled = value;
+    }
+    if let Some(value) = input.priority_reminder_desktop_enabled {
+        settings.priority_reminder_desktop_enabled = value;
+    }
+    if let Some(value) = &input.priority_reminder_checkpoints {
+        settings.priority_reminder_checkpoints = value.clone();
+    }
+    if let Some(value) = input.priority_reminder_snooze_minutes {
+        settings.priority_reminder_snooze_minutes = value;
+    }
+    if let Some(value) = &input.priority_reminder_quiet_start {
+        settings.priority_reminder_quiet_start = value.clone();
+    }
+    if let Some(value) = &input.priority_reminder_quiet_end {
+        settings.priority_reminder_quiet_end = value.clone();
+    }
     if let Some(value) = input.sparc_force_addon_enabled {
         settings.sparc_force_addon_enabled = value;
     }
@@ -618,6 +705,15 @@ fn update_input_from_settings(settings: Settings) -> UpdateSettingsInput {
         embedding_model: Some(settings.embedding_model),
         embedding_online_allowed: Some(settings.embedding_online_allowed),
         embedding_privacy_acknowledged: Some(settings.embedding_privacy_acknowledged),
+        quick_capture_enabled: Some(settings.quick_capture_enabled),
+        quick_capture_shortcut: Some(settings.quick_capture_shortcut),
+        quick_capture_include_in_report: Some(settings.quick_capture_include_in_report),
+        priority_reminders_enabled: Some(settings.priority_reminders_enabled),
+        priority_reminder_desktop_enabled: Some(settings.priority_reminder_desktop_enabled),
+        priority_reminder_checkpoints: Some(settings.priority_reminder_checkpoints),
+        priority_reminder_snooze_minutes: Some(settings.priority_reminder_snooze_minutes),
+        priority_reminder_quiet_start: Some(settings.priority_reminder_quiet_start),
+        priority_reminder_quiet_end: Some(settings.priority_reminder_quiet_end),
         sparc_force_addon_enabled: Some(settings.sparc_force_addon_enabled),
         onboarding_completed: Some(settings.onboarding_completed),
         onboarding_dismissed_welcome: Some(settings.onboarding_dismissed_welcome),
@@ -625,6 +721,10 @@ fn update_input_from_settings(settings: Settings) -> UpdateSettingsInput {
         onboarding_completed_steps: Some(settings.onboarding_completed_steps),
         onboarding_completed_at: Some(settings.onboarding_completed_at),
     }
+}
+
+fn is_hhmm(value: &str) -> bool {
+    chrono::NaiveTime::parse_from_str(value.trim(), "%H:%M").is_ok()
 }
 
 #[cfg(test)]

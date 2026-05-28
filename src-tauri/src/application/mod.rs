@@ -11,6 +11,7 @@ pub mod github;
 pub mod manual_logs;
 pub mod nudges;
 pub mod projects;
+pub mod priority_reminders;
 pub mod report_ai;
 pub mod reports;
 pub mod repositories;

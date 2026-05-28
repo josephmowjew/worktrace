@@ -2,21 +2,26 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   AlertTriangle,
+  ArrowRight,
+  BriefcaseBusiness,
   CalendarClock,
   CheckCircle2,
   CheckCheck,
   ClipboardEdit,
+  Clock3,
   FileText,
   Focus,
   GitCommit,
   Layers3,
   ListChecks,
+  ListTodo,
   Plus,
   RefreshCw,
   Sparkles,
   Target,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { useLocation, useNavigate } from "react-router-dom";
 import { AddTaskModal } from "../components/ui/AddTaskModal";
 import { Badge } from "../components/ui/Badge";
@@ -45,6 +50,12 @@ import { syncCommits } from "../lib/api/gitSync";
 import { createManualLog } from "../lib/api/manualLogs";
 import { listManualLogs } from "../lib/api/manualLogs";
 import { dismissNudge, listNudgeDismissals } from "../lib/api/nudges";
+import {
+  dismissPriorityReminder,
+  listPriorityReminders,
+  runPriorityReminderCheck,
+  snoozePriorityReminder,
+} from "../lib/api/priorityReminders";
 import { listProjects } from "../lib/api/projects";
 import { listReportNotes, listReports, saveDailyReviewNote } from "../lib/api/reports";
 import { getSettings, updateSettings } from "../lib/api/settings";
@@ -70,6 +81,7 @@ import type { CreateManualLogInput } from "../types/manualLog";
 import type { StopFocusSessionInput } from "../types/focusSession";
 import type { WeeklyTask, WeeklyTaskPriority, WeeklyTaskStatus, WeeklyTaskType } from "../types/weeklyTask";
 import type { DailyPlanItem } from "../types/dailyPlan";
+import type { PriorityReminder } from "../types/priorityReminder";
 
 type LocationState = {
   openTask?: boolean;
@@ -180,6 +192,11 @@ export function TodayPage() {
         scope: "today",
       }),
   });
+  const priorityRemindersQuery = useQuery({
+    queryKey: ["priorityReminders", today.date],
+    queryFn: () => listPriorityReminders({ date: today.date }),
+    refetchInterval: 60_000,
+  });
   const commandCenterQuery = useQuery({
     queryKey: ["todayCommandCenter", today.date],
     queryFn: () => getTodayCommandCenter({ date: today.date }),
@@ -241,6 +258,20 @@ export function TodayPage() {
     setPriorityDraft(next);
   }, [commandCenterQuery.data?.topPriorities]);
 
+  useEffect(() => {
+    if (!settingsQuery.data?.priorityRemindersEnabled) return;
+    if (!commandCenterQuery.data?.topPriorities.length) return;
+    runReminderMutation.mutate();
+    const timer = window.setInterval(() => {
+      runReminderMutation.mutate();
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, [
+    settingsQuery.data?.priorityRemindersEnabled,
+    commandCenterQuery.data?.topPriorities.length,
+    today.date,
+  ]);
+
   async function invalidateDailyViews() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["activity"] }),
@@ -252,6 +283,8 @@ export function TodayPage() {
       queryClient.invalidateQueries({ queryKey: ["focusSession"] }),
       queryClient.invalidateQueries({ queryKey: ["focusSessions"] }),
       queryClient.invalidateQueries({ queryKey: ["nudgeDismissals"] }),
+      queryClient.invalidateQueries({ queryKey: ["priorityReminders"] }),
+      queryClient.invalidateQueries({ queryKey: ["todayCommandCenter", today.date] }),
       ...weeklyTaskQueryRoots.map((queryKey) =>
         queryClient.invalidateQueries({ queryKey }),
       ),
@@ -418,6 +451,51 @@ export function TodayPage() {
       toast.error("Nudge dismiss failed", error instanceof Error ? error.message : "The nudge could not be dismissed.");
     },
   });
+  const runReminderMutation = useMutation({
+    mutationFn: () => runPriorityReminderCheck({ date: today.date }),
+    onSuccess: async (reminders) => {
+      if (reminders.length > 0) {
+        await queryClient.invalidateQueries({ queryKey: ["priorityReminders", today.date] });
+        const message =
+          reminders.length === 1
+            ? reminders[0].title
+            : `${reminders.length} top priorities still need attention.`;
+        toast.info("Today focus reminder", message);
+        speech.announce(`Today focus reminder. ${message}`, { category: "nudge" });
+        if (settingsQuery.data?.priorityReminderDesktopEnabled) {
+          sendPriorityNotification(reminders).catch(() => null);
+        }
+      }
+    },
+  });
+  const snoozeReminderMutation = useMutation({
+    mutationFn: (reminderKey: string) =>
+      snoozePriorityReminder({
+        reminderKey,
+        date: today.date,
+        snoozeMinutes: settingsQuery.data?.priorityReminderSnoozeMinutes,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["priorityReminders", today.date] });
+      toast.info("Reminder snoozed", "WorkTrace will nudge you again later.");
+    },
+    onError: (error) => {
+      toast.error("Snooze failed", error instanceof Error ? error.message : "The reminder could not be snoozed.");
+    },
+  });
+  const dismissPriorityReminderMutation = useMutation({
+    mutationFn: (reminderKey: string) =>
+      dismissPriorityReminder({
+        reminderKey,
+        date: today.date,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["priorityReminders", today.date] });
+    },
+    onError: (error) => {
+      toast.error("Dismiss failed", error instanceof Error ? error.message : "The reminder could not be dismissed.");
+    },
+  });
   const onboardingMutation = useMutation({
     mutationFn: updateSettings,
     onSuccess: async () => {
@@ -435,6 +513,7 @@ export function TodayPage() {
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["todayCommandCenter", today.date] });
+      await queryClient.invalidateQueries({ queryKey: ["priorityReminders", today.date] });
       toast.success("Top priorities updated");
     },
     onError: (error) => {
@@ -446,6 +525,7 @@ export function TodayPage() {
       updateDailyPlanItem(id, input),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["todayCommandCenter", today.date] });
+      await queryClient.invalidateQueries({ queryKey: ["priorityReminders", today.date] });
     },
     onError: (error) => {
       toast.error("Priority update failed", error instanceof Error ? error.message : "Could not update priority item.");
@@ -588,6 +668,14 @@ export function TodayPage() {
     !settingsQuery.data?.onboardingCompleted &&
     !settingsQuery.data?.onboardingDismissedChecklist;
   const dismissedNudgeKeys = new Set((nudgeDismissalsQuery.data ?? []).map((dismissal) => dismissal.nudgeKey));
+  const incompletePriorityIds = new Set(
+    (commandCenterQuery.data?.topPriorities ?? [])
+      .filter((item) => item.status !== "done" && item.status !== "dropped")
+      .map((item) => item.id),
+  );
+  const activePriorityReminders = (priorityRemindersQuery.data ?? []).filter(
+    (reminder) => !reminder.dismissedAt && incompletePriorityIds.has(reminder.dailyPlanItemId),
+  );
   const activeNudges = buildTodayNudges({
     activityCount: activityItems.length,
     blockerCount: blockers.length,
@@ -745,6 +833,8 @@ export function TodayPage() {
         isLoading={commandCenterQuery.isLoading}
         isError={commandCenterQuery.isError}
         errorMessage={commandCenterQuery.error instanceof Error ? commandCenterQuery.error.message : null}
+        openTasks={todayTasks}
+        reminders={priorityRemindersQuery.data ?? []}
         priorityDraft={priorityDraft}
         onPriorityDraftChange={setPriorityDraft}
         onSavePriorities={() =>
@@ -776,6 +866,14 @@ export function TodayPage() {
                 id: item.id,
                 input: { status: "done" },
               })
+        }
+        onStartPriorityFocus={(item) =>
+          startFocusMutation.mutate({
+            title: item.title,
+            projectId: null,
+            taskId: item.weeklyTaskId ?? null,
+            notes: null,
+          })
         }
         isSaving={
           replacePrioritiesMutation.isPending ||
@@ -887,6 +985,26 @@ export function TodayPage() {
         </div>
 
         <div className="space-y-4">
+          <PriorityReminderPanel
+            reminders={activePriorityReminders}
+            isPending={snoozeReminderMutation.isPending || dismissPriorityReminderMutation.isPending}
+            onSnooze={(reminder) => snoozeReminderMutation.mutate(reminder.reminderKey)}
+            onDismiss={(reminder) => dismissPriorityReminderMutation.mutate(reminder.reminderKey)}
+            onStartFocus={(reminder) =>
+              startFocusMutation.mutate({
+                title: reminder.title,
+                projectId: null,
+                taskId: reminder.weeklyTaskId ?? null,
+                notes: null,
+              })
+            }
+            onMarkDone={(reminder) =>
+              updatePriorityMutation.mutate({
+                id: reminder.dailyPlanItemId,
+                input: { status: "done" },
+              })
+            }
+          />
           <NudgePanel
             nudges={activeNudges}
             onDismiss={(key) => dismissNudgeMutation.mutate(key)}
@@ -1182,11 +1300,14 @@ function TodayCommandCenterPanel({
   isLoading,
   isError,
   errorMessage,
+  openTasks,
+  reminders,
   priorityDraft,
   onPriorityDraftChange,
   onSavePriorities,
   onSetFocusGoal,
   onMarkPriorityDone,
+  onStartPriorityFocus,
   isSaving,
 }: {
   todayDate: string;
@@ -1194,17 +1315,70 @@ function TodayCommandCenterPanel({
   isLoading: boolean;
   isError: boolean;
   errorMessage: string | null;
+  openTasks: WeeklyTask[];
+  reminders: PriorityReminder[];
   priorityDraft: Array<{ title: string; plannedMinutes: string; weeklyTaskId?: string }>;
   onPriorityDraftChange: (draft: Array<{ title: string; plannedMinutes: string; weeklyTaskId?: string }>) => void;
   onSavePriorities: () => void;
   onSetFocusGoal: (minutes: number) => void;
   onMarkPriorityDone: (item: DailyPlanItem) => void;
+  onStartPriorityFocus: (item: DailyPlanItem) => void;
   isSaving: boolean;
 }) {
+  const currentTask = commandCenter?.currentTask ?? null;
+  const suggestedTask = commandCenter?.suggestedNextTask ?? null;
+  const firstPriority = commandCenter?.topPriorities.find((item) => item.status !== "done" && item.status !== "dropped") ?? commandCenter?.topPriorities[0] ?? null;
+  const mainFocus = currentTask?.title ?? firstPriority?.title ?? "Choose a main focus for today";
+  const activeProject =
+    currentTask?.projectName ??
+    suggestedTask?.projectName ??
+    openTasks.find((task) => task.projectName)?.projectName ??
+    "General";
+  const upcomingMeetings = (commandCenter?.meetings ?? [])
+    .slice()
+    .filter((meeting) => {
+      const startsAt = new Date(meeting.startsAt).getTime();
+      return Number.isNaN(startsAt) || startsAt >= Date.now();
+    })
+    .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
+  const nextSuggestedAction = suggestedTask
+    ? `Start with ${suggestedTask.title}`
+    : openTasks.length > 0
+      ? "Review open tasks and pick the next focus block"
+      : "Sync activity or add the first task for today";
+  const focusGoal = commandCenter?.focusGoalMinutes ?? 240;
+  const focusActual = commandCenter?.focusActualMinutes ?? 0;
+  const focusPercent = Math.min(100, Math.round((focusActual / Math.max(focusGoal, 1)) * 100));
+  const remindersByItem = new Map(
+    reminders
+      .filter((reminder) => !reminder.dismissedAt)
+      .map((reminder) => [reminder.dailyPlanItemId, reminder]),
+  );
+
   return (
-    <Panel className="border-white/10 bg-gradient-to-b from-[#05112a]/88 to-[#040c1f]/92 p-3 sm:p-4">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <h2 className="text-2xl font-semibold text-white">Today Command Center</h2>
+    <Panel className="border-white/10 bg-slate-950/72 p-3 sm:p-4">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-cyan-200">
+            <Sparkles className="h-3.5 w-3.5" />
+            Today Focus
+          </div>
+          <h2 className="text-xl font-semibold leading-7 text-white sm:text-2xl">{mainFocus}</h2>
+          <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
+            <span className="inline-flex items-center gap-1.5">
+              <BriefcaseBusiness className="h-3.5 w-3.5 text-slate-500" />
+              {activeProject}
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <ListTodo className="h-3.5 w-3.5 text-slate-500" />
+              {openTasks.length} open tasks
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <CalendarClock className="h-3.5 w-3.5 text-slate-500" />
+              {upcomingMeetings.length} meetings
+            </span>
+          </p>
+        </div>
         <span className="rounded-lg border border-blue-300/20 bg-blue-500/10 px-3 py-1 text-xs font-semibold text-blue-200">{todayDate}</span>
       </div>
       {isLoading ? (
@@ -1214,9 +1388,24 @@ function TodayCommandCenterPanel({
           Command Center is unavailable. Existing Today tools remain usable. {errorMessage ?? ""}
         </div>
       ) : (
-        <div className="grid gap-3 xl:grid-cols-2 2xl:grid-cols-3">
-          <div className="rounded-xl border border-white/10 bg-gradient-to-br from-slate-950/80 to-[#081832]/80 p-3">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Top 3 Priorities</p>
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,1.25fr)_minmax(280px,0.75fr)]">
+          <div className="space-y-3">
+            <div className="rounded-xl border border-cyan-300/15 bg-cyan-300/[0.04] p-3">
+              <div className="mb-2 flex items-center gap-2">
+                <ArrowRight className="h-4 w-4 text-cyan-200" />
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-cyan-100">Next suggested action</p>
+              </div>
+              <p className="text-sm font-medium leading-6 text-slate-100">{nextSuggestedAction}</p>
+              {suggestedTask?.projectName ? (
+                <p className="mt-1 text-xs text-slate-500">{suggestedTask.projectName} / {suggestedTask.priority}</p>
+              ) : null}
+            </div>
+
+            <div className="rounded-xl border border-white/10 bg-white/[0.025] p-3">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Set Today&apos;s Focus</p>
+                <Badge tone="blue">{commandCenter?.endOfDayProgress.completedPriorities ?? 0}/{commandCenter?.endOfDayProgress.totalPriorities ?? 0} done</Badge>
+              </div>
             <div className="space-y-2">
               {priorityDraft.map((item, index) => (
                 <div key={index} className="grid grid-cols-[24px_1fr_84px] items-center gap-2">
@@ -1240,7 +1429,7 @@ function TodayCommandCenterPanel({
                       next[index] = { ...next[index], plannedMinutes: event.currentTarget.value };
                       onPriorityDraftChange(next);
                     }}
-                    placeholder="mins"
+                    placeholder="Planned"
                     className="h-9 rounded-lg border border-white/10 bg-slate-950/70 px-2 text-xs text-slate-100 outline-none focus:border-blue-300/50"
                   />
                 </div>
@@ -1249,89 +1438,214 @@ function TodayCommandCenterPanel({
             <Button onClick={onSavePriorities} className="mt-3 h-9 px-3 text-sm" disabled={isSaving}>
               Save priorities
             </Button>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <MissionMetric
+                icon={Focus}
+                label="Focus progress"
+                value={`${focusActual}m / ${focusGoal}m`}
+                detail={`${focusPercent}% of today's goal`}
+              />
+              <MissionMetric
+                icon={Activity}
+                label="Risk"
+                value={`${commandCenter?.distractionRisk.level ?? "low"} (${commandCenter?.distractionRisk.score ?? 0})`}
+                detail={(commandCenter?.distractionRisk.reasons ?? [])[0] ?? "No attention risks detected"}
+              />
+            </div>
           </div>
 
-          <div className="rounded-xl border border-white/10 bg-gradient-to-br from-slate-950/80 to-[#071428]/80 p-3">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Plan vs Actual</p>
-            <div className="flex items-center gap-4">
-              <div className="flex h-28 w-28 items-center justify-center rounded-full border-8 border-white/10">
-                <div className="text-center">
-                  <p className="text-2xl font-semibold text-white">
-                    {Math.round(
-                      ((commandCenter?.endOfDayProgress.actualMinutes ?? 0) /
-                        Math.max(commandCenter?.endOfDayProgress.plannedMinutes ?? 1, 1)) *
-                        100,
-                    )}%
+          <div className="space-y-3">
+            <div className="rounded-xl border border-white/10 bg-white/[0.025] p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Current active project</p>
+                <Layers3 className="h-4 w-4 text-slate-500" />
+              </div>
+              <p className="truncate text-sm font-semibold text-slate-100">{activeProject}</p>
+              <p className="mt-1 text-xs leading-5 text-slate-500">
+                Current: {currentTask?.title ?? "No task is in progress"}
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-white/10 bg-white/[0.025] p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Upcoming meetings</p>
+                <CalendarClock className="h-4 w-4 text-slate-500" />
+              </div>
+              <div className="space-y-2">
+                {upcomingMeetings.length > 0 ? (
+                  upcomingMeetings.slice(0, 3).map((meeting) => (
+                    <div key={meeting.id} className="flex items-start gap-2 text-xs">
+                      <Clock3 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-500" />
+                      <div className="min-w-0">
+                        <p className="truncate font-medium text-slate-200">{meeting.title}</p>
+                        <p className="text-slate-500">{formatMeetingTime(meeting.startsAt)}</p>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs leading-5 text-slate-500">
+                    {(commandCenter?.meetings.length ?? 0) > 0 ? "No more meetings today." : "No meetings on today's calendar."}
                   </p>
-                  <p className="text-[11px] text-slate-400">Completed</p>
-                </div>
-              </div>
-              <div className="space-y-1 text-sm text-slate-300">
-                <p>Plan: {(commandCenter?.endOfDayProgress.plannedMinutes ?? 0)}m</p>
-                <p>Actual: {(commandCenter?.endOfDayProgress.actualMinutes ?? 0)}m</p>
+                )}
               </div>
             </div>
-          </div>
 
-          <div className="rounded-xl border border-white/10 bg-gradient-to-br from-slate-950/80 to-[#07122a]/80 p-3">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Focus + Risk</p>
-            <p className="text-sm text-slate-300">Goal: {commandCenter?.focusGoalMinutes ?? 240}m</p>
-            <p className="text-sm text-slate-300">Actual: {commandCenter?.focusActualMinutes ?? 0}m</p>
-            <p className="mt-2 text-sm text-slate-300">
-              Risk: {commandCenter?.distractionRisk.level ?? "low"} ({commandCenter?.distractionRisk.score ?? 0})
-            </p>
-            <Button
-              onClick={() => onSetFocusGoal(240)}
-              className="mt-3 h-8 px-3 text-sm"
-              disabled={isSaving}
-            >
-              Reset goal to 4h
-            </Button>
-          </div>
-
-          <div className="rounded-xl border border-white/10 bg-gradient-to-br from-slate-950/80 to-[#07122a]/80 p-3">
-            <div className="mb-2 flex items-center justify-between">
-              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Current + Next</p>
-              <Layers3 className="h-4 w-4 text-slate-500" />
-            </div>
-            <p className="text-sm text-slate-300">Current: {commandCenter?.currentTask?.title ?? "None"}</p>
-            <p className="mt-1 text-sm text-slate-300">Suggested: {commandCenter?.suggestedNextTask?.title ?? "None"}</p>
-          </div>
-
-          <div className="rounded-xl border border-white/10 bg-gradient-to-br from-slate-950/80 to-[#07122a]/80 p-3">
-            <div className="mb-2 flex items-center justify-between">
-              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Meetings + EOD</p>
-              <CalendarClock className="h-4 w-4 text-slate-500" />
-            </div>
-            <p className="text-sm text-slate-300">Meetings today: {commandCenter?.meetings.length ?? 0}</p>
-            <p className="mt-1 text-sm text-slate-300">
-              Progress: {commandCenter?.endOfDayProgress.completedPriorities ?? 0}/
-              {commandCenter?.endOfDayProgress.totalPriorities ?? 0}
-            </p>
-          </div>
-
-          <div className="rounded-xl border border-white/10 bg-gradient-to-br from-slate-950/80 to-[#07122a]/80 p-3">
-            <div className="mb-2 flex items-center justify-between">
-              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Mark Done</p>
-              <CheckCheck className="h-4 w-4 text-slate-500" />
-            </div>
-            <div className="space-y-2">
-              {(commandCenter?.topPriorities ?? []).map((item) => (
-                <div key={item.id} className="flex items-center justify-between gap-2 rounded-lg border border-white/8 bg-white/[0.02] p-2">
-                  <p className="truncate text-sm text-slate-200">{item.rank}. {item.title}</p>
-                  {item.status !== "done" ? (
-                    <Button onClick={() => onMarkPriorityDone(item)} className="h-7 px-2 text-xs" disabled={isSaving}>
-                      {item.id.startsWith("suggested_daily_plan_item_") ? "Save" : "Done"}
-                    </Button>
-                  ) : (
-                    <Badge tone="green">Done</Badge>
-                  )}
-                </div>
-              ))}
+            <div className="rounded-xl border border-white/10 bg-white/[0.025] p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Top priorities</p>
+                <CheckCheck className="h-4 w-4 text-slate-500" />
+              </div>
+              <div className="space-y-2">
+                {(commandCenter?.topPriorities ?? []).map((item) => (
+                  <div key={item.id} className="rounded-lg border border-white/8 bg-white/[0.02] p-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm text-slate-200">{item.rank}. {item.title}</p>
+                        <p className="mt-1 text-[11px] text-slate-500">
+                          {item.plannedMinutes ? `${item.plannedMinutes}m planned` : "No planned time"}
+                        </p>
+                      </div>
+                      <PriorityStatusBadge item={item} reminder={remindersByItem.get(item.id)} />
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {item.status !== "done" ? (
+                        <>
+                          <Button onClick={() => onStartPriorityFocus(item)} variant="ghost" className="h-7 px-2 text-xs" disabled={isSaving}>
+                            Start focus
+                          </Button>
+                          <Button onClick={() => onMarkPriorityDone(item)} className="h-7 px-2 text-xs" disabled={isSaving}>
+                            {item.id.startsWith("suggested_daily_plan_item_") ? "Save" : "Mark done"}
+                          </Button>
+                        </>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <Button
+                variant="ghost"
+                onClick={() => onSetFocusGoal(240)}
+                className="mt-3 h-8 px-2 text-xs"
+                disabled={isSaving}
+              >
+                Reset focus goal to 4h
+              </Button>
             </div>
           </div>
         </div>
       )}
+    </Panel>
+  );
+}
+
+function MissionMetric({
+  icon: Icon,
+  label,
+  value,
+  detail,
+}: {
+  icon: React.ElementType;
+  label: string;
+  value: string;
+  detail: string;
+}) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/[0.025] p-3">
+      <div className="flex items-start gap-3">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-cyan-200">
+          <Icon className="h-4 w-4" />
+        </span>
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</p>
+          <p className="mt-1 truncate text-sm font-semibold text-slate-100">{value}</p>
+          <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{detail}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PriorityStatusBadge({
+  item,
+  reminder,
+}: {
+  item: DailyPlanItem;
+  reminder?: PriorityReminder;
+}) {
+  if (item.status === "done") return <Badge tone="green">Done</Badge>;
+  if (item.status === "dropped") return <Badge tone="slate">Dropped</Badge>;
+  if (reminder?.status === "snoozed" && reminder.snoozedUntil) {
+    return <Badge tone="blue">Snoozed</Badge>;
+  }
+  if (reminder?.shownAt) return <Badge tone="orange">Due</Badge>;
+  return <Badge tone="slate">Focus</Badge>;
+}
+
+function PriorityReminderPanel({
+  reminders,
+  isPending,
+  onSnooze,
+  onDismiss,
+  onStartFocus,
+  onMarkDone,
+}: {
+  reminders: PriorityReminder[];
+  isPending: boolean;
+  onSnooze: (reminder: PriorityReminder) => void;
+  onDismiss: (reminder: PriorityReminder) => void;
+  onStartFocus: (reminder: PriorityReminder) => void;
+  onMarkDone: (reminder: PriorityReminder) => void;
+}) {
+  const active = reminders.filter((reminder) => reminder.status !== "dismissed");
+  return (
+    <Panel>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Target className="h-4 w-4 text-orange-200" />
+          <h2 className="text-sm font-semibold text-white">Priority Reminders</h2>
+        </div>
+        <span className="text-xs text-slate-500">{active.length} active</span>
+      </div>
+      <div className="space-y-2">
+        {active.length > 0 ? (
+          active.slice(0, 3).map((reminder) => (
+            <div key={reminder.id} className="rounded-xl border border-orange-300/15 bg-orange-300/5 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-100">{reminder.title}</p>
+                  <p className="mt-1 text-xs leading-5 text-slate-400">
+                    {reminder.projectName ?? "General"} / checkpoint {reminder.checkpointTime}
+                    {reminder.snoozedUntil ? ` / snoozed until ${reminder.snoozedUntil}` : ""}
+                  </p>
+                </div>
+                <Badge tone={reminder.status === "snoozed" ? "blue" : "orange"}>
+                  {reminder.status === "snoozed" ? "Snoozed" : "Due"}
+                </Badge>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button variant="ghost" className="h-8 px-2 text-xs" onClick={() => onStartFocus(reminder)}>
+                  Start focus
+                </Button>
+                <Button className="h-8 px-2 text-xs" onClick={() => onMarkDone(reminder)}>
+                  Mark done
+                </Button>
+                <Button variant="ghost" className="h-8 px-2 text-xs" disabled={isPending} onClick={() => onSnooze(reminder)}>
+                  Snooze
+                </Button>
+                <Button variant="ghost" className="h-8 px-2 text-xs" disabled={isPending} onClick={() => onDismiss(reminder)}>
+                  Dismiss today
+                </Button>
+              </div>
+            </div>
+          ))
+        ) : (
+          <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] p-4 text-xs leading-5 text-slate-400">
+            No top-priority reminders are due.
+          </div>
+        )}
+      </div>
     </Panel>
   );
 }
@@ -1398,6 +1712,23 @@ function parseLogCommand(value: string) {
   const summary = value.replace(/\b\d+\s*m(?:in)?\b/i, "").trim() || value.trim();
 
   return { summary, durationMinutes };
+}
+
+async function sendPriorityNotification(reminders: PriorityReminder[]) {
+  let granted = await isPermissionGranted();
+  if (!granted) {
+    const permission = await requestPermission();
+    granted = permission === "granted";
+  }
+  if (!granted) return;
+  sendNotification({
+    title: "Today focus reminder",
+    body:
+      reminders.length === 1
+        ? reminders[0].title
+        : `${reminders.length} top priorities still need attention.`,
+    autoCancel: true,
+  });
 }
 
 function buildTodayNudges(input: {
@@ -1504,6 +1835,15 @@ function formatMinutes(minutes: number) {
   if (!hours) return `${sign}${remaining}m`;
   if (!remaining) return `${sign}${hours}h`;
   return `${sign}${hours}h ${remaining}m`;
+}
+
+function formatMeetingTime(timestamp: string) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "Time unavailable";
+  return date.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 function projectNameFor(

@@ -10,6 +10,7 @@ pub mod git_metadata;
 pub mod github;
 pub mod manual_log;
 pub mod nudge;
+pub mod priority_reminder;
 pub mod project;
 pub mod report;
 pub mod settings;

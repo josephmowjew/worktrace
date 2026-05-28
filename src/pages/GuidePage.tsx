@@ -6,9 +6,13 @@ import {
   FileText,
   Focus,
   GitCommit,
+  Layers3,
   ListChecks,
   NotebookText,
+  PackageCheck,
+  PanelsTopLeft,
   Sparkles,
+  Target,
 } from "lucide-react";
 import { Panel } from "../components/ui/Panel";
 import { PageHeader } from "../components/ui/PageHeader";
@@ -41,6 +45,101 @@ const weeklySteps = [
   "During the week: sync commits, log non-code work, and keep blockers current.",
   "Friday: open the Prepare Report flow, clean up carryovers, then generate the report.",
   "Before sending: edit the Markdown preview so it reads like a polished human update.",
+];
+
+const featureArticles = [
+  {
+    title: "Today Focus And Priority Reminders",
+    icon: Target,
+    detail:
+      "Today Focus uses your daily Top 3 priorities as the work that deserves attention. WorkTrace checks them at work-block checkpoints and reminds you when something is still unfinished.",
+    points: [
+      "Set or confirm the Top 3 priorities on Today, then add planned minutes when useful.",
+      "Incomplete priorities can show in-app reminder cards and optional desktop notifications.",
+      "Use Start focus, Mark done, Snooze, or Dismiss today from the reminder card.",
+      "Reminder checkpoints, snooze duration, quiet hours, and desktop notifications are configurable in Settings.",
+    ],
+  },
+  {
+    title: "Smart Activity Grouping",
+    icon: Layers3,
+    detail:
+      "Smart Organize turns related commits into editable work items. It uses local Git evidence such as branch names, issue tokens, changed modules, file paths, timing, and task context, then leaves weak single commits as raw commits instead of forcing fake groups.",
+    points: [
+      "Open Activity Timeline and choose Smart Organize for the selected week.",
+      "Expand a work item to inspect the supporting commits and why they were grouped.",
+      "Rename the work item or edit the report summary; WorkTrace remembers that local correction for future similar work.",
+      "Workspace items can span multiple projects when the evidence is strong, but workspace membership alone is not enough to group work.",
+    ],
+  },
+  {
+    title: "Project Details And PR Packages",
+    icon: PackageCheck,
+    detail:
+      "Project Details reuses the same canonical work items from the timeline. Grouped commits are hidden as raw rows, but remain available as expandable evidence and PR inputs.",
+    points: [
+      "Select a work item to build a PR package from all child commits in that project.",
+      "For workspace-level work items, Project Details uses the current repo slice of the shared group.",
+      "The PR title and notes start from the work item title and report summary, while cherry-pick commands still use commit hashes.",
+    ],
+  },
+  {
+    title: "Tasks, Meetings, And Manual Logs",
+    icon: NotebookText,
+    detail:
+      "Weekly Plan tasks and manual logs fill the gaps that commits cannot explain: meetings, support, planning, reviews, QA, blockers, and follow-ups.",
+    points: [
+      "Associate tasks and logs with projects so they appear in Project Details and reports.",
+      "Completed tasks still appear in Project Details for the selected week with their status badge.",
+      "Click tasks or meetings in Project Details to inspect the full captured context.",
+    ],
+  },
+  {
+    title: "Global Quick Capture",
+    icon: Sparkles,
+    detail:
+      "Press Ctrl + Shift + Space to open a small capture window from anywhere. It is for the tiny bits of work that disappear if you wait: client calls, support issues, debugging, research, deployments, and admin tasks.",
+    points: [
+      "Type one sentence, choose a category, then press Enter to save immediately.",
+      "Project and duration are optional. WorkTrace may suggest a recent project, but it only applies when you click the suggestion or choose a project yourself.",
+      "Leave the project as General and time as No time when you want a quick note without extra metadata.",
+      "Quick captures are saved as local manual logs and can be included in reports by default.",
+      "Change the shortcut or disable it from Settings when another app already owns that key combination.",
+    ],
+  },
+  {
+    title: "Focus Sessions",
+    icon: Focus,
+    detail:
+      "Focus sessions connect time spent to tasks or projects. When you stop a session, you can update progress and create a manual log so the time has report context.",
+    points: [
+      "Start focus from Today, a task, or a project.",
+      "Stop focus when the work changes so coding time and manual context stay accurate.",
+      "Use the generated log when the session captures useful non-commit context.",
+    ],
+  },
+  {
+    title: "Reports",
+    icon: FileText,
+    detail:
+      "Reports prefer polished work items over raw commit lists. Group summaries become report bullets, and child commits are treated as supporting evidence instead of duplicate output.",
+    points: [
+      "Review weak titles before generating a report.",
+      "Use report inclusion badges to decide what should be visible.",
+      "Edit the final Markdown preview before sending so it sounds like you.",
+    ],
+  },
+  {
+    title: "Settings And Local Privacy",
+    icon: PanelsTopLeft,
+    detail:
+      "WorkTrace is local-first. Git evidence, grouping data, title memory, embeddings, tasks, and report context stay on this machine unless you explicitly configure an integration.",
+    points: [
+      "Use Settings to connect or disconnect external integrations.",
+      "Embeddings are optional quality signals and are not required for deterministic grouping.",
+      "Full Sync is available for repair, while normal sync is incremental.",
+    ],
+  },
 ];
 
 const commands = [
@@ -105,6 +204,36 @@ export function GuidePage() {
           </div>
         </Panel>
       </div>
+
+      <Panel>
+        <div className="mb-4 flex items-center gap-2">
+          <BookOpen className="h-4 w-4 text-blue-200" />
+          <h2 className="text-base font-semibold text-white">Feature Articles</h2>
+        </div>
+        <div className="grid gap-3 lg:grid-cols-2">
+          {featureArticles.map((article) => (
+            <article key={article.title} className="rounded-2xl border border-white/10 bg-slate-950/45 p-4">
+              <div className="flex items-start gap-3">
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-blue-300/20 bg-blue-500/10 text-blue-200">
+                  <article.icon className="h-4 w-4" />
+                </span>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold text-white">{article.title}</h3>
+                  <p className="mt-2 text-xs leading-5 text-slate-400">{article.detail}</p>
+                </div>
+              </div>
+              <div className="mt-3 space-y-2">
+                {article.points.map((point) => (
+                  <div key={point} className="flex gap-2 text-xs leading-5 text-slate-300">
+                    <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyan-300" />
+                    <p>{point}</p>
+                  </div>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+      </Panel>
 
       <div className="grid gap-4 xl:grid-cols-2">
         <Panel>

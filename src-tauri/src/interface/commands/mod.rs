@@ -12,6 +12,7 @@ pub mod manual_logs;
 pub mod nudges;
 pub mod project_stats;
 pub mod projects;
+pub mod priority_reminders;
 pub mod reports;
 pub mod settings;
 pub mod sparc_force;
@@ -98,10 +99,15 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         github::create_github_pull_request,
         manual_logs::list_manual_logs,
         manual_logs::create_manual_log,
+        manual_logs::quick_capture_log,
         manual_logs::update_manual_log,
         manual_logs::delete_manual_log,
         nudges::list_nudge_dismissals,
         nudges::dismiss_nudge,
+        priority_reminders::list_priority_reminders,
+        priority_reminders::run_priority_reminder_check,
+        priority_reminders::snooze_priority_reminder,
+        priority_reminders::dismiss_priority_reminder,
         reports::generate_report,
         reports::save_report,
         reports::list_reports,
@@ -142,6 +148,11 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         windows::hide_todo_widget,
         windows::toggle_todo_widget,
         windows::set_todo_widget_always_on_top,
+        windows::show_quick_capture,
+        windows::hide_quick_capture,
+        windows::toggle_quick_capture,
+        windows::get_quick_capture_status,
+        windows::configure_quick_capture_shortcut,
         workspaces::list_workspaces,
         workspaces::create_workspace,
         workspaces::update_workspace,
