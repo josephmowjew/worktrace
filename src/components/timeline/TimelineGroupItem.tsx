@@ -7,9 +7,10 @@ type TimelineGroupItemProps = {
   group: ActivityGroup;
   onEdit: (group: ActivityGroup) => void;
   onSelectTitleCandidate?: (group: ActivityGroup, candidate: TitleCandidate) => void;
+  showTime?: boolean;
 };
 
-export function TimelineGroupItem({ group, onEdit, onSelectTitleCandidate }: TimelineGroupItemProps) {
+export function TimelineGroupItem({ group, onEdit, onSelectTitleCandidate, showTime = true }: TimelineGroupItemProps) {
   const [expanded, setExpanded] = useState(false);
   const [showNaming, setShowNaming] = useState(false);
   const firstTime = group.items[0]?.occurredAt ?? group.startDate;
@@ -24,9 +25,11 @@ export function TimelineGroupItem({ group, onEdit, onSelectTitleCandidate }: Tim
   return (
     <article className="group relative z-10 rounded-2xl border border-cyan-200/12 bg-slate-950/42 shadow-[0_14px_42px_rgba(2,6,23,0.26),inset_0_1px_0_rgba(255,255,255,0.045)] transition-[background-color,border-color,box-shadow,transform] duration-150 hover:border-cyan-200/22 hover:bg-slate-950/52">
       <div className="flex items-start gap-4 p-4">
-        <span className="absolute left-0 mt-1 w-16 -translate-x-[56px] text-left text-sm tabular-nums text-slate-400 max-sm:static max-sm:w-auto max-sm:translate-x-0 max-sm:text-xs">
-          {formatActivityTime(firstTime)}
-        </span>
+        {showTime ? (
+          <span className="absolute left-0 mt-1 w-16 -translate-x-[56px] text-left text-sm tabular-nums text-slate-400 max-sm:static max-sm:w-auto max-sm:translate-x-0 max-sm:text-xs">
+            {formatActivityTime(firstTime)}
+          </span>
+        ) : null}
 
         <div className="relative z-10 flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-cyan-300/15 bg-cyan-500/10 text-cyan-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
           <GitCommitVertical className="h-5 w-5 shrink-0 stroke-[2.35]" />

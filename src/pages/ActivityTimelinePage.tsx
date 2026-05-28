@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BarChart3,
+  BookOpen,
   CalendarDays,
   ChevronLeft,
   ChevronDown,
@@ -29,6 +30,8 @@ import { WeekSummary } from "../components/timeline/WeekSummary";
 import { KeyHighlights } from "../components/timeline/KeyHighlights";
 import { TimelineItem } from "../components/timeline/TimelineItem";
 import { TimelineGroupItem } from "../components/timeline/TimelineGroupItem";
+import { StoryTimeline } from "../components/timeline/StoryTimeline";
+import type { MixedTimelineDay as MixedTimelineDayModel, TimelineEntry } from "../components/timeline/storyTimelineModel";
 import { TaskDetailModal } from "../components/ui/TaskDetailModal";
 import { Badge } from "../components/ui/Badge";
 import { ModalShell } from "../components/ui/ModalShell";
@@ -66,6 +69,7 @@ export function ActivityTimelinePage() {
   const [editingGroup, setEditingGroup] = useState<ActivityGroup | null>(null);
   const [syncMenuOpen, setSyncMenuOpen] = useState(false);
   const [organizePhase, setOrganizePhase] = useState<"idle" | "evidence" | "grouping">("idle");
+  const [viewMode, setViewMode] = useState<"timeline" | "story">("timeline");
 
   const weekRange = useMemo(() => currentWeekRange(currentDate), [currentDate]);
 
@@ -561,6 +565,36 @@ export function ActivityTimelinePage() {
             size="sm"
           />
           <div className="ml-auto flex flex-wrap items-center gap-2">
+            <div className="flex h-10 rounded-xl border border-white/10 bg-slate-950/35 p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+              <button
+                type="button"
+                onClick={() => setViewMode("timeline")}
+                className={[
+                  "inline-flex items-center gap-2 rounded-lg px-3 text-xs font-semibold transition-[background-color,color,transform] duration-150 active:scale-[0.96]",
+                  viewMode === "timeline"
+                    ? "bg-blue-500 text-white shadow-[0_8px_18px_rgba(37,99,235,0.22)]"
+                    : "text-slate-400 hover:bg-white/8 hover:text-slate-200",
+                ].join(" ")}
+                aria-pressed={viewMode === "timeline"}
+              >
+                <BarChart3 className="h-3.5 w-3.5" />
+                Timeline
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("story")}
+                className={[
+                  "inline-flex items-center gap-2 rounded-lg px-3 text-xs font-semibold transition-[background-color,color,transform] duration-150 active:scale-[0.96]",
+                  viewMode === "story"
+                    ? "bg-cyan-500 text-slate-950 shadow-[0_8px_18px_rgba(6,182,212,0.18)]"
+                    : "text-slate-400 hover:bg-white/8 hover:text-slate-200",
+                ].join(" ")}
+                aria-pressed={viewMode === "story"}
+              >
+                <BookOpen className="h-3.5 w-3.5" />
+                Story
+              </button>
+            </div>
             <Badge tone={embeddingStatusQuery.data?.available ? "green" : "slate"}>
               {embeddingStatusQuery.data?.available ? "Semantic on" : "Rules only"}
             </Badge>
@@ -658,7 +692,7 @@ export function ActivityTimelinePage() {
                     ? tasksQuery.error.message
                     : "Activity could not be loaded."}
               </div>
-            ) : filteredDays.length > 0 ? (
+            ) : filteredDays.length > 0 && viewMode === "timeline" ? (
               <div className="space-y-7">
                 {filteredDays.map((day) => (
                   <MixedTimelineDay
@@ -672,6 +706,15 @@ export function ActivityTimelinePage() {
                   />
                 ))}
               </div>
+            ) : filteredDays.length > 0 ? (
+              <StoryTimeline
+                days={filteredDays}
+                onViewTask={setViewingTask}
+                onEditGroup={setEditingGroup}
+                onSelectTitleCandidate={(group, candidate) =>
+                  selectTitleCandidateMutation.mutate({ group, candidate })
+                }
+              />
             ) : (
               <div className="flex min-h-[300px] items-center justify-center rounded-xl border border-dashed border-white/8 bg-white/[0.02] px-4 py-10 text-center text-xs text-slate-400">
                 No activity found for this week. Sync Git commits or create manual logs.
@@ -723,15 +766,7 @@ export function ActivityTimelinePage() {
   );
 }
 
-type TimelineEntry =
-  | { kind: "activity"; id: string; occurredAt: string; item: ActivityItem }
-  | { kind: "group"; id: string; occurredAt: string; group: ActivityGroup }
-  | { kind: "task"; id: string; occurredAt: string; task: WeeklyTask };
-
-type MixedTimelineDay = {
-  date: string;
-  items: TimelineEntry[];
-};
+type MixedTimelineDay = MixedTimelineDayModel;
 
 function MixedTimelineDay({
   day,
