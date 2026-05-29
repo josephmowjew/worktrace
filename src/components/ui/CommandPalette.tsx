@@ -1,4 +1,4 @@
-import { Activity, BarChart3, BookOpen, ClipboardEdit, DatabaseBackup, FileText, Focus, FolderKanban, Home, ListChecks, ListTodo, Mic, RefreshCw, Search, Settings, Square, X } from "lucide-react";
+import { Activity, BarChart3, BookOpen, ClipboardEdit, DatabaseBackup, FileText, Focus, FolderKanban, HelpCircle, Home, ListChecks, ListTodo, Mic, RefreshCw, Search, Settings, Square, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
@@ -37,6 +37,7 @@ export function createBaseCommandActions({
     { id: "nav-projects", label: "Go to Repositories", description: "Manage tracked repositories", group: "Navigation", icon: FolderKanban, onRun: () => navigate("/projects") },
     { id: "nav-dashboard", label: "Go to Dashboard", description: "Open analytics dashboard", group: "Navigation", icon: BarChart3, onRun: () => navigate("/dashboard") },
     { id: "nav-backup", label: "Go to Backup", description: "Manage backup settings", group: "Navigation", icon: DatabaseBackup, onRun: () => navigate("/backup") },
+    { id: "nav-onboarding", label: "Open Onboarding", description: "Revisit setup steps anytime", group: "Navigation", icon: HelpCircle, onRun: () => navigate("/onboarding") },
     { id: "nav-guide", label: "Go to Guide", description: "Learn the best WorkTrace workflow", group: "Navigation", icon: BookOpen, onRun: () => navigate("/guide") },
     { id: "nav-settings", label: "Go to Settings", description: "Update reporting defaults", group: "Navigation", icon: Settings, onRun: () => navigate("/settings") },
   ];

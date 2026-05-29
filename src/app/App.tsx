@@ -7,6 +7,7 @@ import { BackupPage } from "../pages/BackupPage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { GuidePage } from "../pages/GuidePage";
 import { ManualLogPage } from "../pages/ManualLogPage";
+import { OnboardingPage } from "../pages/OnboardingPage";
 import { ProjectDetailPage } from "../pages/ProjectDetailPage";
 import { ProjectsPage } from "../pages/ProjectsPage";
 import { QuickCaptureWindow } from "../pages/QuickCaptureWindow";
@@ -61,6 +62,7 @@ export default function App() {
             <AppLayout>
               <Routes>
                 <Route path="/" element={<TodayPage />} />
+                <Route path="/onboarding" element={<OnboardingPage />} />
                 <Route path="/dashboard" element={<DashboardPage />} />
                 <Route path="/projects" element={<ProjectsPage />} />
                 <Route path="/projects/:projectId" element={<ProjectDetailPage />} />

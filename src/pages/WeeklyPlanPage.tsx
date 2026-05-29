@@ -8,6 +8,7 @@ import {
   ListTodo,
   CheckCircle2,
   FolderKanban,
+  Repeat,
 } from "lucide-react";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { FastFindSearch, type FastFindPreviewItem } from "../components/ui/FastFindSearch";
@@ -509,6 +510,17 @@ export function WeeklyPlanPage() {
             inputRef={searchInputRef}
             value={searchQuery}
             onChange={setSearchQuery}
+            typeFilter={typeFilter}
+            statusFilter={statusFilter}
+            onTypeFilterChange={(value) => {
+              setTypeFilter(value);
+              setStatusFilter("all");
+            }}
+            onStatusFilterChange={(value) => {
+              setStatusFilter(value);
+              setTypeFilter("all");
+            }}
+            onClearFilters={handleClearFilters}
             visibleCount={visibleTaskCount}
             totalCount={tasks.length}
             isSearching={isSearching}
@@ -788,6 +800,11 @@ function WeeklyPlanSearch({
   inputRef,
   value,
   onChange,
+  typeFilter,
+  statusFilter,
+  onTypeFilterChange,
+  onStatusFilterChange,
+  onClearFilters,
   visibleCount,
   totalCount,
   isSearching,
@@ -796,6 +813,11 @@ function WeeklyPlanSearch({
   inputRef: React.RefObject<HTMLInputElement | null>;
   value: string;
   onChange: (value: string) => void;
+  typeFilter: WeeklyTaskType | "all";
+  statusFilter: WeeklyTaskStatus | "all";
+  onTypeFilterChange: (value: WeeklyTaskType | "all") => void;
+  onStatusFilterChange: (value: WeeklyTaskStatus | "all") => void;
+  onClearFilters: () => void;
   visibleCount: number;
   totalCount: number;
   isSearching: boolean;
@@ -810,6 +832,39 @@ function WeeklyPlanSearch({
       totalCount={totalCount}
       isSearching={isSearching}
       placeholder="Search tasks, projects, status, priority, or dates..."
+      chips={[
+        { label: "All", icon: ListChecks, active: typeFilter === "all" && statusFilter === "all", onClick: onClearFilters },
+        {
+          label: "Planned",
+          icon: ListTodo,
+          active: typeFilter === "planned_work",
+          onClick: () => onTypeFilterChange("planned_work"),
+        },
+        {
+          label: "Blockers",
+          icon: AlertTriangle,
+          active: typeFilter === "blocker",
+          onClick: () => onTypeFilterChange("blocker"),
+        },
+        {
+          label: "Carryover",
+          icon: Repeat,
+          active: typeFilter === "carryover",
+          onClick: () => onTypeFilterChange("carryover"),
+        },
+        {
+          label: "Completed",
+          icon: CheckCircle2,
+          active: statusFilter === "completed",
+          onClick: () => onStatusFilterChange("completed"),
+        },
+        {
+          label: "Follow-up",
+          icon: Calendar,
+          active: typeFilter === "follow_up",
+          onClick: () => onTypeFilterChange("follow_up"),
+        },
+      ]}
       previewItems={previewItems}
       emptyMessage={`Nothing matched "${value.trim()}". Try a project, status, priority, or task phrase.`}
       moreLabel={`Showing ${previewItems.length} of ${visibleCount} matches on the board.`}

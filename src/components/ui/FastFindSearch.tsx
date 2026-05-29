@@ -16,6 +16,7 @@ export type FastFindChip = {
   label: string;
   icon?: React.ElementType;
   active?: boolean;
+  onClick?: () => void;
 };
 
 export type FastFindPreviewItem = {
@@ -153,10 +154,13 @@ function FastFindSearchChip({
   label,
   icon: Icon = LayoutGrid,
   active = false,
+  onClick,
 }: FastFindChip) {
   return (
     <button
       type="button"
+      onClick={onClick}
+      aria-pressed={active}
       className={[
         "inline-flex h-9 items-center gap-2 rounded-xl border px-3 text-xs font-semibold transition-[background-color,border-color,color,box-shadow,transform] active:scale-[0.96]",
         active

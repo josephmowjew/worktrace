@@ -39,6 +39,7 @@ import { StopFocusModal } from "../components/ui/StopFocusModal";
 import { TodayQuickAddBar } from "../components/ui/TodayQuickAddBar";
 import { useSpeech } from "../components/ui/SpeechProvider";
 import { useToast } from "../components/ui/ToastProvider";
+import { useOnboardingProgress } from "../features/onboarding/useOnboardingProgress";
 import { listActivity } from "../lib/api/activity";
 import {
   cancelFocusSession,
@@ -49,7 +50,6 @@ import {
 } from "../lib/api/focusSessions";
 import { syncCommits } from "../lib/api/gitSync";
 import { createManualLog } from "../lib/api/manualLogs";
-import { listManualLogs } from "../lib/api/manualLogs";
 import { dismissNudge, listNudgeDismissals } from "../lib/api/nudges";
 import {
   dismissPriorityReminder,
@@ -58,10 +58,8 @@ import {
   snoozePriorityReminder,
 } from "../lib/api/priorityReminders";
 import { listProjects } from "../lib/api/projects";
-import { listReportNotes, listReports, saveDailyReviewNote } from "../lib/api/reports";
+import { listReportNotes, saveDailyReviewNote } from "../lib/api/reports";
 import { getSettings, updateSettings } from "../lib/api/settings";
-import { configureDesktopLifecycle } from "../lib/api/windows";
-import { listWorkspaces } from "../lib/api/workspaces";
 import { getWeekCapacity } from "../lib/api/calendar";
 import {
   getTodayCommandCenter,
@@ -120,14 +118,11 @@ export function TodayPage() {
     queryKey: ["projects"],
     queryFn: listProjects,
   });
-  const workspacesQuery = useQuery({
-    queryKey: ["workspaces"],
-    queryFn: listWorkspaces,
-  });
   const settingsQuery = useQuery({
     queryKey: ["settings"],
     queryFn: getSettings,
   });
+  const { progress: onboardingProgress } = useOnboardingProgress();
   const tasksQuery = useQuery({
     queryKey: ["weeklyTasks", weekRange.from, weekRange.to, "today"],
     queryFn: () =>
@@ -151,26 +146,6 @@ export function TodayPage() {
         from: today.from,
         to: today.to,
       }),
-  });
-  const weekActivityQuery = useQuery({
-    queryKey: ["activity", weekRange.from, weekRange.to, "onboarding"],
-    queryFn: () =>
-      listActivity({
-        from: weekRange.from,
-        to: weekRange.to,
-      }),
-  });
-  const manualLogsQuery = useQuery({
-    queryKey: ["manualLogs", weekRange.from, weekRange.to, "onboarding"],
-    queryFn: () =>
-      listManualLogs({
-        from: weekRange.from,
-        to: weekRange.to,
-      }),
-  });
-  const reportsQuery = useQuery({
-    queryKey: ["reports", "onboarding"],
-    queryFn: listReports,
   });
   const activeFocusQuery = useQuery({
     queryKey: ["focusSession", "active"],
@@ -515,33 +490,6 @@ export function TodayPage() {
       toast.error("Onboarding update failed", error instanceof Error ? error.message : "Could not update setup progress.");
     },
   });
-  const backgroundModeMutation = useMutation({
-    mutationFn: async () => {
-      const settings = await updateSettings({
-        startupEnabled: true,
-        startMinimizedToTray: true,
-        minimizeToTrayOnClose: true,
-      });
-      await configureDesktopLifecycle({
-        startupEnabled: settings.startupEnabled,
-        startMinimizedToTray: settings.startMinimizedToTray,
-        minimizeToTrayOnClose: settings.minimizeToTrayOnClose,
-      });
-      return settings;
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["settings"] });
-      await queryClient.invalidateQueries({ queryKey: ["desktopLifecycleStatus"] });
-      markOnboardingStep("background");
-      toast.success("Background mode enabled", "WorkTrace can start with Windows and stay available from the tray.");
-    },
-    onError: (error) => {
-      toast.error(
-        "Background mode failed",
-        error instanceof Error ? error.message : "Startup and tray settings could not be saved.",
-      );
-    },
-  });
   const replacePrioritiesMutation = useMutation({
     mutationFn: (items: Array<{ rank: number; title: string; weeklyTaskId?: string; plannedMinutes?: number }>) =>
       replaceDailyPlanItems({
@@ -625,93 +573,11 @@ export function TodayPage() {
   const reportReadyCount =
     activityItems.filter((item) => item.includedInReport).length +
     tasks.filter((task) => task.includedInReport).length;
-  const persistedOnboardingSteps = new Set(settingsQuery.data?.onboardingCompletedSteps ?? []);
-  const weekActivityItems = weekActivityQuery.data?.flatMap((day) => day.items) ?? [];
-  const profileComplete = Boolean(
-    settingsQuery.data &&
-      settingsQuery.data.name.trim() &&
-      settingsQuery.data.email.trim() &&
-      settingsQuery.data.name !== "John Developer" &&
-      settingsQuery.data.email !== "johndev@worktrace.app",
-  );
-  const projectsComplete =
-    projects.length > 0 ||
-    (workspacesQuery.data ?? []).some((workspace) => workspace.status === "active") ||
-    persistedOnboardingSteps.has("projects");
-  const syncComplete =
-    weekActivityItems.some((item) => item.activityType === "commit") ||
-    persistedOnboardingSteps.has("sync");
-  const captureComplete =
-    manualLogsQuery.data?.length ? true : tasks.length > 0 || persistedOnboardingSteps.has("capture");
-  const backgroundComplete =
-    Boolean(settingsQuery.data?.minimizeToTrayOnClose && settingsQuery.data?.startMinimizedToTray) ||
-    persistedOnboardingSteps.has("background");
-  const reportComplete =
-    reportsQuery.data?.length ? true : persistedOnboardingSteps.has("report");
-  const onboardingSteps = [
-    {
-      id: "profile",
-      title: "Complete profile basics",
-      detail: "Set your name, email, manager, and Git author email so reports read cleanly.",
-      action: "Open Settings",
-      done: profileComplete || persistedOnboardingSteps.has("profile"),
-      onAction: () => navigate("/settings"),
-    },
-    {
-      id: "projects",
-      title: "Add a project or workspace",
-      detail: "Point WorkTrace at a Git repo or workspace root so it can discover real work.",
-      action: "Add Projects",
-      done: projectsComplete,
-      onAction: () => navigate("/projects", { state: { openWorkspaceScan: true } }),
-    },
-    {
-      id: "sync",
-      title: "Sync commits",
-      detail: "Pull local Git activity into this week so the report has source material.",
-      action: "Sync Now",
-      done: syncComplete,
-      onAction: () => syncMutation.mutate(),
-      disabled: !projects.some((project) => Boolean(project.repoPath)) || syncMutation.isPending,
-    },
-    {
-      id: "capture",
-      title: "Capture one non-code item",
-      detail: "Add a task or quick log for meetings, support, research, QA, or planning.",
-      action: "Quick Log",
-      done: captureComplete,
-      onAction: () => setLogModalOpen(true),
-    },
-    {
-      id: "background",
-      title: "Set background access",
-      detail: "Let WorkTrace stay in the tray and start quietly with Windows when you opt in.",
-      action: backgroundModeMutation.isPending ? "Enabling" : "Enable Tray",
-      done: backgroundComplete,
-      onAction: () => backgroundModeMutation.mutate(),
-      disabled: backgroundModeMutation.isPending,
-    },
-    {
-      id: "report",
-      title: "Preview the weekly report",
-      detail: "Open report prep and make sure the trail can become a polished update.",
-      action: "Prep Report",
-      done: reportComplete,
-      onAction: () => {
-        markOnboardingStep("report");
-        setReportPrepOpen(true);
-      },
-    },
-  ];
-  const onboardingDoneCount = onboardingSteps.filter((step) => step.done).length;
-  const onboardingIsComplete = onboardingDoneCount === onboardingSteps.length;
-  const hasMeaningfulSetup =
-    projectsComplete || syncComplete || captureComplete || backgroundComplete || reportComplete || profileComplete;
-  const showWelcomeModal =
+  const showOnboardingEntry =
     Boolean(settingsQuery.data) &&
     !settingsQuery.data?.onboardingDismissedWelcome &&
     !settingsQuery.data?.onboardingCompleted &&
-    !hasMeaningfulSetup;
+    !onboardingProgress.hasMeaningfulSetup;
   const showOnboardingPanel =
     Boolean(settingsQuery.data) &&
     !settingsQuery.data?.onboardingCompleted &&
@@ -784,20 +650,6 @@ export function TodayPage() {
     }
   }
 
-  function markOnboardingStep(stepId: string) {
-    const existing = settingsQuery.data?.onboardingCompletedSteps ?? [];
-    if (existing.includes(stepId)) return;
-    onboardingMutation.mutate({
-      onboardingCompletedSteps: [...existing, stepId],
-    });
-  }
-
-  function dismissWelcome() {
-    onboardingMutation.mutate({
-      onboardingDismissedWelcome: true,
-    });
-  }
-
   function dismissChecklist() {
     onboardingMutation.mutate({
       onboardingDismissedChecklist: true,
@@ -805,23 +657,26 @@ export function TodayPage() {
   }
 
   useEffect(() => {
-    if (!settingsQuery.data || settingsQuery.data.onboardingCompleted || !onboardingIsComplete) {
+    if (!settingsQuery.data || settingsQuery.data.onboardingCompleted || !onboardingProgress.isComplete) {
       return;
     }
 
     onboardingMutation.mutate({
       onboardingCompleted: true,
-      onboardingCompletedSteps: onboardingSteps.map((step) => step.id),
+      onboardingCompletedSteps: onboardingProgress.steps.map((step) => step.id),
       onboardingCompletedAt: new Date().toISOString(),
     });
-  }, [onboardingIsComplete, settingsQuery.data?.onboardingCompleted]);
+  }, [onboardingProgress.isComplete, settingsQuery.data?.onboardingCompleted]);
 
   return (
     <div className="space-y-4">
-      {showWelcomeModal ? (
-        <OnboardingWelcomeModal
+      {showOnboardingEntry ? (
+        <OnboardingEntryPanel
           isPending={onboardingMutation.isPending}
-          onStart={dismissWelcome}
+          onStart={() => {
+            onboardingMutation.mutate({ onboardingDismissedWelcome: true });
+            navigate("/onboarding");
+          }}
           onSkip={() =>
             onboardingMutation.mutate({
               onboardingDismissedWelcome: true,
@@ -867,11 +722,12 @@ export function TodayPage() {
       />
 
       {showOnboardingPanel ? (
-        <OnboardingPipelinePanel
-          steps={onboardingSteps}
-          completedCount={onboardingDoneCount}
-          isComplete={onboardingIsComplete}
+        <OnboardingSetupPanel
+          steps={onboardingProgress.steps}
+          completedCount={onboardingProgress.completedCount}
+          isComplete={onboardingProgress.isComplete}
           isPending={onboardingMutation.isPending}
+          onOpen={() => navigate("/onboarding")}
           onDismiss={dismissChecklist}
         />
       ) : null}
@@ -1221,7 +1077,7 @@ function TodayStat({
   );
 }
 
-function OnboardingWelcomeModal({
+function OnboardingEntryPanel({
   isPending,
   onStart,
   onSkip,
@@ -1231,48 +1087,40 @@ function OnboardingWelcomeModal({
   onSkip: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4 backdrop-blur-sm">
-      <div className="relative w-full max-w-xl overflow-hidden rounded-3xl border border-cyan-300/20 bg-[#06101d] p-5 shadow-2xl shadow-blue-950/50">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_12%,rgba(59,130,246,0.28),transparent_34%),radial-gradient(circle_at_90%_10%,rgba(20,184,166,0.16),transparent_28%)]" />
-        <div className="relative">
-          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100">
+    <Panel className="border-blue-500/15 bg-[var(--wt-surface)] p-0">
+      <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+        <div>
+          <div className="mb-2 inline-flex items-center gap-2 rounded-md border border-blue-500/15 bg-blue-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-blue-200">
             <Sparkles className="h-3.5 w-3.5" />
-            Welcome to WorkTrace
+            First run
           </div>
-          <h2 className="text-3xl font-semibold tracking-tight text-white">
-            Get to a useful weekly report in under five minutes.
+          <h2 className="text-xl font-semibold tracking-tight text-[var(--wt-text-strong)]">
+            Build your first reporting trail in a few focused steps.
           </h2>
-          <p className="mt-3 text-sm leading-6 text-slate-300">
-            We will set up only what matters: profile details, one project or workspace,
-            a commit sync, one captured non-code item, tray access, and a quick report preview.
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--wt-text-muted)]">
+            Add local work evidence, capture one thing Git cannot see, then preview the weekly report it becomes.
           </p>
-          <div className="mt-5 grid gap-2 text-sm text-slate-300">
-            {["Profile", "Project or workspace", "Commit sync", "Manual capture", "Tray access", "Report preview"].map((item) => (
-              <div key={item} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
-                <CheckCircle2 className="h-4 w-4 text-cyan-200" />
-                {item}
-              </div>
-            ))}
-          </div>
-          <div className="mt-6 flex flex-wrap justify-end gap-2">
-            <Button variant="ghost" onClick={onSkip} disabled={isPending}>
-              Skip for now
-            </Button>
-            <Button variant="primary" onClick={onStart} disabled={isPending}>
-              Start setup
-            </Button>
-          </div>
         </div>
+        <div className="flex flex-wrap gap-2 lg:justify-end">
+          <Button variant="ghost" onClick={onSkip} disabled={isPending}>
+            Skip setup
+          </Button>
+          <Button variant="primary" onClick={onStart} disabled={isPending}>
+            <ArrowRight className="h-4 w-4" />
+            Start setup
+          </Button>
       </div>
-    </div>
+      </div>
+    </Panel>
   );
 }
 
-function OnboardingPipelinePanel({
+function OnboardingSetupPanel({
   steps,
   completedCount,
   isComplete,
   isPending,
+  onOpen,
   onDismiss,
 }: {
   steps: Array<{
@@ -1282,62 +1130,58 @@ function OnboardingPipelinePanel({
     action: string;
     done: boolean;
     disabled?: boolean;
-    onAction: () => void;
   }>;
   completedCount: number;
   isComplete: boolean;
   isPending: boolean;
+  onOpen: () => void;
   onDismiss: () => void;
 }) {
   return (
-    <Panel className="relative overflow-hidden border-cyan-300/20 bg-cyan-400/10 p-0">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_6%_20%,rgba(34,211,238,0.14),transparent_28%),linear-gradient(135deg,rgba(14,165,233,0.08),transparent_50%)]" />
-      <div className="relative p-4">
+    <Panel className="border-blue-500/15 bg-[var(--wt-surface)] p-0">
+      <div className="p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100">
+            <div className="mb-2 inline-flex items-center gap-2 rounded-md border border-blue-500/15 bg-blue-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-blue-200">
               <ListChecks className="h-3.5 w-3.5" />
-              Setup pipeline
+              Setup workspace
             </div>
-            <h2 className="text-xl font-semibold text-white">
-              {isComplete ? "WorkTrace is ready for weekly reporting" : "Turn WorkTrace into your reporting trail"}
+            <h2 className="text-xl font-semibold text-[var(--wt-text-strong)]">
+              {isComplete ? "Your first report trail is ready" : "Resume the WorkTrace setup path"}
             </h2>
-            <p className="mt-1 text-sm text-slate-400">
-              {completedCount} of {steps.length} steps complete. Each action opens the real WorkTrace flow.
+            <p className="mt-1 text-sm text-[var(--wt-text-muted)]">
+              {completedCount} of {steps.length} steps complete. The setup workspace keeps each action connected to the real app.
             </p>
           </div>
-          <Button variant="ghost" onClick={onDismiss} disabled={isPending}>
-            Hide
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="ghost" onClick={onDismiss} disabled={isPending}>
+              Hide
+            </Button>
+            <Button variant="primary" onClick={onOpen}>
+              Open setup
+            </Button>
+          </div>
         </div>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+        <div className="mt-4 grid gap-2 md:grid-cols-5">
           {steps.map((step, index) => (
             <article
               key={step.id}
               className={[
-                "rounded-2xl border p-3 transition",
+                "min-h-28 rounded-xl border p-3 transition-[background-color,border-color] duration-150 ease-out",
                 step.done
                   ? "border-emerald-300/25 bg-emerald-400/10"
-                  : "border-white/10 bg-slate-950/45",
+                  : "border-[var(--wt-border)] bg-[var(--wt-surface-muted)]",
               ].join(" ")}
             >
               <div className="flex items-start justify-between gap-2">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-xs font-semibold text-slate-200">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[var(--wt-border)] bg-[var(--wt-surface)] text-xs font-semibold text-[var(--wt-text)]">
                   {step.done ? <CheckCircle2 className="h-4 w-4 text-emerald-200" /> : index + 1}
                 </div>
                 {step.done ? <Badge tone="green">Done</Badge> : null}
               </div>
-              <h3 className="mt-3 text-sm font-semibold text-white">{step.title}</h3>
-              <p className="mt-2 min-h-[52px] text-xs leading-5 text-slate-400">{step.detail}</p>
-              <Button
-                className="mt-3 h-8 w-full px-2 text-xs"
-                variant={step.done ? "secondary" : "primary"}
-                onClick={step.onAction}
-                disabled={step.disabled}
-              >
-                {step.done ? "Open" : step.action}
-              </Button>
+              <h3 className="mt-3 text-sm font-semibold text-[var(--wt-text-strong)]">{step.title}</h3>
+              <p className="mt-2 line-clamp-2 text-xs leading-5 text-[var(--wt-text-muted)]">{step.detail}</p>
             </article>
           ))}
         </div>
