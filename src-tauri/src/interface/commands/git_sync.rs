@@ -13,6 +13,13 @@ pub async fn sync_commits(
     state: State<'_, AppState>,
     input: SyncCommitsInput,
 ) -> Result<AppResult<SyncCommitsResult>, String> {
+    let Ok(_sync_guard) = state.git_sync_lock.try_lock() else {
+        return Ok(AppResult::err(
+            "SYNC_IN_PROGRESS",
+            "Repository sync is already running.",
+        ));
+    };
+
     let project_repository = ProjectRepository::new(state.database.pool());
     let commit_repository = CommitRepository::new(state.database.pool());
     let git_metadata_repository = GitMetadataRepository::new(state.database.pool());

@@ -33,7 +33,6 @@ import { Pagination } from "../components/ui/Pagination";
 import { useSpeech } from "../components/ui/SpeechProvider";
 import { useToast } from "../components/ui/ToastProvider";
 import { useEscapeKey } from "../hooks/useEscapeKey";
-import { syncCommits } from "../lib/api/gitSync";
 import {
   archiveProject,
   createProject,
@@ -55,6 +54,7 @@ import {
   updateWorkspace,
 } from "../lib/api/workspaces";
 import { syncAnnouncement, syncStartedAnnouncement } from "../lib/announcements";
+import { isRepositorySyncInProgressError, useRepositorySync } from "../features/repositorySync/RepositorySyncProvider";
 import type {
   CreateProjectInput,
   Project,
@@ -70,6 +70,7 @@ export function ProjectsPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
   const speech = useSpeech();
+  const repositorySync = useRepositorySync();
   const location = useLocation();
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
@@ -175,21 +176,24 @@ export function ProjectsPage() {
     queryFn: listWorkspaces,
   });
 
-  const autoSyncMutation = useMutation({
-    mutationFn: (projectId: string) =>
-      syncCommits({
-        from: null,
-        to: null,
-        authorEmail: null,
-        projectIds: [projectId],
-      }),
-    onMutate: (projectId) => {
-      const project = projects.find((item) => item.id === projectId);
-      speech.announce(syncStartedAnnouncement(project ? `${project.name} activity` : "repository activity"), {
-        category: "sync",
-      });
-    },
-    onSuccess: async (result) => {
+  async function handleProjectSync(projectId: string) {
+    const project = projects.find((item) => item.id === projectId);
+    speech.announce(syncStartedAnnouncement(project ? `${project.name} activity` : "repository activity"), {
+      category: "sync",
+    });
+    try {
+      const result = await repositorySync.syncRepositories(
+        {
+          from: null,
+          to: null,
+          authorEmail: null,
+          projectIds: [projectId],
+        },
+        {
+          scope: "project",
+          onAlreadyRunning: () => toast.info("Sync already running", "Repository activity is still being refreshed."),
+        },
+      );
       await queryClient.invalidateQueries({ queryKey: ["activity"] });
       await queryClient.invalidateQueries({ queryKey: ["projectStats"] });
       await queryClient.invalidateQueries({ queryKey: ["recentCommits"] });
@@ -199,43 +203,44 @@ export function ProjectsPage() {
         `Added ${result.newCommits} commits and updated ${result.updatedCommits}.`,
       );
       speech.announce(syncAnnouncement(result), { category: "sync" });
-    },
-    onError: (error) => {
+    } catch (error) {
+      if (isRepositorySyncInProgressError(error)) return;
       toast.error("Repository sync failed", toMessage(error));
-    },
-  });
+    }
+  }
 
-  const workspaceSyncMutation = useMutation({
-    mutationFn: (workspaceId: string) => {
-      const projectIds = projects
+  async function handleWorkspaceSync(workspaceId: string) {
+    const projectIds = projects
         .filter((project) => project.status === "active" && project.workspaceId === workspaceId && project.repoPath)
         .map((project) => project.id);
-
-      return syncCommits({
-        from: null,
-        to: null,
-        authorEmail: null,
-        projectIds,
-      });
-    },
-    onMutate: (workspaceId) => {
-      const workspace = workspacesQuery.data?.find((item) => item.id === workspaceId);
-      speech.announce(syncStartedAnnouncement(workspace ? `${workspace.name} workspace activity` : "workspace activity"), {
-        category: "sync",
-      });
-    },
-    onSuccess: async (result) => {
+    const workspace = workspacesQuery.data?.find((item) => item.id === workspaceId);
+    speech.announce(syncStartedAnnouncement(workspace ? `${workspace.name} workspace activity` : "workspace activity"), {
+      category: "sync",
+    });
+    try {
+      const result = await repositorySync.syncRepositories(
+        {
+          from: null,
+          to: null,
+          authorEmail: null,
+          projectIds,
+        },
+        {
+          scope: "workspace",
+          onAlreadyRunning: () => toast.info("Sync already running", "Repository activity is still being refreshed."),
+        },
+      );
       await invalidateProjectViews(queryClient);
       toast.success(
         "Workspace sync complete",
         `Scanned ${result.scannedProjects} imported repos. Added ${result.newCommits} commits and updated ${result.updatedCommits}.`,
       );
       speech.announce(syncAnnouncement(result), { category: "sync" });
-    },
-    onError: (error) => {
+    } catch (error) {
+      if (isRepositorySyncInProgressError(error)) return;
       toast.error("Workspace sync failed", toMessage(error));
-    },
-  });
+    }
+  }
 
   const saveMutation = useMutation({
     mutationFn: async (input: CreateProjectInput) => {
@@ -256,7 +261,7 @@ export function ProjectsPage() {
       closeForm();
 
       if (project.repoPath && project.status === "active") {
-        autoSyncMutation.mutate(project.id);
+        void handleProjectSync(project.id);
       }
     },
   });
@@ -918,15 +923,15 @@ export function ProjectsPage() {
                       </Button>
                       <Button
                         variant="secondary"
-                        onClick={() => workspaceSyncMutation.mutate(selectedWorkspace.id)}
+                        onClick={() => void handleWorkspaceSync(selectedWorkspace.id)}
                         disabled={
-                          workspaceSyncMutation.isPending ||
+                          repositorySync.isSyncing ||
                           workspaceActiveProjects.length === 0 ||
                           selectedWorkspace.status === "archived"
                         }
                       >
-                        <GitBranch className="h-4 w-4" />
-                        Sync Active Repos
+                        <RefreshCw className={`h-4 w-4 ${repositorySync.isSyncing ? "animate-spin" : ""}`} />
+                        {repositorySync.isSyncing ? "Syncing..." : "Sync Active Repos"}
                       </Button>
                     </div>
                   </div>
@@ -1439,15 +1444,15 @@ export function ProjectsPage() {
                       </Button>
                       <Button
                         variant="secondary"
-                        onClick={() => workspaceSyncMutation.mutate(selectedWorkspace.id)}
+                        onClick={() => void handleWorkspaceSync(selectedWorkspace.id)}
                         disabled={
-                          workspaceSyncMutation.isPending ||
+                          repositorySync.isSyncing ||
                           workspaceActiveProjects.length === 0 ||
                           selectedWorkspace.status === "archived"
                         }
                       >
-                        <GitBranch className="h-4 w-4" />
-                        Sync
+                        <RefreshCw className={`h-4 w-4 ${repositorySync.isSyncing ? "animate-spin" : ""}`} />
+                        {repositorySync.isSyncing ? "Syncing..." : "Sync"}
                       </Button>
                     </div>
                   </div>
@@ -1466,9 +1471,10 @@ export function ProjectsPage() {
                     </div>
                   )}
 
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid gap-2">
                     <Button
                       variant="primary"
+                      className="w-full whitespace-nowrap"
                       onClick={() => importWorkspaceMutation.mutate()}
                       disabled={
                         importWorkspaceMutation.isPending ||
@@ -1485,6 +1491,7 @@ export function ProjectsPage() {
                     </Button>
                     <Button
                       variant="ghost"
+                      className="w-full"
                       onClick={() => archiveWorkspaceMutation.mutate(selectedWorkspace.id)}
                       disabled={archiveWorkspaceMutation.isPending}
                     >

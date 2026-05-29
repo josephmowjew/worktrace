@@ -20,7 +20,6 @@ import {
   Gauge,
   RefreshCw,
   ArrowUpCircle,
-  X,
 } from "lucide-react";
 import type { PropsWithChildren } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
@@ -30,7 +29,6 @@ import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listActivity } from "../../lib/api/activity";
-import { syncCommits } from "../../lib/api/gitSync";
 import { getSparcForceIntegrationStatus, syncSparcForce } from "../../lib/api/sparcForce";
 import { listProjects } from "../../lib/api/projects";
 import { exportSettingsToFile, getSettings, importSettings } from "../../lib/api/settings";
@@ -45,6 +43,7 @@ import { currentWeekRange } from "../../lib/dates";
 import { TitleBar } from "./TitleBar";
 import { useToast } from "../ui/ToastProvider";
 import { CommandPalette, createBaseCommandActions } from "../ui/CommandPalette";
+import { CloseButton } from "../ui/CloseButton";
 import { useSpeech } from "../ui/SpeechProvider";
 import { normalizeVoiceTranscript } from "../../lib/voiceCommands";
 import {
@@ -54,6 +53,7 @@ import {
 } from "../../lib/announcements";
 import { appSignature } from "../../lib/appSignature";
 import { gravatarUrl } from "../../lib/gravatar";
+import { isRepositorySyncInProgressError, useRepositorySync } from "../../features/repositorySync/RepositorySyncProvider";
 
 const navItems = [
   { label: "Today", href: "/", icon: Home },
@@ -74,6 +74,7 @@ export function AppLayout({ children }: PropsWithChildren) {
   const toast = useToast();
   const speech = useSpeech();
   const navigate = useNavigate();
+  const repositorySync = useRepositorySync();
   const importInputRef = useRef<HTMLInputElement>(null);
   const weekRange = currentWeekRange();
   const [isWidgetWindow, setIsWidgetWindow] = useState(false);
@@ -108,24 +109,6 @@ export function AppLayout({ children }: PropsWithChildren) {
         from: weekRange.from,
         to: weekRange.to,
       }),
-  });
-  const intervalSyncMutation = useMutation({
-    mutationFn: () =>
-      syncCommits({
-        from: null,
-        to: null,
-        authorEmail: null,
-      }),
-    onSuccess: async (result) => {
-      await queryClient.invalidateQueries({ queryKey: ["activity"] });
-      await queryClient.invalidateQueries({ queryKey: ["projects"] });
-      if (result.newCommits > 0 || result.updatedCommits > 0) {
-        toast.info(
-          "Auto-sync complete",
-          `Added ${result.newCommits} commits and updated ${result.updatedCommits}.`,
-        );
-      }
-    },
   });
   const widgetMutation = useMutation({
     mutationFn: toggleTodoWidget,
@@ -177,34 +160,6 @@ export function AppLayout({ children }: PropsWithChildren) {
       toast.error(
         "Import failed",
         error instanceof Error ? error.message : "Settings could not be imported.",
-      );
-    },
-  });
-  const commandSyncMutation = useMutation({
-    mutationFn: () =>
-      syncCommits({
-        from: null,
-        to: null,
-        authorEmail: settingsQuery.data?.gitAuthorEmail || null,
-      }),
-    onMutate: () => {
-      speech.announce(syncStartedAnnouncement("activity"), { category: "sync", interrupt: true });
-    },
-    onSuccess: async (result) => {
-      await queryClient.invalidateQueries({ queryKey: ["activity"] });
-      await queryClient.invalidateQueries({ queryKey: ["projects"] });
-      await queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
-      await queryClient.invalidateQueries({ queryKey: ["weeklyTasks"] });
-      toast.success(
-        "Sync complete",
-        `Added ${result.newCommits} commits and updated ${result.updatedCommits}.`,
-      );
-      speech.announce(syncAnnouncement(result), { category: "sync", interrupt: true });
-    },
-    onError: (error) => {
-      toast.error(
-        "Sync failed",
-        error instanceof Error ? error.message : "Repository sync could not be completed.",
       );
     },
   });
@@ -283,10 +238,69 @@ export function AppLayout({ children }: PropsWithChildren) {
     }
   }
 
+  async function runRepositorySync({
+    scope = "all",
+    announce = true,
+    notify = true,
+    onSettled,
+  }: {
+    scope?: "all" | "auto";
+    announce?: boolean;
+    notify?: boolean;
+    onSettled?: () => void;
+  } = {}) {
+    if (announce) {
+      speech.announce(syncStartedAnnouncement(scope === "auto" ? "background activity" : "activity"), {
+        category: "sync",
+        interrupt: scope !== "auto",
+      });
+    }
+
+    try {
+      const result = await repositorySync.syncRepositories(
+        {
+          from: null,
+          to: null,
+          authorEmail: scope === "auto" ? null : settingsQuery.data?.gitAuthorEmail || null,
+        },
+        {
+          scope,
+          onAlreadyRunning: notify
+            ? () => toast.info("Sync already running", "Repository activity is still being refreshed.")
+            : undefined,
+        },
+      );
+      if (notify) {
+        toast.success(
+          scope === "auto" ? "Auto-sync complete" : "Sync complete",
+          `Added ${result.newCommits} commits and updated ${result.updatedCommits}.`,
+        );
+      } else if (result.newCommits > 0 || result.updatedCommits > 0) {
+        toast.info(
+          "Auto-sync complete",
+          `Added ${result.newCommits} commits and updated ${result.updatedCommits}.`,
+        );
+      }
+      if (announce) {
+        speech.announce(syncAnnouncement(result), { category: "sync", interrupt: scope !== "auto" });
+      }
+    } catch (error) {
+      if (isRepositorySyncInProgressError(error)) return;
+      if (notify) {
+        toast.error(
+          "Sync failed",
+          error instanceof Error ? error.message : "Repository sync could not be completed.",
+        );
+      }
+    } finally {
+      onSettled?.();
+    }
+  }
+
   function runPowerCommand(query: string) {
     const normalized = query.trim().toLowerCase();
     if (normalized === "sync") {
-      commandSyncMutation.mutate();
+      void runRepositorySync();
       return true;
     }
     if (normalized === "sparc_force_sync") {
@@ -370,11 +384,8 @@ export function AppLayout({ children }: PropsWithChildren) {
       ...createBaseCommandActions({
         projects: projectsQuery.data ?? [],
         navigate: (path, state) => navigate(path, state === undefined ? undefined : { state }),
-        onSync: () => commandSyncMutation.mutate(),
-        onScanRepos: () =>
-          commandSyncMutation.mutate(undefined, {
-            onSettled: openProjectsWorkspaceScan,
-          }),
+        onSync: () => void runRepositorySync(),
+        onScanRepos: () => void runRepositorySync({ onSettled: openProjectsWorkspaceScan }),
         onToggleWidget: () => widgetMutation.mutate(),
       }),
       {
@@ -403,10 +414,11 @@ export function AppLayout({ children }: PropsWithChildren) {
       },
     ],
     [
-      commandSyncMutation,
       exportSettingsMutation,
       navigate,
       projectsQuery.data,
+      repositorySync,
+      settingsQuery.data?.gitAuthorEmail,
       widgetMutation,
     ],
   );
@@ -459,9 +471,7 @@ export function AppLayout({ children }: PropsWithChildren) {
     }).catch(() => {});
 
     listen("tray://sync-projects", () => {
-      if (!commandSyncMutation.isPending) {
-        commandSyncMutation.mutate();
-      }
+      void runRepositorySync();
     }).then((dispose) => {
       unlistenSync = dispose;
     }).catch(() => {});
@@ -478,7 +488,7 @@ export function AppLayout({ children }: PropsWithChildren) {
       unlistenSync?.();
       unlistenLifecycle?.();
     };
-  }, [commandSyncMutation, navigate, queryClient]);
+  }, [navigate, queryClient, repositorySync, settingsQuery.data?.gitAuthorEmail]);
 
   useEffect(() => {
     if (!hasSyncableProjects) {
@@ -487,15 +497,15 @@ export function AppLayout({ children }: PropsWithChildren) {
 
     const syncInterval = window.setInterval(
       () => {
-        if (!intervalSyncMutation.isPending) {
-          intervalSyncMutation.mutate();
+        if (!repositorySync.isSyncing) {
+          void runRepositorySync({ scope: "auto", announce: false, notify: false });
         }
       },
       5 * 60 * 1000,
     );
 
     return () => window.clearInterval(syncInterval);
-  }, [hasSyncableProjects, intervalSyncMutation]);
+  }, [hasSyncableProjects, repositorySync.isSyncing, repositorySync, settingsQuery.data?.gitAuthorEmail]);
 
   useEffect(() => {
     if (!sparcForceAvailable || !sparcForceStatusQuery.data?.connected) {
@@ -791,9 +801,7 @@ export function AppLayout({ children }: PropsWithChildren) {
           <div className="w-full max-w-2xl rounded-xl border border-[var(--wt-border)] bg-[var(--wt-surface)] p-4 shadow-[var(--wt-panel-shadow)]">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-[var(--wt-text-strong)]">What's New</h2>
-              <button type="button" onClick={() => setIsWhatsNewOpen(false)} className="rounded-lg p-1 text-[var(--wt-text-muted)] hover:bg-[var(--wt-surface-hover)] hover:text-[var(--wt-text-strong)]">
-                <X className="h-4 w-4" />
-              </button>
+              <CloseButton label="Close What's New" variant="subtle" onClick={() => setIsWhatsNewOpen(false)} />
             </div>
             <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
               {releaseNotesQuery.isLoading ? <p className="text-xs text-[var(--wt-text-muted)]">Loading release notes...</p> : null}

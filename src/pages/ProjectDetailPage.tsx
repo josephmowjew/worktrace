@@ -33,7 +33,6 @@ import {
   saveProjectGitFocus,
   updateProject,
 } from "../lib/api/projects";
-import { syncCommits } from "../lib/api/gitSync";
 import { syncGitHubProjectActivity } from "../lib/api/github";
 import { listActivity, getWeekSummary } from "../lib/api/activity";
 import { listActivityGroups, recordActivityGroupTitleFeedback, updateActivityGroup } from "../lib/api/activityGroups";
@@ -47,6 +46,7 @@ import type { ActivityGroup } from "../types/activityGroup";
 import type { WeeklyTask } from "../types/weeklyTask";
 import type { ManualLog } from "../types/manualLog";
 import type { PrPackageGroupContext } from "../lib/prBuilder";
+import { isRepositorySyncInProgressError, useRepositorySync } from "../features/repositorySync/RepositorySyncProvider";
 
 export function ProjectDetailPage() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -54,6 +54,7 @@ export function ProjectDetailPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
   const speech = useSpeech();
+  const repositorySync = useRepositorySync();
   const [activeTab, setActiveTab] = useState<ProjectDetailTab>("commits");
   const [weekAnchor, setWeekAnchor] = useState(() => new Date());
   const [selectedCommitIds, setSelectedCommitIds] = useState<Set<string>>(() => new Set());
@@ -168,14 +169,18 @@ export function ProjectDetailPage() {
     enabled: !!projectId,
   });
 
-  const syncMutation = useMutation({
-    mutationFn: () => syncCommits({ from: null, to: null, authorEmail: null, projectIds: [projectId!], mode: "auto" }),
-    onMutate: () => {
-      speech.announce(syncStartedAnnouncement(project ? `${project.name} activity` : "project activity"), {
-        category: "sync",
-      });
-    },
-    onSuccess: async (result) => {
+  async function handleSyncRepositories() {
+    speech.announce(syncStartedAnnouncement(project ? `${project.name} activity` : "project activity"), {
+      category: "sync",
+    });
+    try {
+      const result = await repositorySync.syncRepositories(
+        { from: null, to: null, authorEmail: null, projectIds: [projectId!], mode: "auto" },
+        {
+          scope: "project",
+          onAlreadyRunning: () => toast.info("Sync already running", "Repository activity is still being refreshed."),
+        },
+      );
       await queryClient.invalidateQueries({ queryKey: ["activity"] });
       await queryClient.invalidateQueries({ queryKey: ["activityGroups"] });
       await queryClient.invalidateQueries({ queryKey: ["projectStats"] });
@@ -184,11 +189,11 @@ export function ProjectDetailPage() {
       await queryClient.invalidateQueries({ queryKey: ["projectGitFocus", projectId] });
       toast.success("Sync complete", `Added ${result.newCommits} commits and updated ${result.updatedCommits}.`);
       speech.announce(syncAnnouncement(result), { category: "sync" });
-    },
-    onError: (error) => {
+    } catch (error) {
+      if (isRepositorySyncInProgressError(error)) return;
       toast.error("Sync failed", error instanceof Error ? error.message : "Repository sync could not be completed.");
-    },
-  });
+    }
+  }
 
   const githubSyncMutation = useMutation({
     mutationFn: () => syncGitHubProjectActivity({ projectId }),
@@ -204,13 +209,19 @@ export function ProjectDetailPage() {
   const smartOrganizeMutation = useMutation({
     mutationFn: async () => {
       setOrganizeStatus("Checking repositories");
-      const syncResult = await syncCommits({
-        from: weekRange.from,
-        to: weekRange.to,
-        authorEmail: null,
-        projectIds: [projectId!],
-        mode: "auto",
-      });
+      const syncResult = await repositorySync.syncRepositories(
+        {
+          from: weekRange.from,
+          to: weekRange.to,
+          authorEmail: null,
+          projectIds: [projectId!],
+          mode: "auto",
+        },
+        {
+          scope: "project",
+          onAlreadyRunning: () => toast.info("Sync already running", "Repository activity is still being refreshed."),
+        },
+      );
       const evidenceStatus =
         syncResult.skippedFreshProjects > 0 || syncResult.unchangedProjects > 0
           ? "Using timeline work items from cached evidence"
@@ -233,6 +244,10 @@ export function ProjectDetailPage() {
       );
     },
     onError: (error) => {
+      if (isRepositorySyncInProgressError(error)) {
+        setOrganizeStatus("Repository sync is already running");
+        return;
+      }
       setOrganizeStatus(null);
       toast.error("Group refresh failed", error instanceof Error ? error.message : "Timeline work items could not be refreshed.");
     },
@@ -451,8 +466,8 @@ export function ProjectDetailPage() {
       <ProjectDetailHeader
         project={project}
         stats={projectStats}
-        isSyncing={syncMutation.isPending}
-        onSync={() => syncMutation.mutate()}
+        isSyncing={repositorySync.isSyncing}
+        onSync={() => void handleSyncRepositories()}
         isGitHubSyncing={githubSyncMutation.isPending}
         onGitHubSync={() => githubSyncMutation.mutate()}
         onEdit={() => {
@@ -516,7 +531,7 @@ export function ProjectDetailPage() {
                   <Button
                     type="button"
                     variant="secondary"
-                    disabled={smartOrganizeMutation.isPending || syncMutation.isPending || activityQuery.isLoading}
+                    disabled={smartOrganizeMutation.isPending || repositorySync.isSyncing || activityQuery.isLoading}
                     onClick={() => smartOrganizeMutation.mutate()}
                   >
                     <Sparkles className={`h-4 w-4 ${smartOrganizeMutation.isPending ? "animate-pulse" : ""}`} />
@@ -595,8 +610,8 @@ export function ProjectDetailPage() {
           contributors={contributorsQuery.data ?? []}
           weekSummary={summaryQuery.data}
           isLoading={contributorsQuery.isLoading}
-          onSync={() => syncMutation.mutate()}
-          isSyncing={syncMutation.isPending}
+          onSync={() => void handleSyncRepositories()}
+          isSyncing={repositorySync.isSyncing}
         />
       </div>
       {editingGroup ? (

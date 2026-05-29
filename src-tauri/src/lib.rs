@@ -24,6 +24,7 @@ use tauri_plugin_global_shortcut::ShortcutState;
 pub struct AppState {
     pub database: Database,
     pub cancelled_report_ai_streams: Mutex<HashSet<String>>,
+    pub git_sync_lock: tokio::sync::Mutex<()>,
     pub sparc_force_auth_lock: tokio::sync::Mutex<()>,
     pub google_calendar_auth_lock: tokio::sync::Mutex<()>,
     pub quick_capture_enabled: Mutex<bool>,
@@ -89,6 +90,7 @@ pub fn run() {
             app.manage(AppState {
                 database,
                 cancelled_report_ai_streams: Mutex::new(HashSet::new()),
+                git_sync_lock: tokio::sync::Mutex::new(()),
                 sparc_force_auth_lock: tokio::sync::Mutex::new(()),
                 google_calendar_auth_lock: tokio::sync::Mutex::new(()),
                 quick_capture_enabled: Mutex::new(settings.quick_capture_enabled),

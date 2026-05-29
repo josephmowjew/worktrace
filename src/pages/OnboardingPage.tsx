@@ -20,8 +20,8 @@ import { Panel } from "../components/ui/Panel";
 import { PageHeader } from "../components/ui/PageHeader";
 import { useToast } from "../components/ui/ToastProvider";
 import { useOnboardingProgress } from "../features/onboarding/useOnboardingProgress";
+import { isRepositorySyncInProgressError, useRepositorySync } from "../features/repositorySync/RepositorySyncProvider";
 import type { OnboardingStep, OnboardingStepId } from "../features/onboarding/onboardingSteps";
-import { syncCommits } from "../lib/api/gitSync";
 import { updateSettings } from "../lib/api/settings";
 
 const stepIcons: Record<OnboardingStepId, React.ElementType> = {
@@ -36,6 +36,7 @@ export function OnboardingPage() {
   const navigate = useNavigate();
   const toast = useToast();
   const queryClient = useQueryClient();
+  const repositorySync = useRepositorySync();
   const { progress, settingsQuery, projectsQuery, isLoading, weekRange } = useOnboardingProgress();
 
   const onboardingMutation = useMutation({
@@ -47,14 +48,19 @@ export function OnboardingPage() {
       toast.error("Onboarding update failed", error instanceof Error ? error.message : "Could not update setup progress.");
     },
   });
-  const syncMutation = useMutation({
-    mutationFn: () =>
-      syncCommits({
-        from: null,
-        to: null,
-        authorEmail: settingsQuery.data?.gitAuthorEmail || null,
-      }),
-    onSuccess: async (result) => {
+  async function handleSyncRepositories() {
+    try {
+      const result = await repositorySync.syncRepositories(
+        {
+          from: null,
+          to: null,
+          authorEmail: settingsQuery.data?.gitAuthorEmail || null,
+        },
+        {
+          scope: "onboarding",
+          onAlreadyRunning: () => toast.info("Sync already running", "Repository activity is still being refreshed."),
+        },
+      );
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["activity"] }),
         queryClient.invalidateQueries({ queryKey: ["projects"] }),
@@ -65,11 +71,11 @@ export function OnboardingPage() {
         "Sync complete",
         `Added ${result.newCommits} commits and updated ${result.updatedCommits}.`,
       );
-    },
-    onError: (error) => {
+    } catch (error) {
+      if (isRepositorySyncInProgressError(error)) return;
       toast.error("Sync failed", error instanceof Error ? error.message : "Repository sync could not be completed.");
-    },
-  });
+    }
+  }
 
   async function markStep(stepId: OnboardingStepId) {
     const existing = settingsQuery.data?.onboardingCompletedSteps ?? [];
@@ -121,7 +127,7 @@ export function OnboardingPage() {
         navigate("/projects", { state: { openWorkspaceScan: true } });
         return;
       }
-      syncMutation.mutate();
+      void handleSyncRepositories();
       return;
     }
     if (step.id === "capture") {
@@ -190,7 +196,7 @@ export function OnboardingPage() {
                 step={step}
                 index={index}
                 active={activeStep?.id === step.id}
-                isBusy={syncMutation.isPending && step.id === "sync"}
+                isBusy={repositorySync.isSyncing && step.id === "sync"}
                 onRun={() => runStep(step)}
               />
             ))}
@@ -229,9 +235,9 @@ export function OnboardingPage() {
                     <Button
                       variant="primary"
                       onClick={() => runStep(activeStep)}
-                      disabled={activeStep.disabled || syncMutation.isPending || activeStep.done}
+                      disabled={activeStep.disabled || repositorySync.isSyncing || activeStep.done}
                     >
-                      {activeStep.id === "sync" && syncMutation.isPending ? (
+                      {activeStep.id === "sync" && repositorySync.isSyncing ? (
                         <RefreshCw className="h-4 w-4 animate-spin" />
                       ) : (
                         <ArrowRight className="h-4 w-4" />

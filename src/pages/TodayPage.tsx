@@ -31,6 +31,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { AddTaskModal } from "../components/ui/AddTaskModal";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
+import { CloseButton } from "../components/ui/CloseButton";
 import { EndOfDayReviewModal } from "../components/ui/EndOfDayReviewModal";
 import { Panel } from "../components/ui/Panel";
 import { PrepareReportModal } from "../components/ui/PrepareReportModal";
@@ -48,7 +49,6 @@ import {
   startFocusSession,
   stopFocusSession,
 } from "../lib/api/focusSessions";
-import { syncCommits } from "../lib/api/gitSync";
 import { getFrictionInsights } from "../lib/api/friction";
 import { createManualLog } from "../lib/api/manualLogs";
 import { dismissNudge, listNudgeDismissals } from "../lib/api/nudges";
@@ -85,6 +85,7 @@ import type { WeeklyTask, WeeklyTaskPriority, WeeklyTaskStatus, WeeklyTaskType }
 import type { DailyPlanItem, DailyPlanItemStatus } from "../types/dailyPlan";
 import type { PriorityReminder } from "../types/priorityReminder";
 import type { FrictionInsight } from "../types/friction";
+import { isRepositorySyncInProgressError, useRepositorySync } from "../features/repositorySync/RepositorySyncProvider";
 
 type PriorityDraftItem = {
   title: string;
@@ -114,6 +115,7 @@ export function TodayPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
   const speech = useSpeech();
+  const repositorySync = useRepositorySync();
   const navigate = useNavigate();
   const location = useLocation();
   const weekRange = currentWeekRange();
@@ -287,9 +289,9 @@ export function TodayPage() {
       queryClient.invalidateQueries({ queryKey: ["weekCapacity"] }),
       queryClient.invalidateQueries({ queryKey: ["focusSession"] }),
       queryClient.invalidateQueries({ queryKey: ["focusSessions"] }),
-      queryClient.invalidateQueries({ queryKey: ["frictionInsights"] }),
       queryClient.invalidateQueries({ queryKey: ["nudgeDismissals"] }),
       queryClient.invalidateQueries({ queryKey: ["priorityReminders"] }),
+      queryClient.invalidateQueries({ queryKey: ["frictionInsights"] }),
       queryClient.invalidateQueries({ queryKey: ["todayCommandCenter", today.date] }),
       ...weeklyTaskQueryRoots.map((queryKey) =>
         queryClient.invalidateQueries({ queryKey }),
@@ -297,17 +299,20 @@ export function TodayPage() {
     ]);
   }
 
-  const syncMutation = useMutation({
-    mutationFn: () =>
-      syncCommits({
-        from: null,
-        to: null,
-        authorEmail: settingsQuery.data?.gitAuthorEmail || null,
-      }),
-    onMutate: () => {
-      speech.announce(syncStartedAnnouncement("today's activity"), { category: "sync" });
-    },
-    onSuccess: async (result) => {
+  async function handleSyncRepositories() {
+    speech.announce(syncStartedAnnouncement("today's activity"), { category: "sync" });
+    try {
+      const result = await repositorySync.syncRepositories(
+        {
+          from: null,
+          to: null,
+          authorEmail: settingsQuery.data?.gitAuthorEmail || null,
+        },
+        {
+          scope: "today",
+          onAlreadyRunning: () => toast.info("Sync already running", "Repository activity is still being refreshed."),
+        },
+      );
       await invalidateDailyViews();
       toast.success(
         "Sync complete",
@@ -317,11 +322,11 @@ export function TodayPage() {
       if (result.errors.length) {
         toast.error("Some repositories did not sync", result.errors.join(" "));
       }
-    },
-    onError: (error) => {
+    } catch (error) {
+      if (isRepositorySyncInProgressError(error)) return;
       toast.error("Sync failed", error instanceof Error ? error.message : "Repository sync could not be completed.");
-    },
-  });
+    }
+  }
 
   const createTaskMutation = useMutation({
     mutationFn: (values: {
@@ -633,7 +638,7 @@ export function TodayPage() {
       }
       navigate(insight.actionTarget);
     },
-    onSync: () => syncMutation.mutate(),
+    onSync: () => void handleSyncRepositories(),
     onQuickLog: () => setLogModalOpen(true),
     onReview: () => setReviewOpen(true),
     onReportPrep: () => setReportPrepOpen(true),
@@ -738,9 +743,9 @@ export function TodayPage() {
             <ClipboardEdit className="h-4 w-4" />
             Quick Log
           </Button>
-          <Button onClick={() => syncMutation.mutate()} disabled={syncMutation.isPending} size="sm">
-            <RefreshCw className={`h-4 w-4 ${syncMutation.isPending ? "animate-spin" : ""}`} />
-            {syncMutation.isPending ? "Syncing..." : "Sync Repos"}
+          <Button onClick={() => void handleSyncRepositories()} disabled={repositorySync.isSyncing} size="sm">
+            <RefreshCw className={`h-4 w-4 ${repositorySync.isSyncing ? "animate-spin" : ""}`} />
+            {repositorySync.isSyncing ? "Syncing..." : "Sync Repos"}
           </Button>
           <span className="mx-1 h-8 w-px bg-white/10" />
           <Button variant="primary" onClick={() => setReviewOpen(true)} size="sm">
@@ -1018,10 +1023,10 @@ export function TodayPage() {
         blockers={blockers}
         existingNote={dailyReviewNote}
         noteLoadWarning={dailyReviewNotesQuery.error instanceof Error ? dailyReviewNotesQuery.error.message : null}
-        isSyncing={syncMutation.isPending}
+        isSyncing={repositorySync.isSyncing}
         isUpdating={updateTaskMutation.isPending}
         isSaving={saveDailyReviewMutation.isPending}
-        onSync={() => syncMutation.mutate()}
+        onSync={() => void handleSyncRepositories()}
         onQuickLog={() => setLogModalOpen(true)}
         onGenerateReport={() => navigate("/reports")}
         onCompleteTask={(task) => updateTaskMutation.mutate({ id: task.id, input: { status: "completed", completedAt: today.date } })}
@@ -1046,9 +1051,9 @@ export function TodayPage() {
         activityItems={activityItems}
         tasks={tasks}
         blockers={blockers}
-        isSyncing={syncMutation.isPending}
+        isSyncing={repositorySync.isSyncing}
         isUpdating={updateTaskMutation.isPending}
-        onSync={() => syncMutation.mutate()}
+        onSync={() => void handleSyncRepositories()}
         onCarryTask={(task) => updateTaskMutation.mutate({ id: task.id, input: { taskType: "carryover", status: task.status === "completed" ? "todo" : task.status } })}
         onIncludeTask={(task) => updateTaskMutation.mutate({ id: task.id, input: { includedInReport: true } })}
         onOpenReports={() => navigate("/reports")}
@@ -1734,15 +1739,14 @@ function TodayNudgeStrip({
         <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
           {nudges.slice(0, 4).map((nudge, index) => (
             <div key={nudge.key} className="group relative rounded-lg border border-white/8 bg-white/[0.025] px-3 py-2">
-              <button
-                type="button"
+              <CloseButton
+                label={`Dismiss ${nudge.title}`}
+                variant="transient"
                 disabled={isDismissing}
                 onClick={() => onDismiss(nudge.key)}
-                className="absolute right-2 top-2 rounded-md p-1 text-slate-600 opacity-0 transition-[opacity,color,background-color] duration-150 hover:bg-white/8 hover:text-white group-hover:opacity-100 disabled:opacity-40"
-                aria-label={`Dismiss ${nudge.title}`}
-              >
-                <X className="h-3 w-3" />
-              </button>
+                className="absolute right-2 top-2 h-7 min-h-7 w-7 rounded-md opacity-0 group-hover:opacity-75 hover:opacity-100"
+                iconClassName="h-3 w-3"
+              />
               <div className="flex items-start gap-2 pr-4">
                 <span className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border ${
                   index % 4 === 0 ? "border-blue-300/20 bg-blue-500/12 text-blue-200" :

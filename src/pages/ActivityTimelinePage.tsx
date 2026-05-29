@@ -39,20 +39,15 @@ import { ModalShell } from "../components/ui/ModalShell";
 import { listActivity, getActivityHeatmap, getWeekSummary, getKeyHighlights } from "../lib/api/activity";
 import { listActivityGroups, recordActivityGroupTitleFeedback, refreshActivityGroupSuggestions, selectActivityGroupTitleCandidate, suggestActivityGroups, updateActivityGroup } from "../lib/api/activityGroups";
 import { getBackgroundJobStatus, getEmbeddingStatus, queueActivityEmbeddingRefresh, runBackgroundJobsOnce, semanticActivitySearch } from "../lib/api/embeddings";
-import { syncCommits } from "../lib/api/gitSync";
 import { listProjects } from "../lib/api/projects";
 import { listWeeklyTasks } from "../lib/api/weeklyTasks";
 import { syncAnnouncement, syncStartedAnnouncement } from "../lib/announcements";
 import { currentWeekRange, shiftWeek } from "../lib/dates";
+import { isRepositorySyncInProgressError, useRepositorySync } from "../features/repositorySync/RepositorySyncProvider";
 import type { ActivityItem } from "../types/activity";
 import type { ActivityGroup, TitleCandidate } from "../types/activityGroup";
 import type { WeeklyTask } from "../types/weeklyTask";
 import { useEscapeKey } from "../hooks/useEscapeKey";
-
-type ActivityTimelineLocationState = {
-  searchQuery?: string;
-  frictionInsightId?: string;
-} | null;
 
 const activityFilters = [
   { label: "All", value: "all", icon: BarChart3 },
@@ -63,10 +58,16 @@ const activityFilters = [
   { label: "Deployments", value: "Deployment", icon: Rocket },
 ];
 
+type ActivityTimelineLocationState = {
+  searchQuery?: string;
+  frictionInsightId?: string;
+} | null;
+
 export function ActivityTimelinePage() {
   const queryClient = useQueryClient();
   const toast = useToast();
   const speech = useSpeech();
+  const repositorySync = useRepositorySync();
   const location = useLocation();
   const navigate = useNavigate();
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -151,12 +152,18 @@ export function ActivityTimelinePage() {
 
       setOrganizePhase("evidence");
       try {
-        const syncResult = await syncCommits({
-          from: weekRange.from,
-          to: weekRange.to,
-          projectIds,
-          mode: "auto",
-        });
+        const syncResult = await repositorySync.syncRepositories(
+          {
+            from: weekRange.from,
+            to: weekRange.to,
+            projectIds,
+            mode: "auto",
+          },
+          {
+            scope: "timeline",
+            onAlreadyRunning: () => toast.info("Sync already running", "Repository activity is still being refreshed."),
+          },
+        );
         if (syncResult.errors.length > 0) {
           evidenceWarning = syncResult.errors.join(" ");
         }
@@ -169,8 +176,9 @@ export function ActivityTimelinePage() {
               ? `Organized from ${syncResult.newCommits} latest local commits`
             : "Checking repositories";
       } catch (error) {
-        evidenceWarning =
-          error instanceof Error ? error.message : "Git evidence could not be refreshed.";
+        evidenceWarning = isRepositorySyncInProgressError(error)
+          ? "Repository sync is already running."
+          : error instanceof Error ? error.message : "Git evidence could not be refreshed.";
       }
 
       if (status.available) {
@@ -377,19 +385,22 @@ export function ActivityTimelinePage() {
 
   useEscapeKey(() => setSyncMenuOpen(false), syncMenuOpen);
 
-  const syncMutation = useMutation({
-    mutationFn: (mode: "auto" | "full" = "auto") =>
-      syncCommits({
-        from: null,
-        to: null,
-        authorEmail: null,
-        projectIds,
-        mode,
-      }),
-    onMutate: () => {
-      speech.announce(syncStartedAnnouncement("activity timeline"), { category: "sync" });
-    },
-    onSuccess: async (result) => {
+  async function handleSyncRepositories(mode: "auto" | "full" = "auto") {
+    speech.announce(syncStartedAnnouncement("activity timeline"), { category: "sync" });
+    try {
+      const result = await repositorySync.syncRepositories(
+        {
+          from: null,
+          to: null,
+          authorEmail: null,
+          projectIds,
+          mode,
+        },
+        {
+          scope: "timeline",
+          onAlreadyRunning: () => toast.info("Sync already running", "Repository activity is still being refreshed."),
+        },
+      );
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["activity"] }),
         queryClient.invalidateQueries({ queryKey: ["activityGroups"] }),
@@ -410,11 +421,11 @@ export function ActivityTimelinePage() {
       if (result.newCommits > 0 || result.updatedCommits > 0) {
         smartOrganizeMutation.mutate();
       }
-    },
-    onError: (error) => {
+    } catch (error) {
+      if (isRepositorySyncInProgressError(error)) return;
       toast.error("Sync failed", error instanceof Error ? error.message : "Repository sync could not be completed.");
-    },
-  });
+    }
+  }
 
   const filteredDays = useMemo(() => {
     const currentOrganizedGroupIds = new Set((smartOrganizeMutation.data?.groups ?? []).map((group) => group.id));
@@ -507,19 +518,19 @@ export function ActivityTimelinePage() {
             <div className="relative flex">
               <Button
                 variant="primary"
-                onClick={() => syncMutation.mutate("auto")}
-                disabled={syncMutation.isPending || smartOrganizeMutation.isPending}
+                onClick={() => void handleSyncRepositories("auto")}
+                disabled={repositorySync.isSyncing || smartOrganizeMutation.isPending}
                 className="h-12 rounded-r-none px-5 shadow-[0_16px_34px_rgba(37,99,235,0.32)] transition-[background-color,box-shadow,transform] active:scale-[0.96]"
               >
                 <RefreshCw
-                  className={`h-4 w-4 ${syncMutation.isPending ? "animate-spin" : ""}`}
+                  className={`h-4 w-4 ${repositorySync.isSyncing ? "animate-spin" : ""}`}
                 />
-                {syncMutation.isPending ? "Syncing..." : "Sync Repositories"}
+                {repositorySync.isSyncing ? "Syncing..." : "Sync Repositories"}
               </Button>
               <button
                 type="button"
                 onClick={() => setSyncMenuOpen((open) => !open)}
-                disabled={syncMutation.isPending || smartOrganizeMutation.isPending}
+                disabled={repositorySync.isSyncing || smartOrganizeMutation.isPending}
                 className="flex h-12 w-11 items-center justify-center rounded-r-xl border-l border-white/15 bg-blue-600 text-white shadow-[0_16px_34px_rgba(37,99,235,0.32)] transition-[background-color,transform] hover:bg-blue-500 active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-50"
                 aria-label="Sync options"
                 aria-expanded={syncMenuOpen}
@@ -532,7 +543,7 @@ export function ActivityTimelinePage() {
                     type="button"
                     onClick={() => {
                       setSyncMenuOpen(false);
-                      syncMutation.mutate("full");
+                      void handleSyncRepositories("full");
                     }}
                     className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-slate-200 transition-colors hover:bg-white/8"
                   >
@@ -623,7 +634,7 @@ export function ActivityTimelinePage() {
               onClick={() => smartOrganizeMutation.mutate()}
               disabled={
                 smartOrganizeMutation.isPending ||
-                syncMutation.isPending ||
+                repositorySync.isSyncing ||
                 activityQuery.isLoading
               }
               className="h-10 rounded-xl px-4"
@@ -641,28 +652,26 @@ export function ActivityTimelinePage() {
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="space-y-4">
-          {syncMutation.data ? (
+          {repositorySync.lastResult ? (
             <div className="rounded-xl border border-emerald-400/20 bg-emerald-500/10 p-3 text-xs text-emerald-100">
-              Synced {syncMutation.data.scannedProjects} projects. Added{" "}
-              {syncMutation.data.newCommits} commits and updated{" "}
-              {syncMutation.data.updatedCommits}.
-              {syncMutation.data.skippedProjects > 0
-                ? ` Skipped ${syncMutation.data.skippedProjects} manual-only projects.`
+              Synced {repositorySync.lastResult.scannedProjects} projects. Added{" "}
+              {repositorySync.lastResult.newCommits} commits and updated{" "}
+              {repositorySync.lastResult.updatedCommits}.
+              {repositorySync.lastResult.skippedProjects > 0
+                ? ` Skipped ${repositorySync.lastResult.skippedProjects} manual-only projects.`
                 : ""}
             </div>
           ) : null}
 
-          {syncMutation.data?.errors.length ? (
+          {repositorySync.lastResult?.errors.length ? (
             <div className="rounded-xl border border-orange-400/20 bg-orange-500/10 p-3 text-xs text-orange-100">
-              {syncMutation.data.errors.join(" ")}
+              {repositorySync.lastResult.errors.join(" ")}
             </div>
           ) : null}
 
-          {syncMutation.isError ? (
+          {repositorySync.lastError ? (
             <div className="rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-xs text-red-100">
-              {syncMutation.error instanceof Error
-                ? syncMutation.error.message
-                : "Sync failed."}
+              {repositorySync.lastError.message || "Sync failed."}
             </div>
           ) : null}
 
