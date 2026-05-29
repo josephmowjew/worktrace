@@ -60,8 +60,11 @@ export function TodayQuickAddBar({
   }
 
   return (
-    <Panel className="border-white/10 bg-gradient-to-r from-[#050f24]/92 to-[#06142d]/92 p-3">
-      <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
+    <Panel className="border-white/10 bg-slate-950/45 p-3">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-blue-200">Quick Add Task</h2>
+      </div>
+      <div className="space-y-3">
         <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-white/10 bg-slate-950/55 px-3">
           <Plus className="h-4 w-4 shrink-0 text-cyan-200" />
           <input
@@ -77,7 +80,7 @@ export function TodayQuickAddBar({
             className="h-11 min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-slate-500"
           />
         </div>
-        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_130px_150px_auto] xl:flex xl:items-center">
+        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_120px_150px_auto]">
           <Select
             value={projectId}
             onChange={setProjectId}

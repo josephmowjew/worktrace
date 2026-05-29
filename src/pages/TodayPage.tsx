@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ArrowRight,
   BriefcaseBusiness,
+  CalendarDays,
   CalendarClock,
   CheckCircle2,
   CheckCheck,
@@ -17,9 +18,12 @@ import {
   ListTodo,
   Monitor,
   Plus,
+  Play,
   RefreshCw,
+  Square,
   Sparkles,
   Target,
+  X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
@@ -27,12 +31,8 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { AddTaskModal } from "../components/ui/AddTaskModal";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
-import { CarryoverAssistant } from "../components/ui/CarryoverAssistant";
 import { EndOfDayReviewModal } from "../components/ui/EndOfDayReviewModal";
-import { FocusSessionPanel } from "../components/ui/FocusSessionPanel";
-import { NudgePanel, type TodayNudge } from "../components/ui/NudgePanel";
 import { Panel } from "../components/ui/Panel";
-import { PageHeader } from "../components/ui/PageHeader";
 import { PrepareReportModal } from "../components/ui/PrepareReportModal";
 import { QuickManualLogModal } from "../components/ui/QuickManualLogModal";
 import { StopFocusModal } from "../components/ui/StopFocusModal";
@@ -78,7 +78,8 @@ import {
 import { createWeeklyTask, listWeeklyTasks, updateWeeklyTask } from "../lib/api/weeklyTasks";
 import { currentWeekRange, todayRange } from "../lib/dates";
 import type { CreateManualLogInput } from "../types/manualLog";
-import type { StopFocusSessionInput } from "../types/focusSession";
+import type { FocusSession, StopFocusSessionInput } from "../types/focusSession";
+import type { Project } from "../types/project";
 import type { WeeklyTask, WeeklyTaskPriority, WeeklyTaskStatus, WeeklyTaskType } from "../types/weeklyTask";
 import type { DailyPlanItem, DailyPlanItemStatus } from "../types/dailyPlan";
 import type { PriorityReminder } from "../types/priorityReminder";
@@ -88,6 +89,14 @@ type PriorityDraftItem = {
   plannedMinutes: string;
   weeklyTaskId?: string;
   status?: DailyPlanItemStatus;
+};
+
+type TodayNudge = {
+  key: string;
+  title: string;
+  detail: string;
+  actionLabel: string;
+  onAction: () => void;
 };
 
 type LocationState = {
@@ -573,6 +582,8 @@ export function TodayPage() {
   const reportReadyCount =
     activityItems.filter((item) => item.includedInReport).length +
     tasks.filter((task) => task.includedInReport).length;
+  const todayRemainingCapacity =
+    capacityQuery.data?.days.find((day) => day.date === today.date)?.remainingMinutes ?? 0;
   const showOnboardingEntry =
     Boolean(settingsQuery.data) &&
     !settingsQuery.data?.onboardingDismissedWelcome &&
@@ -686,40 +697,43 @@ export function TodayPage() {
         />
       ) : null}
 
-      <PageHeader
-        icon={Sparkles}
-        eyebrow="Daily workflow"
-        title="Today"
-        description={`${today.label} / ${weekRange.label}`}
-        actions={
-          <>
-            <Button onClick={() => setTaskModalOpen(true)}>
-              <Plus className="h-4 w-4" />
-              Full Task
-            </Button>
-            <Button onClick={() => setLogModalOpen(true)}>
-              <ClipboardEdit className="h-4 w-4" />
-              Quick Log
-            </Button>
-            <Button variant="primary" onClick={() => syncMutation.mutate()} disabled={syncMutation.isPending}>
-              <RefreshCw className={`h-4 w-4 ${syncMutation.isPending ? "animate-spin" : ""}`} />
-              {syncMutation.isPending ? "Syncing..." : "Sync Now"}
-            </Button>
-            <Button onClick={() => setReviewOpen(true)}>
-              <ListChecks className="h-4 w-4" />
-              Review
-            </Button>
-            <Button onClick={() => navigate("/reports")}>
-              <FileText className="h-4 w-4" />
-              Report
-            </Button>
-            <Button onClick={() => setReportPrepOpen(true)}>
-              <FileText className="h-4 w-4" />
-              Prep
-            </Button>
-          </>
-        }
-      />
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
+          <h1 className="text-2xl font-semibold tracking-tight text-white">Today</h1>
+          <span className="inline-flex h-9 items-center gap-2 rounded-lg border border-white/10 bg-slate-950/45 px-3 text-xs font-medium text-slate-200 tabular-nums">
+            <CalendarDays className="h-3.5 w-3.5 text-slate-500" />
+            {today.label}
+          </span>
+          <span className="text-xs font-medium text-slate-400">+ {weekRange.label}</span>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button onClick={() => setTaskModalOpen(true)} size="sm">
+            <Plus className="h-4 w-4" />
+            New Task
+          </Button>
+          <Button onClick={() => setLogModalOpen(true)} size="sm">
+            <ClipboardEdit className="h-4 w-4" />
+            Quick Log
+          </Button>
+          <Button onClick={() => syncMutation.mutate()} disabled={syncMutation.isPending} size="sm">
+            <RefreshCw className={`h-4 w-4 ${syncMutation.isPending ? "animate-spin" : ""}`} />
+            {syncMutation.isPending ? "Syncing..." : "Sync Repos"}
+          </Button>
+          <span className="mx-1 h-8 w-px bg-white/10" />
+          <Button variant="primary" onClick={() => setReviewOpen(true)} size="sm">
+            <ListChecks className="h-4 w-4" />
+            End of Day Review
+          </Button>
+          <Button onClick={() => navigate("/reports")} size="sm">
+            <FileText className="h-4 w-4" />
+            Reports
+          </Button>
+          <Button onClick={() => setReportPrepOpen(true)} size="sm">
+            <FileText className="h-4 w-4" />
+            Prep Report
+          </Button>
+        </div>
+      </div>
 
       {showOnboardingPanel ? (
         <OnboardingSetupPanel
@@ -732,132 +746,128 @@ export function TodayPage() {
         />
       ) : null}
 
-      <TodayCommandCenterPanel
-        todayDate={today.date}
-        commandCenter={commandCenterQuery.data}
-        isLoading={commandCenterQuery.isLoading}
-        isError={commandCenterQuery.isError}
-        errorMessage={commandCenterQuery.error instanceof Error ? commandCenterQuery.error.message : null}
-        openTasks={todayTasks}
-        reminders={priorityRemindersQuery.data ?? []}
-        priorityDraft={priorityDraft}
-        onPriorityDraftChange={setPriorityDraft}
-        onSavePriorities={() =>
-          replacePrioritiesMutation.mutate(
-            priorityDraft
-              .map((item, index) => ({
-                rank: index + 1,
-                title: item.title.trim(),
-                weeklyTaskId: item.weeklyTaskId,
-                plannedMinutes: item.plannedMinutes.trim() ? Number(item.plannedMinutes) : undefined,
-              }))
-              .filter((item) => item.title),
-          )
-        }
-        onSetFocusGoal={(minutes) => updateFocusGoalMutation.mutate(minutes)}
-        onMarkPriorityDone={(item) =>
-          item.id.startsWith("suggested_daily_plan_item_")
-            ? replacePrioritiesMutation.mutate(
-                priorityDraft
-                  .map((draftItem, index) => ({
-                    rank: index + 1,
-                    title: draftItem.title.trim(),
-                    weeklyTaskId: draftItem.weeklyTaskId,
-                    plannedMinutes: draftItem.plannedMinutes.trim() ? Number(draftItem.plannedMinutes) : undefined,
-                  }))
-                  .filter((draftItem) => draftItem.title),
-              )
-            : updatePriorityMutation.mutate({
-                id: item.id,
-                input: { status: "done" },
-              })
-        }
-        onStartPriorityFocus={(item) =>
-          startFocusMutation.mutate({
-            title: item.title,
-            projectId: null,
-            taskId: item.weeklyTaskId ?? null,
-            notes: null,
-          })
-        }
-        isSaving={
-          replacePrioritiesMutation.isPending ||
-          updatePriorityMutation.isPending ||
-          updateFocusGoalMutation.isPending
-        }
-        backgroundModeEnabled={Boolean(settingsQuery.data?.minimizeToTrayOnClose)}
-        startupEnabled={Boolean(settingsQuery.data?.startupEnabled)}
-        onOpenBackgroundSettings={() => navigate("/settings")}
-      />
-
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <TodayStat icon={Target} label="Planned Today" value={planned.length.toString()} />
-        <TodayStat icon={Activity} label="In Progress" value={inProgress.length.toString()} />
-        <TodayStat icon={AlertTriangle} label="Blockers" value={blockers.length.toString()} />
-        <TodayStat icon={FileText} label="Report Ready" value={reportReadyCount.toString()} />
-        <TodayStat
-          icon={Focus}
-          label="Capacity Today"
-          value={formatMinutes(
-            capacityQuery.data?.days.find((day) => day.date === today.date)?.remainingMinutes ?? 0,
-          )}
-        />
-      </div>
-
-      <TodayQuickAddBar
-        projects={projects}
-        todayDate={today.date}
-        isPending={createTaskMutation.isPending}
-        onAdd={(values) =>
-          createTaskMutation.mutate({
-            title: values.title,
-            taskType: "planned_work",
-            status: "todo",
-            projectId: values.projectId ?? undefined,
-            priority: values.priority,
-            weekStartDate: weekRange.from,
-            targetDate: values.targetDate,
-            includedInReport: false,
-          })
-        }
-      />
-
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
+      <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="space-y-4">
-          <div id="carryover-assistant">
-            <CarryoverAssistant
-              tasks={previousOpenTasks}
-              isUpdating={updateTaskMutation.isPending}
-              onCarry={(task) =>
-                updateTaskMutation.mutate({
-                  id: task.id,
-                  input: {
-                    weekStartDate: weekRange.from,
-                    taskType: "carryover",
-                    status: task.status,
-                  },
-                })
-              }
-              onDrop={(task) =>
-                updateTaskMutation.mutate({
-                  id: task.id,
-                  input: { status: "dropped", completedAt: today.date },
-                })
-              }
-              onDone={(task) =>
-                updateTaskMutation.mutate({
-                  id: task.id,
-                  input: { status: "completed", completedAt: today.date },
-                })
-              }
-              onInclude={(task) =>
-                updateTaskMutation.mutate({
-                  id: task.id,
-                  input: { includedInReport: true },
+          <TodayCommandCenterPanel
+            todayDate={today.date}
+            commandCenter={commandCenterQuery.data}
+            isLoading={commandCenterQuery.isLoading}
+            isError={commandCenterQuery.isError}
+            errorMessage={commandCenterQuery.error instanceof Error ? commandCenterQuery.error.message : null}
+            openTasks={todayTasks}
+            reminders={priorityRemindersQuery.data ?? []}
+            priorityDraft={priorityDraft}
+            onPriorityDraftChange={setPriorityDraft}
+            onSavePriorities={() =>
+              replacePrioritiesMutation.mutate(
+                priorityDraft
+                  .map((item, index) => ({
+                    rank: index + 1,
+                    title: item.title.trim(),
+                    weeklyTaskId: item.weeklyTaskId,
+                    plannedMinutes: item.plannedMinutes.trim() ? Number(item.plannedMinutes) : undefined,
+                  }))
+                  .filter((item) => item.title),
+              )
+            }
+            onSetFocusGoal={(minutes) => updateFocusGoalMutation.mutate(minutes)}
+            onMarkPriorityDone={(item) =>
+              item.id.startsWith("suggested_daily_plan_item_")
+                ? replacePrioritiesMutation.mutate(
+                    priorityDraft
+                      .map((draftItem, index) => ({
+                        rank: index + 1,
+                        title: draftItem.title.trim(),
+                        weeklyTaskId: draftItem.weeklyTaskId,
+                        plannedMinutes: draftItem.plannedMinutes.trim() ? Number(draftItem.plannedMinutes) : undefined,
+                      }))
+                      .filter((draftItem) => draftItem.title),
+                  )
+                : updatePriorityMutation.mutate({
+                    id: item.id,
+                    input: { status: "done" },
+                  })
+            }
+            onStartPriorityFocus={(item) =>
+              startFocusMutation.mutate({
+                title: item.title,
+                projectId: null,
+                taskId: item.weeklyTaskId ?? null,
+                notes: null,
+              })
+            }
+            isSaving={
+              replacePrioritiesMutation.isPending ||
+              updatePriorityMutation.isPending ||
+              updateFocusGoalMutation.isPending
+            }
+            backgroundModeEnabled={Boolean(settingsQuery.data?.minimizeToTrayOnClose)}
+            startupEnabled={Boolean(settingsQuery.data?.startupEnabled)}
+            onOpenBackgroundSettings={() => navigate("/settings")}
+          />
+
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            <TodayStat icon={Target} label="Planned Today" value={planned.length.toString()} detail="open tasks" />
+            <TodayStat icon={Activity} label="In Progress" value={inProgress.length.toString()} detail="tasks" />
+            <TodayStat icon={AlertTriangle} label="Blockers" value={blockers.length.toString()} detail={blockers.length === 1 ? "task" : "tasks"} tone="amber" />
+            <TodayStat icon={FileText} label="Report Ready" value={reportReadyCount.toString()} detail="items" tone="emerald" />
+            <TodayStat icon={Focus} label="Capacity Today" value={formatMinutes(todayRemainingCapacity)} detail="remaining" tone="emerald" />
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1fr)]">
+            <TodayQuickAddBar
+              projects={projects}
+              todayDate={today.date}
+              isPending={createTaskMutation.isPending}
+              onAdd={(values) =>
+                createTaskMutation.mutate({
+                  title: values.title,
+                  taskType: "planned_work",
+                  status: "todo",
+                  projectId: values.projectId ?? undefined,
+                  priority: values.priority,
+                  weekStartDate: weekRange.from,
+                  targetDate: values.targetDate,
+                  includedInReport: false,
                 })
               }
             />
+            <div id="carryover-assistant">
+              <CompactCarryoverAssistant
+                tasks={previousOpenTasks}
+                isUpdating={updateTaskMutation.isPending}
+                onCarry={(task) =>
+                  updateTaskMutation.mutate({
+                    id: task.id,
+                    input: {
+                      weekStartDate: weekRange.from,
+                      taskType: "carryover",
+                      status: task.status,
+                    },
+                  })
+                }
+                onDrop={(task) =>
+                  updateTaskMutation.mutate({
+                    id: task.id,
+                    input: { status: "dropped", completedAt: today.date },
+                  })
+                }
+                onDone={(task) =>
+                  updateTaskMutation.mutate({
+                    id: task.id,
+                    input: { status: "completed", completedAt: today.date },
+                  })
+                }
+                onInclude={(task) =>
+                  updateTaskMutation.mutate({
+                    id: task.id,
+                    input: { includedInReport: true },
+                  })
+                }
+              />
+            </div>
           </div>
+
           <div className="grid gap-4 lg:grid-cols-2">
             <TaskPanel
               title="Active Work"
@@ -890,9 +900,37 @@ export function TodayPage() {
               }
             />
           </div>
+          <TodayNudgeStrip
+            nudges={activeNudges}
+            onDismiss={(key) => dismissNudgeMutation.mutate(key)}
+            isDismissing={dismissNudgeMutation.isPending}
+          />
         </div>
 
-        <div className="space-y-4">
+        <aside className="space-y-4">
+          <div id="focus-session-panel">
+            <TodayFocusPanel
+              activeSession={activeFocusQuery.data}
+              focusGoalMinutes={commandCenterQuery.data?.focusGoalMinutes ?? 240}
+              focusActualMinutes={commandCenterQuery.data?.focusActualMinutes ?? 0}
+              projects={projects}
+              onStart={(input) =>
+                startFocusMutation.mutate({
+                  title: input.title,
+                  projectId: input.projectId ?? null,
+                  taskId: null,
+                  notes: null,
+                })
+              }
+              onStop={() => setStopFocusOpen(true)}
+              onCancel={() => activeFocusQuery.data && cancelFocusMutation.mutate(activeFocusQuery.data.id)}
+              isPending={
+                startFocusMutation.isPending ||
+                stopFocusMutation.isPending ||
+                cancelFocusMutation.isPending
+              }
+            />
+          </div>
           <PriorityReminderPanel
             reminders={activePriorityReminders}
             isPending={snoozeReminderMutation.isPending || dismissPriorityReminderMutation.isPending}
@@ -913,62 +951,7 @@ export function TodayPage() {
               })
             }
           />
-          <NudgePanel
-            nudges={activeNudges}
-            onDismiss={(key) => dismissNudgeMutation.mutate(key)}
-            isDismissing={dismissNudgeMutation.isPending}
-          />
-          <div id="focus-session-panel">
-            <FocusSessionPanel
-              activeSession={activeFocusQuery.data}
-              projects={projects}
-              onStart={(input) =>
-                startFocusMutation.mutate({
-                  title: input.title,
-                  projectId: input.projectId ?? null,
-                  taskId: null,
-                  notes: null,
-                })
-              }
-              onStop={() => setStopFocusOpen(true)}
-              onCancel={() => activeFocusQuery.data && cancelFocusMutation.mutate(activeFocusQuery.data.id)}
-              isPending={
-                startFocusMutation.isPending ||
-                stopFocusMutation.isPending ||
-                cancelFocusMutation.isPending
-              }
-            />
-          </div>
-          <Panel>
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <h2 className="text-sm font-semibold text-white">Today's Activity</h2>
-              <Badge tone={activityItems.length > 0 ? "green" : "slate"}>{activityItems.length} items</Badge>
-            </div>
-            <div className="space-y-2">
-              {activityQuery.isLoading ? (
-                <div className="h-24 animate-pulse rounded-xl bg-white/[0.03]" />
-              ) : activityItems.length > 0 ? (
-                activityItems.slice(0, 7).map((item) => (
-                  <div key={item.id} className="rounded-xl border border-white/8 bg-white/[0.03] p-3">
-                    <div className="flex items-start gap-3">
-                      <span className="mt-0.5 text-cyan-200">
-                        {item.activityType === "commit" ? <GitCommit className="h-4 w-4" /> : <ClipboardEdit className="h-4 w-4" />}
-                      </span>
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-slate-100">{item.summary}</p>
-                        <p className="mt-1 text-xs text-slate-500">{item.projectName ?? "General"} / {item.activityType}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] p-4 text-xs leading-5 text-slate-400">
-                  Sync repositories or add a quick log to build today's trail.
-                </div>
-              )}
-            </div>
-          </Panel>
-
+          <TodayActivityPanel isLoading={activityQuery.isLoading} activityItems={activityItems} />
           <Panel className="border-cyan-300/15 bg-cyan-400/10">
             <div className="mb-3 flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4 text-cyan-200" />
@@ -980,7 +963,7 @@ export function TodayPage() {
               <ReadinessRow done={blockers.length === 0} label="Blockers reviewed" />
             </div>
           </Panel>
-        </div>
+        </aside>
       </div>
 
       <AddTaskModal
@@ -1055,22 +1038,30 @@ function TodayStat({
   icon: Icon,
   label,
   value,
+  detail,
+  tone = "blue",
 }: {
   icon: React.ElementType;
   label: string;
   value: string;
+  detail: string;
+  tone?: "blue" | "emerald" | "amber";
 }) {
+  const toneClass = {
+    blue: "border-blue-400/20 bg-blue-500/12 text-blue-200",
+    emerald: "border-emerald-400/20 bg-emerald-500/12 text-emerald-200",
+    amber: "border-amber-400/25 bg-amber-500/12 text-amber-200",
+  }[tone];
   return (
-    <Panel className="group relative overflow-hidden border-white/10 bg-gradient-to-br from-slate-950/85 via-[#07142a]/95 to-slate-950/90 p-4">
-      <div className="absolute -bottom-2 right-0 h-8 w-20 rounded-full bg-cyan-400/10 blur-xl transition-opacity group-hover:opacity-90" />
-      <div className="relative flex items-start justify-between gap-2">
+    <Panel className="border-white/10 bg-slate-950/55 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
+      <div className="flex items-start gap-3">
+        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border ${toneClass}`}>
+          <Icon className="h-4 w-4" />
+        </span>
         <div>
           <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-400">{label}</p>
-          <p className="mt-2 text-5xl font-semibold leading-none text-white">{value}</p>
-          <p className="mt-1 text-sm text-slate-400">minutes</p>
-        </div>
-        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-2">
-          <Icon className="h-4 w-4 text-cyan-200" />
+          <p className="mt-2 text-2xl font-semibold leading-none text-white tabular-nums">{value}</p>
+          <p className="mt-1 text-xs text-slate-400">{detail}</p>
         </div>
       </div>
     </Panel>
@@ -1263,14 +1254,14 @@ function TodayCommandCenterPanel({
   );
 
   return (
-    <Panel className="border-white/10 bg-slate-950/72 p-3 sm:p-4">
+    <Panel className="overflow-hidden border-white/10 bg-[linear-gradient(135deg,rgba(8,20,39,0.96),rgba(6,18,35,0.82))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-cyan-200">
             <Sparkles className="h-3.5 w-3.5" />
-            Today Focus
+            Today Command Center
           </div>
-          <h2 className="text-xl font-semibold leading-7 text-white sm:text-2xl">{mainFocus}</h2>
+          <h2 className="max-w-2xl text-xl font-semibold leading-7 text-white sm:text-2xl">{mainFocus}</h2>
           <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
             <span className="inline-flex items-center gap-1.5">
               <BriefcaseBusiness className="h-3.5 w-3.5 text-slate-500" />
@@ -1286,7 +1277,7 @@ function TodayCommandCenterPanel({
             </span>
           </p>
         </div>
-        <span className="rounded-lg border border-blue-300/20 bg-blue-500/10 px-3 py-1 text-xs font-semibold text-blue-200">{todayDate}</span>
+        <span className="rounded-lg border border-blue-300/20 bg-blue-500/10 px-3 py-1 text-xs font-semibold text-blue-200 tabular-nums">{todayDate}</span>
       </div>
       {isLoading ? (
         <div className="h-24 animate-pulse rounded-xl border border-white/8 bg-white/[0.03]" />
@@ -1295,9 +1286,9 @@ function TodayCommandCenterPanel({
           Command Center is unavailable. Existing Today tools remain usable. {errorMessage ?? ""}
         </div>
       ) : (
-        <div className="grid gap-3 xl:grid-cols-[minmax(0,1.25fr)_minmax(280px,0.75fr)]">
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(280px,0.75fr)]">
           <div className="space-y-3">
-            <div className="rounded-xl border border-cyan-300/15 bg-cyan-300/[0.04] p-3">
+            <div className="rounded-xl border border-cyan-300/15 bg-cyan-300/[0.045] p-3">
               <div className="mb-2 flex items-center gap-2">
                 <ArrowRight className="h-4 w-4 text-cyan-200" />
                 <p className="text-xs font-semibold uppercase tracking-[0.12em] text-cyan-100">Next suggested action</p>
@@ -1308,7 +1299,7 @@ function TodayCommandCenterPanel({
               ) : null}
             </div>
 
-            <div className="rounded-xl border border-white/10 bg-white/[0.025] p-3">
+            <div className="rounded-xl border border-white/10 bg-slate-950/35 p-3">
               <div className="mb-3 flex items-center justify-between gap-2">
                 <div className="min-w-0">
                   <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Set Today&apos;s Focus</p>
@@ -1338,7 +1329,7 @@ function TodayCommandCenterPanel({
                   return (
                     <div
                       key={index}
-                      className={`grid grid-cols-[28px_minmax(0,1fr)_92px_78px] items-center gap-2 rounded-xl px-2 py-2 transition-[background-color,border-color,box-shadow] duration-150 ease-out ${
+                    className={`grid grid-cols-[28px_minmax(0,1fr)_86px_72px] items-center gap-2 rounded-xl px-2 py-2 transition-[background-color,border-color,box-shadow] duration-150 ease-out ${
                         isDone
                           ? "border border-emerald-300/20 bg-emerald-500/[0.075] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
                           : isNext
@@ -1547,6 +1538,216 @@ function MissionMetric({
   );
 }
 
+function TodayFocusPanel({
+  activeSession,
+  focusGoalMinutes,
+  focusActualMinutes,
+  projects,
+  onStart,
+  onStop,
+  onCancel,
+  isPending,
+}: {
+  activeSession?: FocusSession | null;
+  focusGoalMinutes: number;
+  focusActualMinutes: number;
+  projects: Project[];
+  onStart: (input: { title: string; projectId?: string | null }) => void;
+  onStop: () => void;
+  onCancel: () => void;
+  isPending: boolean;
+}) {
+  const [title, setTitle] = useState("");
+  const [projectId, setProjectId] = useState("none");
+  const elapsed = useElapsedSeconds(activeSession?.startedAt);
+  const focusPercent = Math.min(100, Math.round((focusActualMinutes / Math.max(focusGoalMinutes, 1)) * 100));
+
+  return (
+    <Panel className="border-emerald-300/15 bg-[linear-gradient(180deg,rgba(8,33,38,0.72),rgba(6,18,35,0.92))] p-4">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h2 className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-300">Focus Session</h2>
+        <Badge tone={activeSession ? "green" : "slate"}>{activeSession ? "Active" : "Idle"}</Badge>
+      </div>
+
+      {activeSession ? (
+        <div>
+          <p className="text-xs text-slate-400">Focused on</p>
+          <p className="mt-2 text-base font-semibold leading-6 text-white">{activeSession.title}</p>
+          <p className="mt-1 text-xs text-slate-500">{activeSession.projectName ?? activeSession.taskTitle ?? "General focus"}</p>
+          <p className="mt-5 text-4xl font-semibold tracking-tight text-slate-100 tabular-nums">{formatElapsed(elapsed)}</p>
+          <p className="mt-1 text-xs text-slate-500">Started {formatMeetingTime(activeSession.startedAt)}</p>
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <Button variant="primary" onClick={onStop} disabled={isPending} className="border-rose-500/35 bg-rose-600 hover:bg-rose-500">
+              <Square className="h-4 w-4" />
+              Stop
+            </Button>
+            <Button variant="ghost" onClick={onCancel} disabled={isPending}>
+              <X className="h-4 w-4" />
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <input
+            value={title}
+            onChange={(event) => setTitle(event.currentTarget.value)}
+            placeholder="What are you focusing on?"
+            className="h-10 w-full rounded-lg border border-white/10 bg-slate-950/65 px-3 text-sm text-slate-100 outline-none placeholder:text-slate-600 focus:border-emerald-300/50 focus:ring-2 focus:ring-emerald-500/15"
+          />
+          <select
+            value={projectId}
+            onChange={(event) => setProjectId(event.currentTarget.value)}
+            className="h-10 w-full rounded-lg border border-white/10 bg-slate-950/65 px-3 text-sm text-slate-100 outline-none focus:border-emerald-300/50 focus:ring-2 focus:ring-emerald-500/15"
+          >
+            <option value="none">General focus</option>
+            {projects.map((project) => (
+              <option key={project.id} value={project.id}>{project.name}</option>
+            ))}
+          </select>
+          <Button
+            variant="primary"
+            onClick={() => {
+              onStart({
+                title: title.trim() || "Focus session",
+                projectId: projectId === "none" ? null : projectId,
+              });
+              setTitle("");
+            }}
+            disabled={isPending}
+            className="w-full"
+          >
+            <Play className="h-4 w-4" />
+            Start Focus
+          </Button>
+        </div>
+      )}
+
+      <div className="mt-5 border-t border-white/8 pt-4">
+        <div className="mb-2 flex items-center justify-between text-xs">
+          <span className="text-slate-300">Today&apos;s Focus</span>
+          <span className="font-medium text-blue-300">{formatMinutes(focusActualMinutes)} / {formatMinutes(focusGoalMinutes)}</span>
+        </div>
+        <div className="h-1.5 overflow-hidden rounded-full bg-slate-900 ring-1 ring-white/8">
+          <div className="h-full rounded-full bg-emerald-300" style={{ width: `${focusPercent}%` }} />
+        </div>
+        <div className="mt-2 text-right text-xs text-slate-400">{focusPercent}%</div>
+      </div>
+    </Panel>
+  );
+}
+
+function CompactCarryoverAssistant({
+  tasks,
+  isUpdating = false,
+  onCarry,
+  onDrop,
+  onDone,
+  onInclude,
+}: {
+  tasks: WeeklyTask[];
+  isUpdating?: boolean;
+  onCarry: (task: WeeklyTask) => void;
+  onDrop: (task: WeeklyTask) => void;
+  onDone: (task: WeeklyTask) => void;
+  onInclude: (task: WeeklyTask) => void;
+}) {
+  return (
+    <Panel className="border-white/10 bg-slate-950/45 p-3">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-blue-200">Carryover Assistant</h2>
+        <Badge tone={tasks.length > 0 ? "blue" : "slate"}>{tasks.length} items</Badge>
+      </div>
+      <div className="space-y-2">
+        {tasks.length > 0 ? (
+          tasks.slice(0, 3).map((task) => (
+            <div key={task.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg border border-white/8 bg-white/[0.025] px-3 py-2">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-slate-100">{task.title}</p>
+                <p className="mt-1 text-xs text-slate-500">From week of {task.weekStartDate}</p>
+              </div>
+              <div className="flex gap-1">
+                <Button disabled={isUpdating} variant="ghost" onClick={() => onCarry(task)} className="h-8 w-8 px-0" aria-label={`Carry ${task.title}`}>
+                  <RefreshCw className="h-3.5 w-3.5 text-emerald-300" />
+                </Button>
+                <Button disabled={isUpdating} variant="ghost" onClick={() => onDone(task)} className="h-8 w-8 px-0" aria-label={`Complete ${task.title}`}>
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-300" />
+                </Button>
+                <Button disabled={isUpdating || task.includedInReport} variant="ghost" onClick={() => onInclude(task)} className="h-8 w-8 px-0" aria-label={`Add ${task.title} to report`}>
+                  <FileText className="h-3.5 w-3.5 text-slate-300" />
+                </Button>
+                <Button disabled={isUpdating} variant="ghost" onClick={() => onDrop(task)} className="h-8 w-8 px-0" aria-label={`Drop ${task.title}`}>
+                  <X className="h-3.5 w-3.5 text-rose-300" />
+                </Button>
+              </div>
+            </div>
+          ))
+        ) : (
+          <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] p-4 text-xs leading-5 text-slate-400">
+            No unfinished work is waiting from previous weeks.
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+function TodayNudgeStrip({
+  nudges,
+  onDismiss,
+  isDismissing = false,
+}: {
+  nudges: TodayNudge[];
+  onDismiss: (key: string) => void;
+  isDismissing?: boolean;
+}) {
+  return (
+    <Panel className="border-white/10 bg-slate-950/45 p-3">
+      <div className="mb-3 flex items-center gap-2">
+        <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-blue-200">Nudges</h2>
+        <Badge tone="slate">{nudges.length}</Badge>
+      </div>
+      {nudges.length > 0 ? (
+        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+          {nudges.slice(0, 4).map((nudge, index) => (
+            <div key={nudge.key} className="group relative rounded-lg border border-white/8 bg-white/[0.025] px-3 py-2">
+              <button
+                type="button"
+                disabled={isDismissing}
+                onClick={() => onDismiss(nudge.key)}
+                className="absolute right-2 top-2 rounded-md p-1 text-slate-600 opacity-0 transition-[opacity,color,background-color] duration-150 hover:bg-white/8 hover:text-white group-hover:opacity-100 disabled:opacity-40"
+                aria-label={`Dismiss ${nudge.title}`}
+              >
+                <X className="h-3 w-3" />
+              </button>
+              <div className="flex items-start gap-2 pr-4">
+                <span className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border ${
+                  index % 4 === 0 ? "border-blue-300/20 bg-blue-500/12 text-blue-200" :
+                  index % 4 === 1 ? "border-emerald-300/20 bg-emerald-500/12 text-emerald-200" :
+                  index % 4 === 2 ? "border-amber-300/20 bg-amber-500/12 text-amber-200" :
+                  "border-violet-300/20 bg-violet-500/12 text-violet-200"
+                }`}>
+                  <Sparkles className="h-3.5 w-3.5" />
+                </span>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-slate-100">{nudge.title}</p>
+                  <button type="button" onClick={nudge.onAction} className="mt-1 text-xs font-medium text-blue-300 hover:text-blue-200">
+                    {nudge.actionLabel}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] p-4 text-xs leading-5 text-slate-400">
+          Nothing needs your attention right now.
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 function PriorityStatusBadge({
   item,
   reminder,
@@ -1687,22 +1888,30 @@ function TaskPanel({
   onFocus: (task: WeeklyTask) => void;
 }) {
   return (
-    <Panel>
+    <Panel className="border-white/10 bg-slate-950/45 p-3">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold text-white">{title}</h2>
-        <Badge tone="blue">{tasks.length}</Badge>
+        <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-blue-200">{title}</h2>
+        <Badge tone="slate">{tasks.length} {tasks.length === 1 ? "task" : "tasks"}</Badge>
       </div>
       <div className="space-y-2">
         {tasks.length > 0 ? (
           tasks.map((task) => (
-            <div key={task.id} className="rounded-xl border border-white/8 bg-white/[0.03] p-3">
+            <div key={task.id} className="rounded-lg border border-white/8 bg-white/[0.025] px-3 py-2">
               <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-slate-100">{task.title}</p>
-                  <p className="mt-1 text-xs text-slate-500">{task.projectName ?? "General"} / {task.priority}</p>
+                <div className="flex min-w-0 items-start gap-2">
+                  <span className="mt-0.5 h-4 w-4 rounded border border-slate-500/50 bg-slate-950" />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-slate-100">{task.title}</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      <span className={task.priority === "high" ? "text-rose-300" : task.priority === "normal" ? "text-blue-300" : "text-slate-400"}>
+                        {task.priority}
+                      </span>
+                      {task.estimatedMinutes ? ` / ${task.estimatedMinutes}m` : ""}
+                    </p>
+                  </div>
                 </div>
                 <div className="flex gap-1">
-                  <Button variant="ghost" onClick={() => onFocus(task)} className="h-8 px-2 text-xs">
+                  <Button variant="ghost" onClick={() => onFocus(task)} className="h-8 w-8 px-0 text-xs" aria-label={`Start focus on ${task.title}`}>
                     <Focus className="h-3.5 w-3.5" />
                   </Button>
                   {task.status !== "in_progress" ? (
@@ -1720,6 +1929,45 @@ function TaskPanel({
         ) : (
           <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] p-4 text-xs leading-5 text-slate-400">
             {empty}
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+function TodayActivityPanel({
+  isLoading,
+  activityItems,
+}: {
+  isLoading: boolean;
+  activityItems: Array<import("../types/activity").ActivityItem>;
+}) {
+  return (
+    <Panel className="border-white/10 bg-slate-950/45 p-3">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-blue-200">Today Activity</h2>
+        <Badge tone={activityItems.length > 0 ? "green" : "slate"}>{activityItems.length} items</Badge>
+      </div>
+      <div className="space-y-2">
+        {isLoading ? (
+          <div className="h-24 animate-pulse rounded-xl bg-white/[0.03]" />
+        ) : activityItems.length > 0 ? (
+          activityItems.slice(0, 7).map((item) => (
+            <div key={item.id} className="flex items-start gap-3 rounded-lg border border-white/8 bg-white/[0.025] px-3 py-2">
+              <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-emerald-300/15 bg-emerald-400/10 text-emerald-200">
+                {item.activityType === "commit" ? <GitCommit className="h-3.5 w-3.5" /> : <ClipboardEdit className="h-3.5 w-3.5" />}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-slate-100">{item.summary}</p>
+                <p className="mt-1 text-xs text-slate-500">{item.projectName ?? "General"} / {item.activityType}</p>
+              </div>
+              <span className="shrink-0 text-[11px] text-slate-500 tabular-nums">{formatMeetingTime(item.occurredAt)}</span>
+            </div>
+          ))
+        ) : (
+          <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] p-4 text-xs leading-5 text-slate-400">
+            Sync repositories or add a quick log to build today's trail.
           </div>
         )}
       </div>
@@ -1846,6 +2094,30 @@ function minutesSince(timestamp: string) {
   const started = new Date(timestamp).getTime();
   if (Number.isNaN(started)) return 0;
   return Math.floor((Date.now() - started) / 60_000);
+}
+
+function useElapsedSeconds(startedAt?: string) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!startedAt) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [startedAt]);
+
+  return useMemo(() => {
+    if (!startedAt) return 0;
+    const started = new Date(startedAt).getTime();
+    if (Number.isNaN(started)) return 0;
+    return Math.max(0, Math.floor((now - started) / 1_000));
+  }, [now, startedAt]);
+}
+
+function formatElapsed(seconds: number) {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainder = seconds % 60;
+  return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${remainder.toString().padStart(2, "0")}`;
 }
 
 function formatMinutes(minutes: number) {
