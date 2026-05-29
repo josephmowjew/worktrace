@@ -1829,11 +1829,11 @@ export function SettingsPage() {
                   title="Git Repositories"
                   connected
                   description="Monitor local and remote Git repositories for activity and changes."
-                  primaryLabel="Configure"
+                  primaryLabel="Manage"
                   primaryIcon
-                  onPrimary={() => setActiveIntegrationPanel("git")}
-                  secondaryLabel="Manage"
-                  onSecondary={() => setActiveTab("work")}
+                  onPrimary={() => setActiveTab("work")}
+                  secondaryLabel="Configure"
+                  onSecondary={() => setActiveIntegrationPanel("git")}
                 />
                 <IntegrationCard
                   icon={<BrandIcon icon={siWakatime} />}
