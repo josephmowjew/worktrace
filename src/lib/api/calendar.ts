@@ -5,13 +5,14 @@ import type {
   ConnectGoogleCalendarInput,
   DisconnectCalendarSourceInput,
   ListCalendarEventsInput,
+  SetCalendarSourceEnabledInput,
   SyncCalendarEventsInput,
   SyncCalendarEventsResult,
 } from "../../types/calendar";
 import type { GetWeekCapacityInput, WeekCapacity } from "../../types/capacity";
 
 export function connectGoogleCalendar(input: ConnectGoogleCalendarInput) {
-  return callCommand<CalendarSource>("connect_google_calendar", { input });
+  return callCommand<CalendarSource[]>("connect_google_calendar", { input });
 }
 
 export function listCalendarSources() {
@@ -20,6 +21,10 @@ export function listCalendarSources() {
 
 export function disconnectCalendarSource(input: DisconnectCalendarSourceInput) {
   return callCommand<boolean>("disconnect_calendar_source", { input });
+}
+
+export function setCalendarSourceEnabled(input: SetCalendarSourceEnabledInput) {
+  return callCommand<CalendarSource>("set_calendar_source_enabled", { input });
 }
 
 export function syncCalendarEvents(input: SyncCalendarEventsInput) {

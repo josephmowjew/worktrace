@@ -28,14 +28,18 @@ export function ProjectDetailHeader({
   project,
   stats,
   isSyncing,
+  isGitHubSyncing,
   onSync,
+  onGitHubSync,
   onEdit,
   onArchive,
 }: {
   project: Project;
   stats?: ProjectStats;
   isSyncing: boolean;
+  isGitHubSyncing?: boolean;
   onSync: () => void;
+  onGitHubSync?: () => void;
   onEdit: () => void;
   onArchive: () => void;
 }) {
@@ -108,6 +112,16 @@ export function ProjectDetailHeader({
                 <RefreshCw className={`h-4 w-4 ${isSyncing ? "animate-spin" : ""}`} />
                 {isSyncing ? "Syncing..." : "Sync Now"}
               </Button>
+              {project.githubUrl && onGitHubSync ? (
+                <Button
+                  variant="secondary"
+                  onClick={onGitHubSync}
+                  disabled={isGitHubSyncing || project.status === "archived"}
+                >
+                  <ExternalLink className={`h-4 w-4 ${isGitHubSyncing ? "animate-pulse" : ""}`} />
+                  {isGitHubSyncing ? "Syncing GitHub..." : "Sync GitHub"}
+                </Button>
+              ) : null}
               <Button variant="secondary" onClick={onEdit}>
                 Edit
               </Button>

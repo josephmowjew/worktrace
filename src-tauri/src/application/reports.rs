@@ -495,11 +495,12 @@ fn render_weekly_tasks(lines: &mut Vec<String>, tasks: &[WeeklyTask], include_hi
 }
 
 fn label_activity(value: &str) -> String {
-    if value == "commit" {
-        return "Commit".to_string();
+    match value {
+        "commit" => "Commit".to_string(),
+        "github_pr" => "GitHub PR".to_string(),
+        "github_issue" => "GitHub Issue".to_string(),
+        _ => value.replace('_', " "),
     }
-
-    value.replace('_', " ")
 }
 
 fn daily_review_content(input: &SaveDailyReviewNoteInput) -> String {

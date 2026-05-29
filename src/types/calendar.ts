@@ -3,9 +3,22 @@ export type CalendarSource = {
   provider: string;
   accountEmail: string;
   accountName?: string | null;
-  syncStatus: string;
+  syncStatus:
+    | "not_configured"
+    | "oauth_pending"
+    | "connected"
+    | "syncing"
+    | "error"
+    | "disconnected";
   lastSyncedAt?: string | null;
   tokenRef?: string | null;
+  accessTokenRef?: string | null;
+  refreshTokenRef?: string | null;
+  accessExpiresAt?: string | null;
+  calendarId?: string | null;
+  googleClientId?: string | null;
+  syncToken?: string | null;
+  lastError?: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -31,11 +44,16 @@ export type CalendarEvent = {
 };
 
 export type ConnectGoogleCalendarInput = {
-  accountEmail?: string | null;
+  clientId: string;
 };
 
 export type DisconnectCalendarSourceInput = {
   sourceId: string;
+};
+
+export type SetCalendarSourceEnabledInput = {
+  sourceId: string;
+  enabled: boolean;
 };
 
 export type ListCalendarEventsInput = {

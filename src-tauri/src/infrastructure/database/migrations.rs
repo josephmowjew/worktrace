@@ -128,6 +128,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .await?;
 
     sqlx::raw_sql(CALENDAR_SQL).execute(pool).await?;
+    run_google_calendar_oauth_migration(pool).await?;
     sqlx::raw_sql(DAILY_PLAN_SQL).execute(pool).await?;
     sqlx::raw_sql(GIT_METADATA_SQL).execute(pool).await?;
     sqlx::raw_sql(GIT_SYNC_STATE_SQL).execute(pool).await?;
@@ -147,6 +148,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::raw_sql(EMBEDDINGS_SQL).execute(pool).await?;
     sqlx::raw_sql(SPARC_FORCE_SQL).execute(pool).await?;
     run_sparc_force_dedup_migration(pool).await?;
+    sqlx::raw_sql(GITHUB_INTEGRATION_SQL).execute(pool).await?;
 
     Ok(())
 }
@@ -178,6 +180,33 @@ async fn run_activity_group_metadata_migration(pool: &SqlitePool) -> Result<(), 
     .await?;
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_activity_groups_review_status ON activity_groups(review_status);",
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+async fn run_google_calendar_oauth_migration(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    for statement in [
+        "ALTER TABLE calendar_sources ADD COLUMN access_token_ref TEXT;",
+        "ALTER TABLE calendar_sources ADD COLUMN refresh_token_ref TEXT;",
+        "ALTER TABLE calendar_sources ADD COLUMN access_expires_at TEXT;",
+        "ALTER TABLE calendar_sources ADD COLUMN calendar_id TEXT;",
+        "ALTER TABLE calendar_sources ADD COLUMN google_client_id TEXT;",
+        "ALTER TABLE calendar_sources ADD COLUMN sync_token TEXT;",
+        "ALTER TABLE calendar_sources ADD COLUMN last_error TEXT;",
+    ] {
+        sqlx::query(statement).execute(pool).await.ok();
+    }
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_calendar_sources_status ON calendar_sources(sync_status);",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_calendar_sources_calendar ON calendar_sources(calendar_id);",
     )
     .execute(pool)
     .await?;
@@ -483,6 +512,13 @@ CREATE TABLE IF NOT EXISTS calendar_sources (
   sync_status TEXT NOT NULL,
   last_synced_at TEXT,
   token_ref TEXT,
+  access_token_ref TEXT,
+  refresh_token_ref TEXT,
+  access_expires_at TEXT,
+  calendar_id TEXT,
+  google_client_id TEXT,
+  sync_token TEXT,
+  last_error TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -817,6 +853,123 @@ CREATE TABLE IF NOT EXISTS background_jobs (
 
 CREATE INDEX IF NOT EXISTS idx_background_jobs_kind_status
   ON background_jobs(kind, status);
+"#;
+
+const GITHUB_INTEGRATION_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS github_accounts (
+  id TEXT PRIMARY KEY,
+  username TEXT,
+  token_ref TEXT,
+  auth_method TEXT NOT NULL,
+  scopes TEXT,
+  status TEXT NOT NULL,
+  connected_at TEXT,
+  last_validated_at TEXT,
+  last_synced_at TEXT,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_github_accounts_status ON github_accounts(status);
+
+CREATE TABLE IF NOT EXISTS github_project_repositories (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  owner TEXT NOT NULL,
+  repo TEXT NOT NULL,
+  default_branch TEXT,
+  html_url TEXT,
+  last_synced_at TEXT,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_github_project_repositories_project
+  ON github_project_repositories(project_id);
+CREATE INDEX IF NOT EXISTS idx_github_project_repositories_repo
+  ON github_project_repositories(owner, repo);
+
+CREATE TABLE IF NOT EXISTS github_pull_requests (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  owner TEXT NOT NULL,
+  repo TEXT NOT NULL,
+  number INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT,
+  state TEXT NOT NULL,
+  html_url TEXT,
+  author TEXT,
+  head_ref TEXT,
+  base_ref TEXT,
+  draft INTEGER NOT NULL DEFAULT 0,
+  merged_at TEXT,
+  created_at_remote TEXT,
+  updated_at_remote TEXT NOT NULL,
+  closed_at TEXT,
+  labels_json TEXT,
+  assignees_json TEXT,
+  included_in_report INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_github_pull_requests_project_number
+  ON github_pull_requests(project_id, number);
+CREATE INDEX IF NOT EXISTS idx_github_pull_requests_updated
+  ON github_pull_requests(updated_at_remote);
+
+CREATE TABLE IF NOT EXISTS github_issues (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  owner TEXT NOT NULL,
+  repo TEXT NOT NULL,
+  number INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT,
+  state TEXT NOT NULL,
+  html_url TEXT,
+  author TEXT,
+  created_at_remote TEXT,
+  updated_at_remote TEXT NOT NULL,
+  closed_at TEXT,
+  labels_json TEXT,
+  assignees_json TEXT,
+  included_in_report INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_github_issues_project_number
+  ON github_issues(project_id, number);
+CREATE INDEX IF NOT EXISTS idx_github_issues_updated
+  ON github_issues(updated_at_remote);
+
+CREATE TABLE IF NOT EXISTS github_sync_state (
+  project_id TEXT PRIMARY KEY,
+  owner TEXT NOT NULL,
+  repo TEXT NOT NULL,
+  pull_requests_cursor TEXT,
+  issues_cursor TEXT,
+  last_synced_at TEXT,
+  last_error TEXT,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE TABLE IF NOT EXISTS github_pr_commits (
+  project_id TEXT NOT NULL,
+  pull_request_number INTEGER NOT NULL,
+  commit_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, pull_request_number, commit_hash),
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
 "#;
 
 const SCHEMA_SQL: &str = r#"

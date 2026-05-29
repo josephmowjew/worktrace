@@ -14,6 +14,7 @@ import {
 import { useForm } from "react-hook-form";
 import { useLocation } from "react-router-dom";
 import { save } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { z } from "zod";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -26,15 +27,19 @@ import { useToast } from "../components/ui/ToastProvider";
 import { THEME_PREVIEW_EVENT } from "../app/ThemeProvider";
 import { activateSparcForceAddon, exportSettingsToFile, getSettings, importSettings, updateSettings } from "../lib/api/settings";
 import {
+  completeGitHubDeviceAuth,
   connectGitHubPat,
   disconnectGitHub,
   getGitHubIntegrationStatus,
+  startGitHubDeviceAuth,
+  syncGitHubProjectActivity,
   testGitHubConnection,
 } from "../lib/api/github";
 import {
   connectGoogleCalendar,
   disconnectCalendarSource,
   listCalendarSources,
+  setCalendarSourceEnabled,
   syncCalendarEvents,
 } from "../lib/api/calendar";
 import {
@@ -62,6 +67,7 @@ import {
   verifySparcForceLoginOtp,
 } from "../lib/api/sparcForce";
 import type { ReportAiModelList, ReportAiProvider, ReportAiStatus } from "../types/report";
+import type { GitHubIntegrationStatus, StartGitHubDeviceAuthOutput } from "../types/github";
 import type { CalendarSource } from "../types/calendar";
 import type { Settings } from "../types/settings";
 import type { SparcForceImportedItem, SparcForceIntegrationStatus, SparcForceRecordCounts } from "../types/sparcForce";
@@ -200,6 +206,7 @@ export function SettingsPage() {
     queryFn: getGitHubIntegrationStatus,
   });
   const [githubToken, setGithubToken] = useState("");
+  const [githubDeviceAuth, setGithubDeviceAuth] = useState<StartGitHubDeviceAuthOutput | null>(null);
   const sparcForceStatusQuery = useQuery({
     queryKey: ["sparcForceIntegrationStatus"],
     queryFn: getSparcForceIntegrationStatus,
@@ -213,7 +220,7 @@ export function SettingsPage() {
     queryKey: ["calendarSources"],
     queryFn: listCalendarSources,
   });
-  const [calendarEmail, setCalendarEmail] = useState("");
+  const [calendarClientId, setCalendarClientId] = useState("");
   const reportAiStatusQuery = useQuery({
     queryKey: ["reportAiStatus"],
     queryFn: getReportAiStatus,
@@ -456,9 +463,8 @@ export function SettingsPage() {
     },
   });
   const connectCalendarMutation = useMutation({
-    mutationFn: () => connectGoogleCalendar({ accountEmail: calendarEmail || null }),
+    mutationFn: () => connectGoogleCalendar({ clientId: calendarClientId.trim() }),
     onSuccess: async () => {
-      setCalendarEmail("");
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["calendarSources"] }),
         queryClient.invalidateQueries({ queryKey: ["weekCapacity"] }),
@@ -467,6 +473,19 @@ export function SettingsPage() {
     },
     onError: (error) => {
       toast.error("Calendar connect failed", error instanceof Error ? error.message : "Google Calendar could not be connected.");
+    },
+  });
+  const setCalendarEnabledMutation = useMutation({
+    mutationFn: (input: { sourceId: string; enabled: boolean }) =>
+      setCalendarSourceEnabled(input),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["calendarSources"] }),
+        queryClient.invalidateQueries({ queryKey: ["weekCapacity"] }),
+      ]);
+    },
+    onError: (error) => {
+      toast.error("Calendar selection failed", error instanceof Error ? error.message : "Calendar selection could not be updated.");
     },
   });
   const syncCalendarMutation = useMutation({
@@ -500,6 +519,36 @@ export function SettingsPage() {
       toast.error("Calendar disconnect failed", error instanceof Error ? error.message : "Google Calendar could not be disconnected.");
     },
   });
+  const startGithubDeviceMutation = useMutation({
+    mutationFn: startGitHubDeviceAuth,
+    onSuccess: (auth) => {
+      setGithubDeviceAuth(auth);
+      toast.success("GitHub sign-in opened", `Enter code ${auth.userCode} in your browser.`);
+    },
+    onError: (error) => {
+      toast.error("GitHub sign-in failed", error instanceof Error ? error.message : "GitHub sign-in could not start.");
+    },
+  });
+  const completeGithubDeviceMutation = useMutation({
+    mutationFn: (deviceCode: string) => completeGitHubDeviceAuth({ deviceCode }),
+    onSuccess: async (result) => {
+      if (result.status === "connected") {
+        setGithubDeviceAuth(null);
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["githubIntegrationStatus"] }),
+          queryClient.invalidateQueries({ queryKey: ["settings"] }),
+        ]);
+        toast.success("GitHub connected", "WorkTrace can now sync GitHub PRs and issues.");
+      } else if (["expired", "denied", "error"].includes(result.status)) {
+        setGithubDeviceAuth(null);
+        toast.error("GitHub sign-in stopped", result.message);
+      }
+    },
+    onError: (error) => {
+      setGithubDeviceAuth(null);
+      toast.error("GitHub sign-in failed", error instanceof Error ? error.message : "GitHub authorization could not finish.");
+    },
+  });
   const connectGithubMutation = useMutation({
     mutationFn: () => connectGitHubPat({ token: githubToken }),
     onSuccess: async () => {
@@ -512,6 +561,19 @@ export function SettingsPage() {
     },
     onError: (error) => {
       toast.error("GitHub connect failed", error instanceof Error ? error.message : "The token could not be validated.");
+    },
+  });
+  const syncGithubActivityMutation = useMutation({
+    mutationFn: () => syncGitHubProjectActivity({}),
+    onSuccess: async (result) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["githubIntegrationStatus"] }),
+        queryClient.invalidateQueries({ queryKey: ["activity"] }),
+      ]);
+      toast.success("GitHub activity synced", result.message);
+    },
+    onError: (error) => {
+      toast.error("GitHub sync failed", error instanceof Error ? error.message : "GitHub activity could not be synced.");
     },
   });
   const testGithubMutation = useMutation({
@@ -540,6 +602,20 @@ export function SettingsPage() {
       toast.error("Disconnect failed", error instanceof Error ? error.message : "GitHub could not be disconnected.");
     },
   });
+
+  useEffect(() => {
+    if (!githubDeviceAuth) return;
+    if (completeGithubDeviceMutation.isPending) return;
+
+    const intervalSeconds =
+      completeGithubDeviceMutation.data?.retryAfterSeconds ?? githubDeviceAuth.interval;
+    const pollDelay = Math.max(3, intervalSeconds) * 1000;
+    const timer = window.setTimeout(() => {
+      completeGithubDeviceMutation.mutate(githubDeviceAuth.deviceCode);
+    }, pollDelay);
+
+    return () => window.clearTimeout(timer);
+  }, [completeGithubDeviceMutation, githubDeviceAuth]);
   const connectSparcForceMutation = useMutation({
     mutationFn: () =>
       connectSparcForce({
@@ -783,9 +859,14 @@ export function SettingsPage() {
           activePanel={activeIntegrationPanel}
           githubToken={githubToken}
           setGithubToken={setGithubToken}
+          githubDeviceAuth={githubDeviceAuth}
+          startGithubDeviceMutation={startGithubDeviceMutation}
+          completeGithubDeviceMutation={completeGithubDeviceMutation}
           connectGithubMutation={connectGithubMutation}
           testGithubMutation={testGithubMutation}
+          syncGithubActivityMutation={syncGithubActivityMutation}
           githubConnected={githubConnected}
+          githubStatus={githubStatusQuery.data}
           githubError={githubStatusQuery.error}
           githubIsError={githubStatusQuery.isError}
           sparcForceStatus={sparcForceStatusQuery.data}
@@ -805,9 +886,10 @@ export function SettingsPage() {
           testSparcForceMutation={testSparcForceMutation}
           syncSparcForceMutation={syncSparcForceMutation}
           disconnectSparcForceMutation={disconnectSparcForceMutation}
-          calendarEmail={calendarEmail}
-          setCalendarEmail={setCalendarEmail}
+          calendarClientId={calendarClientId}
+          setCalendarClientId={setCalendarClientId}
           connectCalendarMutation={connectCalendarMutation}
+          setCalendarEnabledMutation={setCalendarEnabledMutation}
           syncCalendarMutation={syncCalendarMutation}
           calendarSources={calendarSourcesQuery.data ?? []}
           calendarError={calendarSourcesQuery.error}
@@ -2156,9 +2238,14 @@ function IntegrationSetupPanel({
   activePanel,
   githubToken,
   setGithubToken,
+  githubDeviceAuth,
+  startGithubDeviceMutation,
+  completeGithubDeviceMutation,
   connectGithubMutation,
   testGithubMutation,
+  syncGithubActivityMutation,
   githubConnected,
+  githubStatus,
   githubError,
   githubIsError,
   sparcForceStatus,
@@ -2178,9 +2265,10 @@ function IntegrationSetupPanel({
   testSparcForceMutation,
   syncSparcForceMutation,
   disconnectSparcForceMutation,
-  calendarEmail,
-  setCalendarEmail,
+  calendarClientId,
+  setCalendarClientId,
   connectCalendarMutation,
+  setCalendarEnabledMutation,
   syncCalendarMutation,
   calendarSources,
   calendarError,
@@ -2209,9 +2297,17 @@ function IntegrationSetupPanel({
   activePanel: Exclude<IntegrationPanel, null>;
   githubToken: string;
   setGithubToken: (value: string) => void;
+  githubDeviceAuth: StartGitHubDeviceAuthOutput | null;
+  startGithubDeviceMutation: PendingMutation & { mutate: () => void };
+  completeGithubDeviceMutation: PendingMutation & {
+    data?: { status: string; message: string; retryAfterSeconds?: number | null } | undefined;
+    mutate: (deviceCode: string) => void;
+  };
   connectGithubMutation: PendingMutation & { mutate: () => void };
   testGithubMutation: PendingMutation & { mutate: () => void };
+  syncGithubActivityMutation: PendingMutation & { mutate: () => void };
   githubConnected: boolean;
+  githubStatus: GitHubIntegrationStatus | undefined;
   githubError: unknown;
   githubIsError: boolean;
   sparcForceStatus: SparcForceIntegrationStatus | undefined;
@@ -2231,9 +2327,12 @@ function IntegrationSetupPanel({
   testSparcForceMutation: PendingMutation & { mutate: () => void };
   syncSparcForceMutation: PendingMutation & { mutate: () => void };
   disconnectSparcForceMutation: PendingMutation & { mutate: () => void };
-  calendarEmail: string;
-  setCalendarEmail: (value: string) => void;
+  calendarClientId: string;
+  setCalendarClientId: (value: string) => void;
   connectCalendarMutation: PendingMutation & { mutate: () => void };
+  setCalendarEnabledMutation: PendingMutation & {
+    mutate: (input: { sourceId: string; enabled: boolean }) => void;
+  };
   syncCalendarMutation: PendingMutation & { mutate: (sourceId?: string) => void };
   calendarSources: CalendarSource[];
   calendarError: unknown;
@@ -2292,30 +2391,98 @@ function IntegrationSetupPanel({
       </div>
 
       {activePanel === "github" ? (
-        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_auto]">
-          <input
-            className={inputClass}
-            type="password"
-            value={githubToken}
-            onChange={(event) => setGithubToken(event.target.value)}
-            placeholder="github_pat_..."
-            disabled={connectGithubMutation.isPending}
-          />
-          <Button
-            type="button"
-            variant="primary"
-            disabled={!githubToken.trim() || connectGithubMutation.isPending}
-            onClick={() => connectGithubMutation.mutate()}
-          >
-            {connectGithubMutation.isPending ? "Connecting..." : "Connect"}
-          </Button>
-          <Button
-            type="button"
-            disabled={!githubConnected || testGithubMutation.isPending}
-            onClick={() => testGithubMutation.mutate()}
-          >
-            {testGithubMutation.isPending ? "Testing..." : "Test"}
-          </Button>
+        <div className="grid gap-4">
+          <div className="rounded-xl border border-white/10 bg-slate-950/55 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-white">
+                  {githubConnected ? "GitHub is connected" : "Sign in with GitHub"}
+                </p>
+                <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-400">
+                  WorkTrace opens GitHub in your browser and stores the returned OAuth token in the OS keyring. GitHub PRs and issues sync into local activity evidence for projects with GitHub remotes.
+                </p>
+              </div>
+              <Badge tone={githubConnected ? "green" : "slate"}>
+                {githubConnected ? "Connected" : "Not connected"}
+              </Badge>
+            </div>
+
+            {githubConnected ? (
+              <div className="mt-4 grid gap-3 text-xs text-slate-400 sm:grid-cols-2 xl:grid-cols-4">
+                <StatusLine icon={<User className="h-4 w-4" />} label="User" value={githubStatus?.username ?? "Connected account"} />
+                <StatusLine icon={<LockKeyhole className="h-4 w-4" />} label="Auth" value={githubStatus?.authMethod === "oauth_device" ? "Browser sign-in" : "Personal token"} />
+                <StatusLine icon={<CalendarDays className="h-4 w-4" />} label="Last checked" value={githubStatus?.lastValidatedAt ? formatTimestamp(githubStatus.lastValidatedAt) : "Not tested yet"} />
+                <StatusLine icon={<Layers className="h-4 w-4" />} label="Last sync" value={githubStatus?.lastSyncedAt ? formatTimestamp(githubStatus.lastSyncedAt) : "Not synced yet"} />
+              </div>
+            ) : null}
+            {githubStatus?.lastError ? (
+              <div className="mt-3 rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-xs leading-5 text-red-100">
+                {githubStatus.lastError}
+              </div>
+            ) : null}
+
+            {githubDeviceAuth ? (
+              <div className="mt-4 rounded-xl border border-blue-300/20 bg-blue-500/10 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-200">Waiting for GitHub</p>
+                <p className="mt-2 text-sm text-slate-200">
+                  Enter code <span className="font-mono text-lg font-bold text-white">{githubDeviceAuth.userCode}</span> in the browser window.
+                </p>
+                <p className="mt-2 text-xs leading-5 text-slate-400">
+                  {completeGithubDeviceMutation.data?.message ?? "WorkTrace will finish automatically after authorization."}
+                </p>
+              </div>
+            ) : null}
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="primary"
+                disabled={startGithubDeviceMutation.isPending || Boolean(githubDeviceAuth)}
+                onClick={() => startGithubDeviceMutation.mutate()}
+              >
+                {startGithubDeviceMutation.isPending ? "Opening GitHub..." : "Sign in with GitHub"}
+              </Button>
+              <Button
+                type="button"
+                disabled={!githubConnected || testGithubMutation.isPending}
+                onClick={() => testGithubMutation.mutate()}
+              >
+                {testGithubMutation.isPending ? "Testing..." : "Test"}
+              </Button>
+              <Button
+                type="button"
+                disabled={!githubConnected || syncGithubActivityMutation.isPending}
+                onClick={() => syncGithubActivityMutation.mutate()}
+              >
+                {syncGithubActivityMutation.isPending ? "Syncing..." : "Sync PRs & Issues"}
+              </Button>
+            </div>
+          </div>
+
+          <details className="group rounded-xl border border-white/10 bg-slate-950/42 px-4 py-3">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-slate-100">
+              <span>Advanced: personal access token</span>
+              <ChevronDown className="h-4 w-4 text-blue-300 transition-transform group-open:rotate-180" />
+            </summary>
+            <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
+              <input
+                className={inputClass}
+                type="password"
+                value={githubToken}
+                onChange={(event) => setGithubToken(event.target.value)}
+                placeholder="github_pat_..."
+                disabled={connectGithubMutation.isPending}
+              />
+              <Button
+                type="button"
+                variant="primary"
+                disabled={!githubToken.trim() || connectGithubMutation.isPending}
+                onClick={() => connectGithubMutation.mutate()}
+              >
+                {connectGithubMutation.isPending ? "Connecting..." : "Connect PAT"}
+              </Button>
+            </div>
+          </details>
           {githubIsError ? <InlineError error={githubError} fallback="GitHub integration status could not be loaded." /> : null}
         </div>
       ) : null}
@@ -2470,36 +2637,122 @@ function IntegrationSetupPanel({
       ) : null}
 
       {activePanel === "calendar" ? (
-        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_auto]">
-          <input
-            className={inputClass}
-            type="email"
-            value={calendarEmail}
-            onChange={(event) => setCalendarEmail(event.target.value)}
-            placeholder="you@example.com"
-            disabled={connectCalendarMutation.isPending}
-          />
-          <Button
-            type="button"
-            variant="primary"
-            disabled={connectCalendarMutation.isPending}
-            onClick={() => connectCalendarMutation.mutate()}
-          >
-            {connectCalendarMutation.isPending ? "Connecting..." : "Connect"}
-          </Button>
-          <Button
-            type="button"
-            disabled={!calendarSources.length || syncCalendarMutation.isPending}
-            onClick={() => syncCalendarMutation.mutate(calendarSources[0]?.id)}
-          >
-            {syncCalendarMutation.isPending ? "Syncing..." : "Sync Now"}
-          </Button>
-          {calendarSources.map((source) => (
-            <p key={source.id} className="text-xs text-slate-500 md:col-span-3">
-              {source.accountEmail}
-              {source.lastSyncedAt ? ` / synced ${formatTimestamp(source.lastSyncedAt)}` : ""}
-            </p>
-          ))}
+        <div className="grid gap-4">
+          <div className="rounded-xl border border-emerald-300/20 bg-slate-950/70 p-4 text-sm leading-6 text-slate-300">
+            WorkTrace opens Google in your browser from here and receives the sign-in result on a
+            local loopback callback. You do not paste Google tokens into WorkTrace. For this testing
+            build, paste a Desktop OAuth client ID once; tokens are stored in the OS keyring and
+            imported events stay in the local database.
+          </div>
+          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
+            <Field label="Google Desktop OAuth client ID">
+              <input
+                className={inputClass}
+                value={calendarClientId}
+                onChange={(event) => setCalendarClientId(event.target.value)}
+                placeholder="1234567890-abc123.apps.googleusercontent.com"
+                disabled={connectCalendarMutation.isPending}
+              />
+            </Field>
+            <div className="flex flex-wrap items-end gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                className="min-h-11"
+                onClick={() => openUrl("https://console.cloud.google.com/apis/credentials")}
+              >
+                Open Google Console
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                disabled={!calendarClientId.trim() || connectCalendarMutation.isPending}
+                onClick={() => connectCalendarMutation.mutate()}
+                className="min-h-11"
+              >
+                {connectCalendarMutation.isPending ? "Waiting for Google..." : "Connect with Google"}
+              </Button>
+            </div>
+          </div>
+          {calendarSources.length ? (
+            <div className="rounded-xl border border-white/10 bg-slate-950/45 p-4">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-white">Calendars</p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Select the calendars WorkTrace should read during sync.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  disabled={
+                    !calendarSources.some((source) => source.syncStatus === "connected") ||
+                    syncCalendarMutation.isPending
+                  }
+                  onClick={() => syncCalendarMutation.mutate(undefined)}
+                >
+                  {syncCalendarMutation.isPending ? "Syncing..." : "Sync Now"}
+                </Button>
+              </div>
+              <div className="grid gap-2">
+                {calendarSources.map((source) => {
+                  const enabled = source.syncStatus === "connected" || source.syncStatus === "syncing";
+                  const label = source.accountName || source.calendarId || source.accountEmail;
+                  return (
+                    <label
+                      key={source.id}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/10 bg-slate-900/50 px-3 py-3"
+                    >
+                      <span className="flex min-w-0 items-center gap-3">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-slate-600 bg-slate-950 text-blue-500"
+                          checked={enabled}
+                          disabled={
+                            source.syncStatus === "syncing" ||
+                            setCalendarEnabledMutation.isPending ||
+                            syncCalendarMutation.isPending
+                          }
+                          onChange={(event) =>
+                            setCalendarEnabledMutation.mutate({
+                              sourceId: source.id,
+                              enabled: event.currentTarget.checked,
+                            })
+                          }
+                        />
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-semibold text-slate-100">
+                            {label}
+                          </span>
+                          <span className="block truncate text-xs text-slate-500">
+                            {source.lastSyncedAt
+                              ? `Synced ${formatTimestamp(source.lastSyncedAt)}`
+                              : source.calendarId || "Not synced yet"}
+                          </span>
+                        </span>
+                      </span>
+                      <Badge
+                        tone={
+                          source.syncStatus === "error"
+                            ? "orange"
+                            : enabled
+                              ? "green"
+                              : "slate"
+                        }
+                      >
+                        {humanizeStatus(source.syncStatus)}
+                      </Badge>
+                      {source.lastError ? (
+                        <span className="basis-full text-xs leading-5 text-red-200">
+                          {source.lastError}
+                        </span>
+                      ) : null}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
           {calendarIsError ? <InlineError error={calendarError} fallback="Calendar integration status could not be loaded." /> : null}
         </div>
       ) : null}

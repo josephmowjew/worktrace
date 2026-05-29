@@ -34,6 +34,7 @@ import {
   updateProject,
 } from "../lib/api/projects";
 import { syncCommits } from "../lib/api/gitSync";
+import { syncGitHubProjectActivity } from "../lib/api/github";
 import { listActivity, getWeekSummary } from "../lib/api/activity";
 import { listActivityGroups, recordActivityGroupTitleFeedback, updateActivityGroup } from "../lib/api/activityGroups";
 import { listWeeklyTasks } from "../lib/api/weeklyTasks";
@@ -186,6 +187,17 @@ export function ProjectDetailPage() {
     },
     onError: (error) => {
       toast.error("Sync failed", error instanceof Error ? error.message : "Repository sync could not be completed.");
+    },
+  });
+
+  const githubSyncMutation = useMutation({
+    mutationFn: () => syncGitHubProjectActivity({ projectId }),
+    onSuccess: async (result) => {
+      await invalidateProjectViews(queryClient, projectId);
+      toast.success("GitHub activity synced", result.message);
+    },
+    onError: (error) => {
+      toast.error("GitHub sync failed", error instanceof Error ? error.message : "GitHub activity could not be synced.");
     },
   });
 
@@ -441,6 +453,8 @@ export function ProjectDetailPage() {
         stats={projectStats}
         isSyncing={syncMutation.isPending}
         onSync={() => syncMutation.mutate()}
+        isGitHubSyncing={githubSyncMutation.isPending}
+        onGitHubSync={() => githubSyncMutation.mutate()}
         onEdit={() => {
           saveProjectMutation.reset();
           setIsEditFormOpen(true);

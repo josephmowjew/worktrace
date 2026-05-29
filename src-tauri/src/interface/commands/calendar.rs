@@ -1,10 +1,10 @@
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::application::calendar::{CalendarService, CalendarServiceError};
 use crate::domain::calendar::{
     CalendarEvent, CalendarSource, ConnectGoogleCalendarInput, DisconnectCalendarSourceInput,
-    GetWeekCapacityInput, ListCalendarEventsInput, SyncCalendarEventsInput,
-    SyncCalendarEventsResult, WeekCapacity,
+    GetWeekCapacityInput, ListCalendarEventsInput, SetCalendarSourceEnabledInput,
+    SyncCalendarEventsInput, SyncCalendarEventsResult, WeekCapacity,
 };
 use crate::infrastructure::database::repositories::{
     CalendarEventRepository, CalendarSourceRepository,
@@ -26,20 +26,17 @@ pub async fn list_calendar_sources(
 
 #[tauri::command]
 pub async fn connect_google_calendar(
+    app: AppHandle,
     state: State<'_, AppState>,
     input: ConnectGoogleCalendarInput,
-) -> Result<AppResult<CalendarSource>, String> {
+) -> Result<AppResult<Vec<CalendarSource>>, String> {
     let repository = CalendarSourceRepository::new(state.database.pool());
+    let _guard = state.google_calendar_auth_lock.lock().await;
 
     Ok(
-        match CalendarService::connect_google(&repository, input).await {
+        match CalendarService::connect_google(&app, &repository, input).await {
             Ok(source) => AppResult::ok(source),
-            Err(CalendarServiceError::Validation(message)) => {
-                AppResult::err("VALIDATION_ERROR", message)
-            }
-            Err(CalendarServiceError::Database(error)) => {
-                AppResult::err("DATABASE_ERROR", error.to_string())
-            }
+            Err(error) => calendar_error(error),
         },
     )
 }
@@ -54,12 +51,22 @@ pub async fn disconnect_calendar_source(
     Ok(
         match CalendarService::disconnect(&repository, input).await {
             Ok(disconnected) => AppResult::ok(disconnected),
-            Err(CalendarServiceError::Validation(message)) => {
-                AppResult::err("VALIDATION_ERROR", message)
-            }
-            Err(CalendarServiceError::Database(error)) => {
-                AppResult::err("DATABASE_ERROR", error.to_string())
-            }
+            Err(error) => calendar_error(error),
+        },
+    )
+}
+
+#[tauri::command]
+pub async fn set_calendar_source_enabled(
+    state: State<'_, AppState>,
+    input: SetCalendarSourceEnabledInput,
+) -> Result<AppResult<CalendarSource>, String> {
+    let repository = CalendarSourceRepository::new(state.database.pool());
+
+    Ok(
+        match CalendarService::set_enabled(&repository, input).await {
+            Ok(source) => AppResult::ok(source),
+            Err(error) => calendar_error(error),
         },
     )
 }
@@ -70,16 +77,14 @@ pub async fn sync_calendar_events(
     input: SyncCalendarEventsInput,
 ) -> Result<AppResult<SyncCalendarEventsResult>, String> {
     let repository = CalendarSourceRepository::new(state.database.pool());
+    let event_repository = CalendarEventRepository::new(state.database.pool());
 
-    Ok(match CalendarService::sync(&repository, input).await {
-        Ok(result) => AppResult::ok(result),
-        Err(CalendarServiceError::Validation(message)) => {
-            AppResult::err("VALIDATION_ERROR", message)
-        }
-        Err(CalendarServiceError::Database(error)) => {
-            AppResult::err("DATABASE_ERROR", error.to_string())
-        }
-    })
+    Ok(
+        match CalendarService::sync(&repository, &event_repository, input).await {
+            Ok(result) => AppResult::ok(result),
+            Err(error) => calendar_error(error),
+        },
+    )
 }
 
 #[tauri::command]
@@ -92,12 +97,7 @@ pub async fn list_calendar_events(
     Ok(
         match CalendarService::list_events(&repository, input).await {
             Ok(events) => AppResult::ok(events),
-            Err(CalendarServiceError::Validation(message)) => {
-                AppResult::err("VALIDATION_ERROR", message)
-            }
-            Err(CalendarServiceError::Database(error)) => {
-                AppResult::err("DATABASE_ERROR", error.to_string())
-            }
+            Err(error) => calendar_error(error),
         },
     )
 }
@@ -112,12 +112,21 @@ pub async fn get_week_capacity(
     Ok(
         match CalendarService::week_capacity(&repository, input).await {
             Ok(capacity) => AppResult::ok(capacity),
-            Err(CalendarServiceError::Validation(message)) => {
-                AppResult::err("VALIDATION_ERROR", message)
-            }
-            Err(CalendarServiceError::Database(error)) => {
-                AppResult::err("DATABASE_ERROR", error.to_string())
-            }
+            Err(error) => calendar_error(error),
         },
     )
+}
+
+fn calendar_error<T: serde::Serialize>(error: CalendarServiceError) -> AppResult<T> {
+    match error {
+        CalendarServiceError::Validation(message) => AppResult::err("VALIDATION_ERROR", message),
+        CalendarServiceError::Database(error) => {
+            AppResult::err("DATABASE_ERROR", error.to_string())
+        }
+        CalendarServiceError::Keyring(message) => AppResult::err("SECRET_STORAGE_ERROR", message),
+        CalendarServiceError::OAuth(message) => {
+            AppResult::err("GOOGLE_CALENDAR_AUTH_ERROR", message)
+        }
+        CalendarServiceError::Google(message) => AppResult::err("GOOGLE_CALENDAR_ERROR", message),
+    }
 }

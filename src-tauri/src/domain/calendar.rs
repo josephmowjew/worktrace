@@ -10,6 +10,13 @@ pub struct CalendarSource {
     pub sync_status: String,
     pub last_synced_at: Option<String>,
     pub token_ref: Option<String>,
+    pub access_token_ref: Option<String>,
+    pub refresh_token_ref: Option<String>,
+    pub access_expires_at: Option<String>,
+    pub calendar_id: Option<String>,
+    pub google_client_id: Option<String>,
+    pub sync_token: Option<String>,
+    pub last_error: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -47,13 +54,20 @@ pub struct ListCalendarEventsInput {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectGoogleCalendarInput {
-    pub account_email: Option<String>,
+    pub client_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DisconnectCalendarSourceInput {
     pub source_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetCalendarSourceEnabledInput {
+    pub source_id: String,
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

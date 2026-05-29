@@ -15,9 +15,8 @@ use crate::domain::activity::{
 };
 use crate::domain::activity_group::{
     ActivityGroup, ActivityGroupItem, ActivityGroupNarrative, ActivityGroupProject,
-    ActivityGroupTitleMemory,
-    CreateActivityGroupInput, GroupingDiffSnippet, GroupingEvidence, ListActivityGroupsInput,
-    RecordActivityGroupTitleFeedbackInput, ReplaceActivityGroupItemsInput,
+    ActivityGroupTitleMemory, CreateActivityGroupInput, GroupingDiffSnippet, GroupingEvidence,
+    ListActivityGroupsInput, RecordActivityGroupTitleFeedbackInput, ReplaceActivityGroupItemsInput,
     SelectActivityGroupTitleCandidateInput, TitleCandidateDto, UpdateActivityGroupInput,
 };
 use crate::domain::calendar::{
@@ -40,6 +39,10 @@ use crate::domain::git_metadata::{
     CommitDiffSnippet, CommitFileChange, CommitRef, CommitRefSummary, CommitWorktreeRef,
     CommitWorktreeSummary, GitRef, GitRefFilter, GitRefKind, GitWorktree, ProjectGitFocus,
     ProjectGitSyncCursor, ProjectGitSyncState, SaveProjectGitFocusInput,
+};
+use crate::domain::github::{
+    GitHubAccountRecord, GitHubIssueRecord, GitHubProjectRepositoryRecord, GitHubPullRequestRecord,
+    GitHubSyncStateRecord,
 };
 use crate::domain::manual_log::{
     ActivityType, CreateManualLogInput, ManualLog, UpdateManualLogInput,
@@ -256,6 +259,474 @@ impl<'a> ProjectRepository<'a> {
         .await?;
 
         Ok(row.map(project_from_row))
+    }
+}
+
+pub struct GitHubRepository<'a> {
+    pool: &'a SqlitePool,
+}
+
+impl<'a> GitHubRepository<'a> {
+    pub fn new(pool: &'a SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn active_account(&self) -> Result<Option<GitHubAccountRecord>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, username, token_ref, auth_method, scopes, status, connected_at,
+                   last_validated_at, last_synced_at, last_error, created_at, updated_at
+            FROM github_accounts
+            WHERE status = 'connected'
+            ORDER BY updated_at DESC
+            LIMIT 1
+            "#,
+        )
+        .fetch_optional(self.pool)
+        .await?;
+
+        Ok(row.map(github_account_from_row))
+    }
+
+    pub async fn upsert_account(
+        &self,
+        username: Option<String>,
+        token_ref: String,
+        auth_method: &str,
+        scopes: Option<String>,
+        status: &str,
+        last_error: Option<String>,
+    ) -> Result<GitHubAccountRecord, sqlx::Error> {
+        let now = current_timestamp();
+        let existing = sqlx::query(
+            r#"
+            SELECT id, username, token_ref, auth_method, scopes, status, connected_at,
+                   last_validated_at, last_synced_at, last_error, created_at, updated_at
+            FROM github_accounts
+            WHERE auth_method = ?1
+            ORDER BY updated_at DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(auth_method)
+        .fetch_optional(self.pool)
+        .await?;
+
+        if let Some(row) = existing {
+            let mut account = github_account_from_row(row);
+            account.username = username;
+            account.token_ref = Some(token_ref);
+            account.auth_method = auth_method.to_string();
+            account.scopes = scopes;
+            account.status = status.to_string();
+            account.connected_at = account.connected_at.or_else(|| Some(now.clone()));
+            account.last_validated_at = Some(now.clone());
+            account.last_error = last_error;
+            account.updated_at = now;
+
+            sqlx::query(
+                r#"
+                UPDATE github_accounts
+                SET username = ?2,
+                    token_ref = ?3,
+                    auth_method = ?4,
+                    scopes = ?5,
+                    status = ?6,
+                    connected_at = ?7,
+                    last_validated_at = ?8,
+                    last_error = ?9,
+                    updated_at = ?10
+                WHERE id = ?1
+                "#,
+            )
+            .bind(&account.id)
+            .bind(&account.username)
+            .bind(&account.token_ref)
+            .bind(&account.auth_method)
+            .bind(&account.scopes)
+            .bind(&account.status)
+            .bind(&account.connected_at)
+            .bind(&account.last_validated_at)
+            .bind(&account.last_error)
+            .bind(&account.updated_at)
+            .execute(self.pool)
+            .await?;
+
+            return Ok(account);
+        }
+
+        let account = GitHubAccountRecord {
+            id: generate_id("github_account"),
+            username,
+            token_ref: Some(token_ref),
+            auth_method: auth_method.to_string(),
+            scopes,
+            status: status.to_string(),
+            connected_at: Some(now.clone()),
+            last_validated_at: Some(now.clone()),
+            last_synced_at: None,
+            last_error,
+            created_at: now.clone(),
+            updated_at: now,
+        };
+
+        sqlx::query(
+            r#"
+            INSERT INTO github_accounts (
+              id, username, token_ref, auth_method, scopes, status, connected_at,
+              last_validated_at, last_synced_at, last_error, created_at, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            "#,
+        )
+        .bind(&account.id)
+        .bind(&account.username)
+        .bind(&account.token_ref)
+        .bind(&account.auth_method)
+        .bind(&account.scopes)
+        .bind(&account.status)
+        .bind(&account.connected_at)
+        .bind(&account.last_validated_at)
+        .bind(&account.last_synced_at)
+        .bind(&account.last_error)
+        .bind(&account.created_at)
+        .bind(&account.updated_at)
+        .execute(self.pool)
+        .await?;
+
+        Ok(account)
+    }
+
+    pub async fn disconnect_accounts(&self) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            UPDATE github_accounts
+            SET status = 'disconnected',
+                token_ref = NULL,
+                last_error = NULL,
+                updated_at = ?1
+            "#,
+        )
+        .bind(current_timestamp())
+        .execute(self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn mark_account_synced(&self, last_error: Option<String>) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            UPDATE github_accounts
+            SET last_synced_at = ?1,
+                last_error = ?2,
+                updated_at = ?1
+            WHERE status = 'connected'
+            "#,
+        )
+        .bind(current_timestamp())
+        .bind(last_error)
+        .execute(self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn upsert_project_repository(
+        &self,
+        project_id: &str,
+        owner: &str,
+        repo: &str,
+        default_branch: Option<String>,
+        html_url: Option<String>,
+        last_error: Option<String>,
+    ) -> Result<GitHubProjectRepositoryRecord, sqlx::Error> {
+        let now = current_timestamp();
+        let existing = sqlx::query(
+            r#"
+            SELECT id, project_id, owner, repo, default_branch, html_url, last_synced_at,
+                   last_error, created_at, updated_at
+            FROM github_project_repositories
+            WHERE project_id = ?1
+            "#,
+        )
+        .bind(project_id)
+        .fetch_optional(self.pool)
+        .await?;
+
+        if let Some(row) = existing {
+            let mut record = github_project_repository_from_row(row);
+            record.owner = owner.to_string();
+            record.repo = repo.to_string();
+            record.default_branch = default_branch;
+            record.html_url = html_url;
+            record.last_synced_at = Some(now.clone());
+            record.last_error = last_error;
+            record.updated_at = now;
+
+            sqlx::query(
+                r#"
+                UPDATE github_project_repositories
+                SET owner = ?2,
+                    repo = ?3,
+                    default_branch = ?4,
+                    html_url = ?5,
+                    last_synced_at = ?6,
+                    last_error = ?7,
+                    updated_at = ?8
+                WHERE id = ?1
+                "#,
+            )
+            .bind(&record.id)
+            .bind(&record.owner)
+            .bind(&record.repo)
+            .bind(&record.default_branch)
+            .bind(&record.html_url)
+            .bind(&record.last_synced_at)
+            .bind(&record.last_error)
+            .bind(&record.updated_at)
+            .execute(self.pool)
+            .await?;
+
+            return Ok(record);
+        }
+
+        let record = GitHubProjectRepositoryRecord {
+            id: generate_id("github_repo"),
+            project_id: project_id.to_string(),
+            owner: owner.to_string(),
+            repo: repo.to_string(),
+            default_branch,
+            html_url,
+            last_synced_at: Some(now.clone()),
+            last_error,
+            created_at: now.clone(),
+            updated_at: now,
+        };
+
+        sqlx::query(
+            r#"
+            INSERT INTO github_project_repositories (
+              id, project_id, owner, repo, default_branch, html_url, last_synced_at,
+              last_error, created_at, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            "#,
+        )
+        .bind(&record.id)
+        .bind(&record.project_id)
+        .bind(&record.owner)
+        .bind(&record.repo)
+        .bind(&record.default_branch)
+        .bind(&record.html_url)
+        .bind(&record.last_synced_at)
+        .bind(&record.last_error)
+        .bind(&record.created_at)
+        .bind(&record.updated_at)
+        .execute(self.pool)
+        .await?;
+
+        Ok(record)
+    }
+
+    pub async fn sync_state(
+        &self,
+        project_id: &str,
+    ) -> Result<Option<GitHubSyncStateRecord>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            SELECT project_id, owner, repo, pull_requests_cursor, issues_cursor,
+                   last_synced_at, last_error, updated_at
+            FROM github_sync_state
+            WHERE project_id = ?1
+            "#,
+        )
+        .bind(project_id)
+        .fetch_optional(self.pool)
+        .await?;
+
+        Ok(row.map(github_sync_state_from_row))
+    }
+
+    pub async fn update_sync_state(
+        &self,
+        project_id: &str,
+        owner: &str,
+        repo: &str,
+        pull_requests_cursor: Option<String>,
+        issues_cursor: Option<String>,
+        last_error: Option<String>,
+    ) -> Result<(), sqlx::Error> {
+        let now = current_timestamp();
+        sqlx::query(
+            r#"
+            INSERT INTO github_sync_state (
+              project_id, owner, repo, pull_requests_cursor, issues_cursor,
+              last_synced_at, last_error, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            ON CONFLICT(project_id) DO UPDATE SET
+              owner = excluded.owner,
+              repo = excluded.repo,
+              pull_requests_cursor = COALESCE(excluded.pull_requests_cursor, github_sync_state.pull_requests_cursor),
+              issues_cursor = COALESCE(excluded.issues_cursor, github_sync_state.issues_cursor),
+              last_synced_at = excluded.last_synced_at,
+              last_error = excluded.last_error,
+              updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(project_id)
+        .bind(owner)
+        .bind(repo)
+        .bind(pull_requests_cursor)
+        .bind(issues_cursor)
+        .bind(&now)
+        .bind(last_error)
+        .bind(&now)
+        .execute(self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn upsert_pull_requests(
+        &self,
+        records: &[GitHubPullRequestRecord],
+    ) -> Result<(i64, i64), sqlx::Error> {
+        let mut inserted = 0;
+        let mut updated = 0;
+        for record in records {
+            let exists: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM github_pull_requests WHERE project_id = ?1 AND number = ?2",
+            )
+            .bind(&record.project_id)
+            .bind(record.number)
+            .fetch_one(self.pool)
+            .await?;
+            if exists > 0 {
+                updated += 1;
+            } else {
+                inserted += 1;
+            }
+            sqlx::query(
+                r#"
+                INSERT INTO github_pull_requests (
+                  id, project_id, owner, repo, number, title, body, state, html_url,
+                  author, head_ref, base_ref, draft, merged_at, created_at_remote,
+                  updated_at_remote, closed_at, labels_json, assignees_json,
+                  included_in_report, created_at, updated_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
+                ON CONFLICT(project_id, number) DO UPDATE SET
+                  owner = excluded.owner,
+                  repo = excluded.repo,
+                  title = excluded.title,
+                  body = excluded.body,
+                  state = excluded.state,
+                  html_url = excluded.html_url,
+                  author = excluded.author,
+                  head_ref = excluded.head_ref,
+                  base_ref = excluded.base_ref,
+                  draft = excluded.draft,
+                  merged_at = excluded.merged_at,
+                  created_at_remote = excluded.created_at_remote,
+                  updated_at_remote = excluded.updated_at_remote,
+                  closed_at = excluded.closed_at,
+                  labels_json = excluded.labels_json,
+                  assignees_json = excluded.assignees_json,
+                  updated_at = excluded.updated_at
+                "#,
+            )
+            .bind(&record.id)
+            .bind(&record.project_id)
+            .bind(&record.owner)
+            .bind(&record.repo)
+            .bind(record.number)
+            .bind(&record.title)
+            .bind(&record.body)
+            .bind(&record.state)
+            .bind(&record.html_url)
+            .bind(&record.author)
+            .bind(&record.head_ref)
+            .bind(&record.base_ref)
+            .bind(bool_to_i64(record.draft))
+            .bind(&record.merged_at)
+            .bind(&record.created_at_remote)
+            .bind(&record.updated_at_remote)
+            .bind(&record.closed_at)
+            .bind(&record.labels_json)
+            .bind(&record.assignees_json)
+            .bind(bool_to_i64(record.included_in_report))
+            .bind(&record.created_at)
+            .bind(&record.updated_at)
+            .execute(self.pool)
+            .await?;
+        }
+        Ok((inserted, updated))
+    }
+
+    pub async fn upsert_issues(
+        &self,
+        records: &[GitHubIssueRecord],
+    ) -> Result<(i64, i64), sqlx::Error> {
+        let mut inserted = 0;
+        let mut updated = 0;
+        for record in records {
+            let exists: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM github_issues WHERE project_id = ?1 AND number = ?2",
+            )
+            .bind(&record.project_id)
+            .bind(record.number)
+            .fetch_one(self.pool)
+            .await?;
+            if exists > 0 {
+                updated += 1;
+            } else {
+                inserted += 1;
+            }
+            sqlx::query(
+                r#"
+                INSERT INTO github_issues (
+                  id, project_id, owner, repo, number, title, body, state, html_url,
+                  author, created_at_remote, updated_at_remote, closed_at, labels_json,
+                  assignees_json, included_in_report, created_at, updated_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+                ON CONFLICT(project_id, number) DO UPDATE SET
+                  owner = excluded.owner,
+                  repo = excluded.repo,
+                  title = excluded.title,
+                  body = excluded.body,
+                  state = excluded.state,
+                  html_url = excluded.html_url,
+                  author = excluded.author,
+                  created_at_remote = excluded.created_at_remote,
+                  updated_at_remote = excluded.updated_at_remote,
+                  closed_at = excluded.closed_at,
+                  labels_json = excluded.labels_json,
+                  assignees_json = excluded.assignees_json,
+                  updated_at = excluded.updated_at
+                "#,
+            )
+            .bind(&record.id)
+            .bind(&record.project_id)
+            .bind(&record.owner)
+            .bind(&record.repo)
+            .bind(record.number)
+            .bind(&record.title)
+            .bind(&record.body)
+            .bind(&record.state)
+            .bind(&record.html_url)
+            .bind(&record.author)
+            .bind(&record.created_at_remote)
+            .bind(&record.updated_at_remote)
+            .bind(&record.closed_at)
+            .bind(&record.labels_json)
+            .bind(&record.assignees_json)
+            .bind(bool_to_i64(record.included_in_report))
+            .bind(&record.created_at)
+            .bind(&record.updated_at)
+            .execute(self.pool)
+            .await?;
+        }
+        Ok((inserted, updated))
     }
 }
 
@@ -1745,6 +2216,16 @@ impl<'a> ActivityRepository<'a> {
             .as_deref()
             .map(|value| value != "commit")
             .unwrap_or(true);
+        let include_github_prs = input
+            .activity_type
+            .as_deref()
+            .map(|value| value == "all" || value == "github_pr")
+            .unwrap_or(true);
+        let include_github_issues = input
+            .activity_type
+            .as_deref()
+            .map(|value| value == "all" || value == "github_issue")
+            .unwrap_or(true);
 
         if include_commits {
             let rows = sqlx::query(
@@ -1910,6 +2391,166 @@ impl<'a> ActivityRepository<'a> {
                     included_in_report: i64_to_bool(row.get("included_in_report")),
                     commit_hash: None,
                     author_name: None,
+                    author_email: None,
+                    branch: None,
+                    files_changed: None,
+                    insertions: None,
+                    deletions: None,
+                    refs: Vec::new(),
+                    worktree: None,
+                });
+            }
+        }
+
+        if include_github_prs {
+            let rows = sqlx::query(
+                r#"
+                SELECT github_pull_requests.id,
+                       github_pull_requests.project_id,
+                       projects.name AS project_name,
+                       projects.workspace_id AS workspace_id,
+                       workspaces.name AS workspace_name,
+                       projects.workspace_relative_path AS workspace_relative_path,
+                       projects.classification AS project_classification,
+                       github_pull_requests.number,
+                       github_pull_requests.title,
+                       github_pull_requests.state,
+                       github_pull_requests.merged_at,
+                       github_pull_requests.updated_at_remote,
+                       github_pull_requests.included_in_report,
+                       github_pull_requests.author,
+                       github_pull_requests.head_ref
+                FROM github_pull_requests
+                JOIN projects ON projects.id = github_pull_requests.project_id
+                LEFT JOIN workspaces ON workspaces.id = projects.workspace_id
+                WHERE projects.status = 'active'
+                  AND substr(github_pull_requests.updated_at_remote, 1, 10) >= ?1
+                  AND substr(github_pull_requests.updated_at_remote, 1, 10) <= ?2
+                ORDER BY github_pull_requests.updated_at_remote DESC
+                "#,
+            )
+            .bind(&input.from)
+            .bind(&input.to)
+            .fetch_all(self.pool)
+            .await?;
+
+            for row in rows {
+                let project_id: String = row.get("project_id");
+                if !project_filter_matches(&input.project_ids, &project_id) {
+                    continue;
+                }
+                let workspace_id: Option<String> = row.get("workspace_id");
+                if !workspace_filter_matches(&input.workspace_ids, workspace_id.as_deref()) {
+                    continue;
+                }
+                let project_classification: String = row.get("project_classification");
+                if !classification_filter_matches(
+                    &input.classification,
+                    Some(&project_classification),
+                ) {
+                    continue;
+                }
+                let number: i64 = row.get("number");
+                let state: String = row.get("state");
+                let merged_at: Option<String> = row.get("merged_at");
+                let status = if merged_at.is_some() {
+                    "merged"
+                } else {
+                    state.as_str()
+                };
+
+                items.push(ActivityItem {
+                    id: row.get("id"),
+                    project_id: Some(project_id),
+                    project_name: row.get("project_name"),
+                    workspace_id,
+                    workspace_name: row.get("workspace_name"),
+                    workspace_relative_path: row.get("workspace_relative_path"),
+                    activity_type: "github_pr".to_string(),
+                    summary: format!(
+                        "GitHub PR #{number} {status}: {}",
+                        row.get::<String, _>("title")
+                    ),
+                    occurred_at: row.get("updated_at_remote"),
+                    included_in_report: i64_to_bool(row.get("included_in_report")),
+                    commit_hash: None,
+                    author_name: row.get("author"),
+                    author_email: None,
+                    branch: row.get("head_ref"),
+                    files_changed: None,
+                    insertions: None,
+                    deletions: None,
+                    refs: Vec::new(),
+                    worktree: None,
+                });
+            }
+        }
+
+        if include_github_issues {
+            let rows = sqlx::query(
+                r#"
+                SELECT github_issues.id,
+                       github_issues.project_id,
+                       projects.name AS project_name,
+                       projects.workspace_id AS workspace_id,
+                       workspaces.name AS workspace_name,
+                       projects.workspace_relative_path AS workspace_relative_path,
+                       projects.classification AS project_classification,
+                       github_issues.number,
+                       github_issues.title,
+                       github_issues.state,
+                       github_issues.updated_at_remote,
+                       github_issues.included_in_report,
+                       github_issues.author
+                FROM github_issues
+                JOIN projects ON projects.id = github_issues.project_id
+                LEFT JOIN workspaces ON workspaces.id = projects.workspace_id
+                WHERE projects.status = 'active'
+                  AND substr(github_issues.updated_at_remote, 1, 10) >= ?1
+                  AND substr(github_issues.updated_at_remote, 1, 10) <= ?2
+                ORDER BY github_issues.updated_at_remote DESC
+                "#,
+            )
+            .bind(&input.from)
+            .bind(&input.to)
+            .fetch_all(self.pool)
+            .await?;
+
+            for row in rows {
+                let project_id: String = row.get("project_id");
+                if !project_filter_matches(&input.project_ids, &project_id) {
+                    continue;
+                }
+                let workspace_id: Option<String> = row.get("workspace_id");
+                if !workspace_filter_matches(&input.workspace_ids, workspace_id.as_deref()) {
+                    continue;
+                }
+                let project_classification: String = row.get("project_classification");
+                if !classification_filter_matches(
+                    &input.classification,
+                    Some(&project_classification),
+                ) {
+                    continue;
+                }
+                let number: i64 = row.get("number");
+                let state: String = row.get("state");
+
+                items.push(ActivityItem {
+                    id: row.get("id"),
+                    project_id: Some(project_id),
+                    project_name: row.get("project_name"),
+                    workspace_id,
+                    workspace_name: row.get("workspace_name"),
+                    workspace_relative_path: row.get("workspace_relative_path"),
+                    activity_type: "github_issue".to_string(),
+                    summary: format!(
+                        "GitHub issue #{number} {state}: {}",
+                        row.get::<String, _>("title")
+                    ),
+                    occurred_at: row.get("updated_at_remote"),
+                    included_in_report: i64_to_bool(row.get("included_in_report")),
+                    commit_hash: None,
+                    author_name: row.get("author"),
                     author_email: None,
                     branch: None,
                     files_changed: None,
@@ -2348,12 +2989,14 @@ impl<'a> ActivityGroupRepository<'a> {
             let workspace_id: Option<String> = row.get("workspace_id");
             let items = self.list_items(row.get("id")).await?;
             let projects = group_projects(&items);
-            if !group_matches_project_filter(&input.project_ids, project_id.as_deref(), &projects)
-            {
+            if !group_matches_project_filter(&input.project_ids, project_id.as_deref(), &projects) {
                 continue;
             }
-            if !group_matches_workspace_filter(&input.workspace_ids, workspace_id.as_deref(), &items)
-            {
+            if !group_matches_workspace_filter(
+                &input.workspace_ids,
+                workspace_id.as_deref(),
+                &items,
+            ) {
                 continue;
             }
             if let Some(_project_id) = &project_id {
@@ -5268,7 +5911,8 @@ impl<'a> CalendarSourceRepository<'a> {
         let rows = sqlx::query(
             r#"
             SELECT id, provider, account_email, account_name, sync_status, last_synced_at,
-                   token_ref, created_at, updated_at
+                   token_ref, access_token_ref, refresh_token_ref, access_expires_at,
+                   calendar_id, google_client_id, sync_token, last_error, created_at, updated_at
             FROM calendar_sources
             ORDER BY updated_at DESC
             "#,
@@ -5277,6 +5921,204 @@ impl<'a> CalendarSourceRepository<'a> {
         .await?;
 
         Ok(rows.into_iter().map(calendar_source_from_row).collect())
+    }
+
+    pub async fn find(&self, source_id: &str) -> Result<Option<CalendarSource>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, provider, account_email, account_name, sync_status, last_synced_at,
+                   token_ref, access_token_ref, refresh_token_ref, access_expires_at,
+                   calendar_id, google_client_id, sync_token, last_error, created_at, updated_at
+            FROM calendar_sources
+            WHERE id = ?1
+            LIMIT 1
+            "#,
+        )
+        .bind(source_id)
+        .fetch_optional(self.pool)
+        .await?;
+
+        Ok(row.map(calendar_source_from_row))
+    }
+
+    pub async fn upsert_google_calendar_source(
+        &self,
+        account_email: &str,
+        account_name: Option<String>,
+        calendar_id: &str,
+        calendar_name: Option<String>,
+        access_token_ref: String,
+        refresh_token_ref: Option<String>,
+        access_expires_at: Option<String>,
+        google_client_id: String,
+        sync_status: &str,
+    ) -> Result<CalendarSource, sqlx::Error> {
+        let now = current_timestamp();
+        let source_email = format!("{}::{}", account_email.trim(), calendar_id.trim());
+        let display_name = calendar_name.or(account_name);
+        let existing = sqlx::query(
+            r#"
+            SELECT id, provider, account_email, account_name, sync_status, last_synced_at,
+                   token_ref, access_token_ref, refresh_token_ref, access_expires_at,
+                   calendar_id, google_client_id, sync_token, last_error, created_at, updated_at
+            FROM calendar_sources
+            WHERE provider = 'google' AND account_email = ?1
+            "#,
+        )
+        .bind(&source_email)
+        .fetch_optional(self.pool)
+        .await?;
+
+        if let Some(row) = existing {
+            let mut source = calendar_source_from_row(row);
+            source.account_name = display_name;
+            source.sync_status = sync_status.to_string();
+            source.token_ref = Some(access_token_ref.clone());
+            source.access_token_ref = Some(access_token_ref);
+            if refresh_token_ref.is_some() {
+                source.refresh_token_ref = refresh_token_ref;
+            }
+            source.access_expires_at = access_expires_at;
+            source.calendar_id = Some(calendar_id.trim().to_string());
+            source.google_client_id = Some(google_client_id.clone());
+            source.last_error = None;
+            source.updated_at = now;
+
+            sqlx::query(
+                r#"
+                UPDATE calendar_sources
+                SET account_name = ?2,
+                    sync_status = ?3,
+                    token_ref = ?4,
+                    access_token_ref = ?5,
+                    refresh_token_ref = COALESCE(?6, refresh_token_ref),
+                    access_expires_at = ?7,
+                    calendar_id = ?8,
+                    google_client_id = ?9,
+                    last_error = NULL,
+                    updated_at = ?10
+                WHERE id = ?1
+                "#,
+            )
+            .bind(&source.id)
+            .bind(&source.account_name)
+            .bind(&source.sync_status)
+            .bind(&source.token_ref)
+            .bind(&source.access_token_ref)
+            .bind(&source.refresh_token_ref)
+            .bind(&source.access_expires_at)
+            .bind(&source.calendar_id)
+            .bind(&source.google_client_id)
+            .bind(&source.updated_at)
+            .execute(self.pool)
+            .await?;
+
+            return Ok(source);
+        }
+
+        let source = CalendarSource {
+            id: generate_id("calendar_source"),
+            provider: "google".to_string(),
+            account_email: source_email,
+            account_name: display_name,
+            sync_status: sync_status.to_string(),
+            last_synced_at: None,
+            token_ref: Some(access_token_ref.clone()),
+            access_token_ref: Some(access_token_ref),
+            refresh_token_ref,
+            access_expires_at,
+            calendar_id: Some(calendar_id.trim().to_string()),
+            google_client_id: Some(google_client_id),
+            sync_token: None,
+            last_error: None,
+            created_at: now.clone(),
+            updated_at: now,
+        };
+
+        sqlx::query(
+            r#"
+            INSERT INTO calendar_sources (
+              id, provider, account_email, account_name, sync_status, last_synced_at,
+              token_ref, access_token_ref, refresh_token_ref, access_expires_at,
+              calendar_id, google_client_id, sync_token, last_error, created_at, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+            "#,
+        )
+        .bind(&source.id)
+        .bind(&source.provider)
+        .bind(&source.account_email)
+        .bind(&source.account_name)
+        .bind(&source.sync_status)
+        .bind(&source.last_synced_at)
+        .bind(&source.token_ref)
+        .bind(&source.access_token_ref)
+        .bind(&source.refresh_token_ref)
+        .bind(&source.access_expires_at)
+        .bind(&source.calendar_id)
+        .bind(&source.google_client_id)
+        .bind(&source.sync_token)
+        .bind(&source.last_error)
+        .bind(&source.created_at)
+        .bind(&source.updated_at)
+        .execute(self.pool)
+        .await?;
+
+        Ok(source)
+    }
+
+    pub async fn update_calendar_source_sync(
+        &self,
+        source_id: &str,
+        sync_status: &str,
+        last_synced_at: Option<String>,
+        sync_token: Option<String>,
+        last_error: Option<String>,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            UPDATE calendar_sources
+            SET sync_status = ?2,
+                last_synced_at = COALESCE(?3, last_synced_at),
+                sync_token = COALESCE(?4, sync_token),
+                last_error = ?5,
+                updated_at = ?6
+            WHERE id = ?1
+            "#,
+        )
+        .bind(source_id)
+        .bind(sync_status)
+        .bind(last_synced_at)
+        .bind(sync_token)
+        .bind(last_error)
+        .bind(current_timestamp())
+        .execute(self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn set_enabled(
+        &self,
+        source_id: &str,
+        enabled: bool,
+    ) -> Result<Option<CalendarSource>, sqlx::Error> {
+        let sync_status = if enabled { "connected" } else { "disconnected" };
+        sqlx::query(
+            r#"
+            UPDATE calendar_sources
+            SET sync_status = ?2,
+                last_error = NULL,
+                updated_at = ?3
+            WHERE id = ?1 AND provider = 'google'
+            "#,
+        )
+        .bind(source_id)
+        .bind(sync_status)
+        .bind(current_timestamp())
+        .execute(self.pool)
+        .await?;
+
+        self.find(source_id).await
     }
 
     pub async fn upsert_google_source(
@@ -5289,7 +6131,8 @@ impl<'a> CalendarSourceRepository<'a> {
         let existing = sqlx::query(
             r#"
             SELECT id, provider, account_email, account_name, sync_status, last_synced_at,
-                   token_ref, created_at, updated_at
+                   token_ref, access_token_ref, refresh_token_ref, access_expires_at,
+                   calendar_id, google_client_id, sync_token, last_error, created_at, updated_at
             FROM calendar_sources
             WHERE provider = 'google' AND account_email = ?1
             "#,
@@ -5301,7 +6144,10 @@ impl<'a> CalendarSourceRepository<'a> {
         if let Some(row) = existing {
             let mut source = calendar_source_from_row(row);
             source.account_name = account_name;
-            source.token_ref = token_ref;
+            source.token_ref = token_ref.clone();
+            source.access_token_ref = token_ref;
+            source.refresh_token_ref = source.access_token_ref.clone();
+            source.last_error = None;
             source.sync_status = "connected".to_string();
             source.updated_at = now;
 
@@ -5311,6 +6157,9 @@ impl<'a> CalendarSourceRepository<'a> {
                 SET account_name = ?2,
                     sync_status = ?3,
                     token_ref = ?4,
+                    access_token_ref = ?4,
+                    refresh_token_ref = ?4,
+                    last_error = NULL,
                     updated_at = ?5
                 WHERE id = ?1
                 "#,
@@ -5333,7 +6182,14 @@ impl<'a> CalendarSourceRepository<'a> {
             account_name,
             sync_status: "connected".to_string(),
             last_synced_at: None,
-            token_ref,
+            token_ref: token_ref.clone(),
+            access_token_ref: token_ref.clone(),
+            refresh_token_ref: token_ref,
+            access_expires_at: None,
+            calendar_id: None,
+            google_client_id: None,
+            sync_token: None,
+            last_error: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -5342,9 +6198,10 @@ impl<'a> CalendarSourceRepository<'a> {
             r#"
             INSERT INTO calendar_sources (
               id, provider, account_email, account_name, sync_status, last_synced_at,
-              token_ref, created_at, updated_at
+              token_ref, access_token_ref, refresh_token_ref, access_expires_at,
+              calendar_id, google_client_id, sync_token, last_error, created_at, updated_at
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
             "#,
         )
         .bind(&source.id)
@@ -5354,6 +6211,13 @@ impl<'a> CalendarSourceRepository<'a> {
         .bind(&source.sync_status)
         .bind(&source.last_synced_at)
         .bind(&source.token_ref)
+        .bind(&source.access_token_ref)
+        .bind(&source.refresh_token_ref)
+        .bind(&source.access_expires_at)
+        .bind(&source.calendar_id)
+        .bind(&source.google_client_id)
+        .bind(&source.sync_token)
+        .bind(&source.last_error)
         .bind(&source.created_at)
         .bind(&source.updated_at)
         .execute(self.pool)
@@ -5369,6 +6233,10 @@ impl<'a> CalendarSourceRepository<'a> {
             UPDATE calendar_sources
             SET sync_status = 'disconnected',
                 token_ref = NULL,
+                access_token_ref = NULL,
+                refresh_token_ref = NULL,
+                access_expires_at = NULL,
+                sync_token = NULL,
                 updated_at = ?2
             WHERE id = ?1
             "#,
@@ -5431,6 +6299,73 @@ impl<'a> CalendarEventRepository<'a> {
         .await?;
 
         Ok(rows.into_iter().map(calendar_event_from_row).collect())
+    }
+
+    pub async fn upsert_many(&self, events: &[CalendarEvent]) -> Result<(i32, i32), sqlx::Error> {
+        let mut imported = 0;
+        let mut updated = 0;
+
+        for event in events {
+            let result = sqlx::query(
+                r#"
+                INSERT INTO calendar_events (
+                  id, source_id, external_id, title, description, location, starts_at, ends_at,
+                  timezone, all_day, busy_status, is_cancelled, project_id, task_id,
+                  created_at, updated_at, imported_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+                ON CONFLICT(source_id, external_id) DO UPDATE SET
+                  title = excluded.title,
+                  description = excluded.description,
+                  location = excluded.location,
+                  starts_at = excluded.starts_at,
+                  ends_at = excluded.ends_at,
+                  timezone = excluded.timezone,
+                  all_day = excluded.all_day,
+                  busy_status = excluded.busy_status,
+                  is_cancelled = excluded.is_cancelled,
+                  updated_at = excluded.updated_at,
+                  imported_at = excluded.imported_at
+                "#,
+            )
+            .bind(&event.id)
+            .bind(&event.source_id)
+            .bind(&event.external_id)
+            .bind(&event.title)
+            .bind(&event.description)
+            .bind(&event.location)
+            .bind(&event.starts_at)
+            .bind(&event.ends_at)
+            .bind(&event.timezone)
+            .bind(bool_to_i64(event.all_day))
+            .bind(&event.busy_status)
+            .bind(bool_to_i64(event.is_cancelled))
+            .bind(&event.project_id)
+            .bind(&event.task_id)
+            .bind(&event.created_at)
+            .bind(&event.updated_at)
+            .bind(&event.imported_at)
+            .execute(self.pool)
+            .await?;
+
+            if result.rows_affected() > 0 {
+                let existed = sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM calendar_events WHERE source_id = ?1 AND external_id = ?2 AND created_at != updated_at",
+                )
+                .bind(&event.source_id)
+                .bind(&event.external_id)
+                .fetch_one(self.pool)
+                .await
+                .unwrap_or(0);
+                if existed > 0 {
+                    updated += 1;
+                } else {
+                    imported += 1;
+                }
+            }
+        }
+
+        Ok((imported, updated))
     }
 
     pub async fn week_capacity(
@@ -6138,10 +7073,7 @@ impl<'a> PriorityReminderRepository<'a> {
         let sql = priority_reminder_select_sql(
             "WHERE pr.date = ?1 ORDER BY pr.checkpoint_time ASC, dpi.rank ASC",
         );
-        let rows = sqlx::query(&sql)
-        .bind(date)
-        .fetch_all(self.pool)
-        .await?;
+        let rows = sqlx::query(&sql).bind(date).fetch_all(self.pool).await?;
         Ok(rows.into_iter().map(priority_reminder_from_row).collect())
     }
 
@@ -6228,11 +7160,11 @@ impl<'a> PriorityReminderRepository<'a> {
             "WHERE pr.date = ?1 AND pr.reminder_key = ?2 AND pr.checkpoint_time = ?3 LIMIT 1",
         );
         let row = sqlx::query(&sql)
-        .bind(date)
-        .bind(reminder_key)
-        .bind(checkpoint_time)
-        .fetch_one(self.pool)
-        .await?;
+            .bind(date)
+            .bind(reminder_key)
+            .bind(checkpoint_time)
+            .fetch_one(self.pool)
+            .await?;
         Ok(priority_reminder_from_row(row))
     }
 
@@ -6809,12 +7741,20 @@ impl<'a> SettingsRepository<'a> {
         .await?;
         self.upsert(
             "priority_reminders.enabled",
-            if settings.priority_reminders_enabled { "true" } else { "false" },
+            if settings.priority_reminders_enabled {
+                "true"
+            } else {
+                "false"
+            },
         )
         .await?;
         self.upsert(
             "priority_reminders.desktop_enabled",
-            if settings.priority_reminder_desktop_enabled { "true" } else { "false" },
+            if settings.priority_reminder_desktop_enabled {
+                "true"
+            } else {
+                "false"
+            },
         )
         .await?;
         self.upsert(
@@ -6958,6 +7898,53 @@ fn report_summary_from_row(row: sqlx::sqlite::SqliteRow) -> ReportSummary {
         end_date: row.get("end_date"),
         recipient_name: row.get("recipient_name"),
         created_at: row.get("created_at"),
+    }
+}
+
+fn github_account_from_row(row: sqlx::sqlite::SqliteRow) -> GitHubAccountRecord {
+    GitHubAccountRecord {
+        id: row.get("id"),
+        username: row.get("username"),
+        token_ref: row.get("token_ref"),
+        auth_method: row.get("auth_method"),
+        scopes: row.get("scopes"),
+        status: row.get("status"),
+        connected_at: row.get("connected_at"),
+        last_validated_at: row.get("last_validated_at"),
+        last_synced_at: row.get("last_synced_at"),
+        last_error: row.get("last_error"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    }
+}
+
+fn github_project_repository_from_row(
+    row: sqlx::sqlite::SqliteRow,
+) -> GitHubProjectRepositoryRecord {
+    GitHubProjectRepositoryRecord {
+        id: row.get("id"),
+        project_id: row.get("project_id"),
+        owner: row.get("owner"),
+        repo: row.get("repo"),
+        default_branch: row.get("default_branch"),
+        html_url: row.get("html_url"),
+        last_synced_at: row.get("last_synced_at"),
+        last_error: row.get("last_error"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    }
+}
+
+fn github_sync_state_from_row(row: sqlx::sqlite::SqliteRow) -> GitHubSyncStateRecord {
+    GitHubSyncStateRecord {
+        project_id: row.get("project_id"),
+        owner: row.get("owner"),
+        repo: row.get("repo"),
+        pull_requests_cursor: row.get("pull_requests_cursor"),
+        issues_cursor: row.get("issues_cursor"),
+        last_synced_at: row.get("last_synced_at"),
+        last_error: row.get("last_error"),
+        updated_at: row.get("updated_at"),
     }
 }
 
@@ -7569,6 +8556,13 @@ fn calendar_source_from_row(row: sqlx::sqlite::SqliteRow) -> CalendarSource {
         sync_status: row.get("sync_status"),
         last_synced_at: row.get("last_synced_at"),
         token_ref: row.get("token_ref"),
+        access_token_ref: row.get("access_token_ref"),
+        refresh_token_ref: row.get("refresh_token_ref"),
+        access_expires_at: row.get("access_expires_at"),
+        calendar_id: row.get("calendar_id"),
+        google_client_id: row.get("google_client_id"),
+        sync_token: row.get("sync_token"),
+        last_error: row.get("last_error"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     }
@@ -8473,7 +9467,10 @@ fn project_filter_matches(project_ids: &Option<Vec<String>>, project_id: &str) -
         .unwrap_or(true)
 }
 
-fn workspace_filter_matches(workspace_ids: &Option<Vec<String>>, workspace_id: Option<&str>) -> bool {
+fn workspace_filter_matches(
+    workspace_ids: &Option<Vec<String>>,
+    workspace_id: Option<&str>,
+) -> bool {
     workspace_ids
         .as_ref()
         .map(|ids| {
@@ -8684,6 +9681,10 @@ fn generate_id(prefix: &str) -> String {
         .unwrap_or_default();
 
     format!("{prefix}_{nanos}")
+}
+
+pub fn public_generate_id(prefix: &str) -> String {
+    generate_id(prefix)
 }
 
 #[cfg(test)]
@@ -10334,10 +11335,7 @@ mod tests {
         assert!(updated.github_connected);
         assert_eq!(updated.github_username, "octocat");
         assert_eq!(updated.backup_time, "17:30");
-        assert_eq!(
-            repository.get().await.expect("get settings").theme,
-            "light"
-        );
+        assert_eq!(repository.get().await.expect("get settings").theme, "light");
         assert_eq!(
             repository
                 .get()
