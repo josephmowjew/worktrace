@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   AlertTriangle,
@@ -23,6 +23,7 @@ import { Badge } from "../components/ui/Badge";
 import { BlockersPanel } from "../components/ui/BlockersPanel";
 import { Button } from "../components/ui/Button";
 import { Panel } from "../components/ui/Panel";
+import { FrictionInsightPanel } from "../components/ui/FrictionInsightPanel";
 import { PageHeader } from "../components/ui/PageHeader";
 import { ProjectBreakdownPanel } from "../components/ui/ProjectBreakdownPanel";
 import { RecentActivityItem } from "../components/ui/RecentActivityItem";
@@ -31,13 +32,14 @@ import { WeekRangePicker } from "../components/ui/WeekRangePicker";
 import { useSpeech } from "../components/ui/SpeechProvider";
 import { useToast } from "../components/ui/ToastProvider";
 import { getDashboardStats, getProjectBreakdown, getWeeklyActivityHours } from "../lib/api/dashboard";
+import { getFrictionInsights } from "../lib/api/friction";
 import { listActivity } from "../lib/api/activity";
-import { syncCommits } from "../lib/api/gitSync";
 import { listProjects } from "../lib/api/projects";
 import { listWeeklyTasks } from "../lib/api/weeklyTasks";
 import { getSettings } from "../lib/api/settings";
 import { syncAnnouncement, syncStartedAnnouncement } from "../lib/announcements";
 import { currentWeekRange, shiftWeek } from "../lib/dates";
+import { isRepositorySyncInProgressError, useRepositorySync } from "../features/repositorySync/RepositorySyncProvider";
 
 type StatTone = "blue" | "purple" | "cyan" | "violet";
 
@@ -151,6 +153,7 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const toast = useToast();
   const speech = useSpeech();
+  const repositorySync = useRepositorySync();
   const [anchorDate, setAnchorDate] = useState(new Date());
   const [searchQuery, setSearchQuery] = useState("");
   const weekRange = currentWeekRange(anchorDate);
@@ -197,34 +200,47 @@ export function DashboardPage() {
     queryKey: ["settings"],
     queryFn: getSettings,
   });
+  const frictionInsightsQuery = useQuery({
+    queryKey: ["frictionInsights", weekRange.from, weekRange.to, "dashboard"],
+    queryFn: () =>
+      getFrictionInsights({
+        from: weekRange.from,
+        to: weekRange.to,
+        surface: "dashboard",
+      }),
+  });
 
-  const syncMutation = useMutation({
-    mutationFn: () =>
-      syncCommits({
-        from: null,
-        to: null,
-        authorEmail: settingsQuery.data?.gitAuthorEmail || null,
-    }),
-    onMutate: () => {
-      speech.announce(syncStartedAnnouncement("dashboard activity"), { category: "sync" });
-    },
-    onSuccess: (result) => {
+  async function handleSyncRepositories() {
+    speech.announce(syncStartedAnnouncement("dashboard activity"), { category: "sync" });
+    try {
+      const result = await repositorySync.syncRepositories(
+        {
+          from: null,
+          to: null,
+          authorEmail: settingsQuery.data?.gitAuthorEmail || null,
+        },
+        {
+          scope: "dashboard",
+          onAlreadyRunning: () => toast.info("Sync already running", "Repository activity is still being refreshed."),
+        },
+      );
       queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-activity-hours"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-breakdown"] });
       queryClient.invalidateQueries({ queryKey: ["activity"] });
       queryClient.invalidateQueries({ queryKey: ["weeklyTasks"] });
+      queryClient.invalidateQueries({ queryKey: ["frictionInsights"] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       toast.success(
         "Sync complete",
         `Scanned ${result.scannedProjects} projects. Added ${result.newCommits} commits and updated ${result.updatedCommits}.`,
       );
       speech.announce(syncAnnouncement(result), { category: "sync" });
-    },
-    onError: (error) => {
+    } catch (error) {
+      if (isRepositorySyncInProgressError(error)) return;
       toast.error("Sync failed", error instanceof Error ? error.message : "Repository sync could not be completed.");
-    },
-  });
+    }
+  }
 
   const activityItems = (activityQuery.data ?? []).flatMap((day) => day.items);
   const allTasks = tasksQuery.data ?? [];
@@ -301,14 +317,14 @@ export function DashboardPage() {
           </div>
           <Button
             variant="primary"
-            onClick={() => syncMutation.mutate()}
-            disabled={syncMutation.isPending}
+            onClick={() => void handleSyncRepositories()}
+            disabled={repositorySync.isSyncing}
             className="shadow-blue-500/30"
           >
             <RefreshCw
-              className={`h-4 w-4 ${syncMutation.isPending ? "animate-spin" : ""}`}
+              className={`h-4 w-4 ${repositorySync.isSyncing ? "animate-spin" : ""}`}
             />
-            {syncMutation.isPending ? "Syncing..." : "Sync Now"}
+            {repositorySync.isSyncing ? "Syncing..." : "Sync Now"}
           </Button>
           </>
         }
@@ -381,18 +397,16 @@ export function DashboardPage() {
             actionLabel="View all"
             onAction={() => navigate("/activity")}
           />
-          {syncMutation.data ? (
+          {repositorySync.lastResult ? (
             <div className="mb-3 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-xs text-[var(--wt-text-strong)]">
-              Synced {syncMutation.data.scannedProjects} projects. Added{" "}
-              {syncMutation.data.newCommits} commits and updated{" "}
-              {syncMutation.data.updatedCommits}.
+              Synced {repositorySync.lastResult.scannedProjects} projects. Added{" "}
+              {repositorySync.lastResult.newCommits} commits and updated{" "}
+              {repositorySync.lastResult.updatedCommits}.
             </div>
           ) : null}
-          {syncMutation.isError ? (
+          {repositorySync.lastError ? (
             <div className="mb-3 rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs text-[var(--wt-text-strong)]">
-              {syncMutation.error instanceof Error
-                ? syncMutation.error.message
-                : "Sync failed."}
+              {repositorySync.lastError.message || "Sync failed."}
             </div>
           ) : null}
           <div className="grid gap-2">
@@ -460,6 +474,13 @@ export function DashboardPage() {
           )}
         </Panel>
       </div>
+
+      <FrictionInsightPanel
+        insights={frictionInsightsQuery.data ?? []}
+        isLoading={frictionInsightsQuery.isLoading}
+        limit={3}
+        compact
+      />
 
       <Panel className="flex flex-wrap items-center justify-between gap-3 py-3">
         <div className="flex items-center gap-2 text-sm text-[var(--wt-text-muted)]">

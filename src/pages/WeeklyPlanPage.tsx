@@ -11,7 +11,9 @@ import {
   Repeat,
 } from "lucide-react";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { FastFindSearch, type FastFindPreviewItem } from "../components/ui/FastFindSearch";
+import { FrictionInsightPanel } from "../components/ui/FrictionInsightPanel";
 import { KanbanColumn } from "../components/ui/KanbanColumn";
 import { Panel } from "../components/ui/Panel";
 import { ProgressDonut } from "../components/ui/ProgressDonut";
@@ -24,6 +26,7 @@ import { TaskDetailModal } from "../components/ui/TaskDetailModal";
 import { useSpeech } from "../components/ui/SpeechProvider";
 import { useToast } from "../components/ui/ToastProvider";
 import { getWeekCapacity } from "../lib/api/calendar";
+import { getFrictionInsights } from "../lib/api/friction";
 import { listProjects } from "../lib/api/projects";
 import {
   createWeeklyTask,
@@ -79,10 +82,19 @@ const priorityLabels: Record<WeeklyTaskPriority, string> = {
   high: "High priority",
 };
 
+type WeeklyPlanLocationState = {
+  openTaskId?: string;
+  highlightTaskIds?: string[];
+  frictionInsightId?: string;
+  frictionSearch?: string | null;
+} | null;
+
 export function WeeklyPlanPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
   const speech = useSpeech();
+  const location = useLocation();
+  const navigate = useNavigate();
   const weekRange = currentWeekRange();
   const [typeFilter, setTypeFilter] = useState<WeeklyTaskType | "all">("all");
   const [statusFilter, setStatusFilter] = useState<WeeklyTaskStatus | "all">("all");
@@ -92,6 +104,7 @@ export function WeeklyPlanPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<WeeklyTask | null>(null);
   const [viewingTask, setViewingTask] = useState<WeeklyTask | null>(null);
+  const [highlightedTaskIds, setHighlightedTaskIds] = useState<Set<string>>(new Set());
   const [prefillData, setPrefillData] = useState<{
     title: string;
     priority: WeeklyTaskPriority;
@@ -110,6 +123,7 @@ export function WeeklyPlanPage() {
       queryClient.invalidateQueries({ queryKey: ["reports"] }),
       queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] }),
       queryClient.invalidateQueries({ queryKey: ["weekCapacity"] }),
+      queryClient.invalidateQueries({ queryKey: ["frictionInsights"] }),
     ]);
   }
 
@@ -142,6 +156,15 @@ export function WeeklyPlanPage() {
       getWeekCapacity({
         weekStartDate: weekRange.from,
         weekEndDate: weekRange.to,
+      }),
+  });
+  const frictionInsightsQuery = useQuery({
+    queryKey: ["frictionInsights", weekRange.from, weekRange.to, "weekly_plan"],
+    queryFn: () =>
+      getFrictionInsights({
+        from: weekRange.from,
+        to: weekRange.to,
+        surface: "weekly_plan",
       }),
   });
 
@@ -203,6 +226,53 @@ export function WeeklyPlanPage() {
     window.addEventListener("keydown", handleSearchShortcut, true);
     return () => window.removeEventListener("keydown", handleSearchShortcut, true);
   }, []);
+
+  useEffect(() => {
+    const state = location.state as WeeklyPlanLocationState;
+    if (!state || tasksQuery.isLoading) {
+      return;
+    }
+
+    const taskIds = [
+      ...(state.openTaskId ? [state.openTaskId] : []),
+      ...(state.highlightTaskIds ?? []),
+    ];
+    const hasTaskDrilldown = taskIds.length > 0;
+    const hasConflictingFilters =
+      typeFilter !== "all" || statusFilter !== "all" || projectFilter !== "all";
+
+    if (state.frictionSearch) {
+      setSearchQuery(state.frictionSearch);
+    }
+
+    if (hasTaskDrilldown && hasConflictingFilters) {
+      setTypeFilter("all");
+      setStatusFilter("all");
+      setProjectFilter("all");
+      return;
+    }
+
+    if (state.openTaskId) {
+      const task = tasks.find((candidate) => candidate.id === state.openTaskId);
+      if (task) {
+        setHighlightedTaskIds(new Set([task.id]));
+        setViewingTask(task);
+      }
+    } else if (state.highlightTaskIds?.length) {
+      setHighlightedTaskIds(new Set(state.highlightTaskIds));
+    }
+
+    navigate(location.pathname, { replace: true, state: null });
+  }, [
+    location.pathname,
+    location.state,
+    navigate,
+    projectFilter,
+    statusFilter,
+    tasks,
+    tasksQuery.isLoading,
+    typeFilter,
+  ]);
 
   const planned = useMemo(
     () => visibleTasks.filter((t) => t.status === "todo" && t.taskType !== "carryover"),
@@ -470,6 +540,8 @@ export function WeeklyPlanPage() {
     setTypeFilter("all");
     setStatusFilter("all");
     setProjectFilter("all");
+    setSearchQuery("");
+    setHighlightedTaskIds(new Set());
   }
 
   const hasActiveFilters = typeFilter !== "all" || statusFilter !== "all" || projectFilter !== "all";
@@ -600,6 +672,17 @@ export function WeeklyPlanPage() {
         isLoading={capacityQuery.isLoading}
       />
 
+      <FrictionInsightPanel
+        title="Task Friction"
+        insights={(frictionInsightsQuery.data ?? []).filter((insight) =>
+          ["stale_task", "repeated_issue"].includes(insight.kind),
+        )}
+        isLoading={frictionInsightsQuery.isLoading}
+        emptyText="No stale tasks or repeated work patterns detected."
+        limit={3}
+        compact
+      />
+
       <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           <KanbanColumn
@@ -617,6 +700,7 @@ export function WeeklyPlanPage() {
             onDrop={handleDrop}
             onDragStart={setDraggedTaskId}
             activeColumnId={activeColumnId}
+            highlightedTaskIds={highlightedTaskIds}
           />
           <KanbanColumn
             title="In Progress"
@@ -633,6 +717,7 @@ export function WeeklyPlanPage() {
             onDrop={handleDrop}
             onDragStart={setDraggedTaskId}
             activeColumnId={activeColumnId}
+            highlightedTaskIds={highlightedTaskIds}
           />
           <KanbanColumn
             title="Done"
@@ -649,6 +734,7 @@ export function WeeklyPlanPage() {
             onDrop={handleDrop}
             onDragStart={setDraggedTaskId}
             activeColumnId={activeColumnId}
+            highlightedTaskIds={highlightedTaskIds}
           />
           <KanbanColumn
             title="Carry Forward"
@@ -665,6 +751,7 @@ export function WeeklyPlanPage() {
             onDrop={handleDrop}
             onDragStart={setDraggedTaskId}
             activeColumnId={activeColumnId}
+            highlightedTaskIds={highlightedTaskIds}
           />
         </div>
 

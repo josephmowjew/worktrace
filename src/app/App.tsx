@@ -5,6 +5,7 @@ import { FloatingTodoWidget } from "../components/todo/FloatingTodoWidget";
 import { ActivityTimelinePage } from "../pages/ActivityTimelinePage";
 import { BackupPage } from "../pages/BackupPage";
 import { DashboardPage } from "../pages/DashboardPage";
+import { FrictionPage } from "../pages/FrictionPage";
 import { GuidePage } from "../pages/GuidePage";
 import { ManualLogPage } from "../pages/ManualLogPage";
 import { OnboardingPage } from "../pages/OnboardingPage";
@@ -64,6 +65,7 @@ export default function App() {
                 <Route path="/" element={<TodayPage />} />
                 <Route path="/onboarding" element={<OnboardingPage />} />
                 <Route path="/dashboard" element={<DashboardPage />} />
+                <Route path="/friction" element={<FrictionPage />} />
                 <Route path="/projects" element={<ProjectsPage />} />
                 <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
                 <Route path="/activity" element={<ActivityTimelinePage />} />

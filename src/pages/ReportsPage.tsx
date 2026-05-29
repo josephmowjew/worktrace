@@ -17,10 +17,12 @@ import type { ReactNode } from "react";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { DatePicker } from "../components/ui/DatePicker";
+import { FrictionInsightPanel } from "../components/ui/FrictionInsightPanel";
 import { Panel } from "../components/ui/Panel";
 import { Select } from "../components/ui/Select";
 import { useToast } from "../components/ui/ToastProvider";
 import { getProjectGitFocus, listGitRefs, listGitWorktrees, listProjects } from "../lib/api/projects";
+import { getFrictionInsights } from "../lib/api/friction";
 import {
   generateReport,
   analyzeReportReadiness,
@@ -122,6 +124,17 @@ export function ReportsPage() {
     queryKey: ["projectGitFocus", selectedProjectId],
     queryFn: () => getProjectGitFocus(selectedProjectId),
     enabled: selectedProjectId !== "all",
+  });
+  const frictionInsightsQuery = useQuery({
+    queryKey: ["frictionInsights", startDate, endDate, selectedProjectId, selectedClassification, "reports"],
+    queryFn: () =>
+      getFrictionInsights({
+        from: startDate,
+        to: endDate,
+        projectIds: selectedProjectId === "all" ? null : [selectedProjectId],
+        classification: selectedClassification === "all" ? null : selectedClassification,
+        surface: "reports",
+      }),
   });
 
   const activeProjects = (projectsQuery.data ?? []).filter(
@@ -382,6 +395,17 @@ export function ReportsPage() {
         generatedCount={reportsQuery.data?.length ?? 0}
         reportReadyItems={content.trim() ? contentStats.lines : 0}
         lastGenerated={reportsQuery.data?.[0]}
+      />
+
+      <FrictionInsightPanel
+        title="Report Friction"
+        insights={(frictionInsightsQuery.data ?? []).filter((insight) =>
+          ["late_report", "stale_task", "repeated_issue", "support_mode"].includes(insight.kind),
+        )}
+        isLoading={frictionInsightsQuery.isLoading}
+        emptyText="No report-specific friction patterns detected."
+        limit={3}
+        compact
       />
 
       <div className="grid min-h-0 gap-3 2xl:grid-cols-[360px_minmax(0,1fr)_310px]">

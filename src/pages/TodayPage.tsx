@@ -49,6 +49,7 @@ import {
   stopFocusSession,
 } from "../lib/api/focusSessions";
 import { syncCommits } from "../lib/api/gitSync";
+import { getFrictionInsights } from "../lib/api/friction";
 import { createManualLog } from "../lib/api/manualLogs";
 import { dismissNudge, listNudgeDismissals } from "../lib/api/nudges";
 import {
@@ -83,6 +84,7 @@ import type { Project } from "../types/project";
 import type { WeeklyTask, WeeklyTaskPriority, WeeklyTaskStatus, WeeklyTaskType } from "../types/weeklyTask";
 import type { DailyPlanItem, DailyPlanItemStatus } from "../types/dailyPlan";
 import type { PriorityReminder } from "../types/priorityReminder";
+import type { FrictionInsight } from "../types/friction";
 
 type PriorityDraftItem = {
   title: string;
@@ -167,6 +169,15 @@ export function TodayPage() {
       listFocusSessions({
         from: today.from,
         to: today.to,
+      }),
+  });
+  const frictionInsightsQuery = useQuery({
+    queryKey: ["frictionInsights", today.from, today.to, "today"],
+    queryFn: () =>
+      getFrictionInsights({
+        from: today.from,
+        to: today.to,
+        surface: "today",
       }),
   });
   const dailyReviewNotesQuery = useQuery({
@@ -276,6 +287,7 @@ export function TodayPage() {
       queryClient.invalidateQueries({ queryKey: ["weekCapacity"] }),
       queryClient.invalidateQueries({ queryKey: ["focusSession"] }),
       queryClient.invalidateQueries({ queryKey: ["focusSessions"] }),
+      queryClient.invalidateQueries({ queryKey: ["frictionInsights"] }),
       queryClient.invalidateQueries({ queryKey: ["nudgeDismissals"] }),
       queryClient.invalidateQueries({ queryKey: ["priorityReminders"] }),
       queryClient.invalidateQueries({ queryKey: ["todayCommandCenter", today.date] }),
@@ -610,6 +622,17 @@ export function TodayPage() {
     hasPreviousOpenTasks: previousOpenTasks.length > 0,
     staleInProgressCount: inProgress.filter((task) => task.updatedAt.slice(0, 10) < today.date).length,
     focusStartedAt: activeFocusQuery.data?.startedAt ?? null,
+    todayDate: today.date,
+    frictionInsights: frictionInsightsQuery.data ?? [],
+    onFrictionAction: (insight) => {
+      if (insight.primaryAction?.route) {
+        navigate(insight.primaryAction.route, {
+          state: insight.primaryAction.stateJson ?? undefined,
+        });
+        return;
+      }
+      navigate(insight.actionTarget);
+    },
     onSync: () => syncMutation.mutate(),
     onQuickLog: () => setLogModalOpen(true),
     onReview: () => setReviewOpen(true),
@@ -2008,6 +2031,9 @@ function buildTodayNudges(input: {
   hasPreviousOpenTasks: boolean;
   staleInProgressCount: number;
   focusStartedAt: string | null;
+  todayDate: string;
+  frictionInsights: FrictionInsight[];
+  onFrictionAction: (insight: FrictionInsight) => void;
   onSync: () => void;
   onQuickLog: () => void;
   onReview: () => void;
@@ -2087,7 +2113,52 @@ function buildTodayNudges(input: {
     });
   }
 
+  const nudgeableFrictionKinds = new Set([
+    "project_switching",
+    "context_switching",
+    "stale_task",
+    "repeated_issue",
+    "late_report",
+    "support_mode",
+    "meeting_recovery_gap",
+    "focus_fragmentation",
+  ]);
+  const frictionNudges = input.frictionInsights
+    .filter((item) =>
+      (item.severity === "high" || nudgeableFrictionKinds.has(item.kind)) &&
+      ["strong", "likely"].includes(item.confidenceLabel ?? "likely") &&
+      isTodayFrictionInsight(item, input.todayDate),
+    )
+    .slice(0, 3);
+
+  for (const insight of frictionNudges) {
+    nudges.push({
+      key: insight.nudgeKey,
+      title: insight.title,
+      detail: insight.recommendation || insight.detail,
+      actionLabel: insight.actionLabel,
+      onAction: () => input.onFrictionAction(insight),
+    });
+  }
+
   return nudges;
+}
+
+function isTodayFrictionInsight(insight: FrictionInsight, todayDate: string) {
+  if (insight.date && insight.date !== todayDate) {
+    return false;
+  }
+
+  const datedEvidence = insight.evidenceItems.filter((item) => item.date);
+  if (datedEvidence.length > 0) {
+    return datedEvidence.some((item) => item.date === todayDate);
+  }
+
+  if (insight.scope?.from && insight.scope?.to) {
+    return insight.scope.from <= todayDate && insight.scope.to >= todayDate;
+  }
+
+  return true;
 }
 
 function minutesSince(timestamp: string) {

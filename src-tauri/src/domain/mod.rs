@@ -6,6 +6,7 @@ pub mod daily_plan;
 pub mod dashboard;
 pub mod embedding;
 pub mod focus_session;
+pub mod friction;
 pub mod git_metadata;
 pub mod github;
 pub mod manual_log;

@@ -1,4 +1,4 @@
-import { Activity, BarChart3, BookOpen, ClipboardEdit, DatabaseBackup, FileText, Focus, FolderKanban, HelpCircle, Home, ListChecks, ListTodo, Mic, RefreshCw, Search, Settings, Square, X } from "lucide-react";
+import { Activity, BarChart3, BookOpen, ClipboardEdit, DatabaseBackup, FileText, Focus, FolderKanban, Gauge, HelpCircle, Home, ListChecks, ListTodo, Mic, RefreshCw, Search, Settings, Square, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
@@ -36,6 +36,7 @@ export function createBaseCommandActions({
     { id: "nav-reports", label: "Go to Reports", description: "Generate or load weekly reports", group: "Reporting", icon: FileText, onRun: () => navigate("/reports") },
     { id: "nav-projects", label: "Go to Repositories", description: "Manage tracked repositories", group: "Navigation", icon: FolderKanban, onRun: () => navigate("/projects") },
     { id: "nav-dashboard", label: "Go to Dashboard", description: "Open analytics dashboard", group: "Navigation", icon: BarChart3, onRun: () => navigate("/dashboard") },
+    { id: "nav-friction", label: "Go to Friction", description: "Review patterns that may be slowing the week down", group: "Review", icon: Gauge, onRun: () => navigate("/friction") },
     { id: "nav-backup", label: "Go to Backup", description: "Manage backup settings", group: "Navigation", icon: DatabaseBackup, onRun: () => navigate("/backup") },
     { id: "nav-onboarding", label: "Open Onboarding", description: "Revisit setup steps anytime", group: "Navigation", icon: HelpCircle, onRun: () => navigate("/onboarding") },
     { id: "nav-guide", label: "Go to Guide", description: "Learn the best WorkTrace workflow", group: "Navigation", icon: BookOpen, onRun: () => navigate("/guide") },

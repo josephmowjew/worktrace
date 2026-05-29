@@ -40,6 +40,7 @@ export function TaskCard({
   onDelete,
   onDragStart,
   onDragEnd,
+  isHighlighted = false,
 }: {
   task: WeeklyTask;
   onToggleComplete: () => void;
@@ -48,6 +49,7 @@ export function TaskCard({
   onDelete: () => void;
   onDragStart: (taskId: string) => void;
   onDragEnd: () => void;
+  isHighlighted?: boolean;
 }) {
   const isCompleted = task.status === "completed";
   const isInProgress = task.status === "in_progress";
@@ -60,6 +62,12 @@ export function TaskCard({
   const originalRect = useRef<DOMRect | null>(null);
   const hasMoved = useRef(false);
   const suppressClick = useRef(false);
+
+  useEffect(() => {
+    if (isHighlighted) {
+      cardRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }, [isHighlighted]);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
@@ -164,7 +172,11 @@ export function TaskCard({
           onView();
         }
       }}
-      className={`group rounded-xl border border-[var(--wt-border)] bg-[var(--wt-surface)] p-3 shadow-[0_1px_2px_rgb(var(--wt-shadow)/0.06)] transition-colors hover:bg-[var(--wt-surface-muted)] ${
+      className={`group rounded-xl border p-3 shadow-[0_1px_2px_rgb(var(--wt-shadow)/0.06)] transition-colors hover:bg-[var(--wt-surface-muted)] ${
+        isHighlighted
+          ? "border-orange-300/45 bg-orange-500/10 shadow-orange-950/20"
+          : "border-[var(--wt-border)] bg-[var(--wt-surface)]"
+      } ${
         isDragging ? "cursor-grabbing" : "cursor-pointer"
       }`}
       style={{ transition: isDragging ? "none" : "background-color 0.15s, border-color 0.15s, transform 0.15s" }}

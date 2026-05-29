@@ -17,6 +17,7 @@ export function KanbanColumn({
   onDrop,
   onDragStart,
   activeColumnId,
+  highlightedTaskIds,
 }: {
   title: string;
   color: string;
@@ -32,6 +33,7 @@ export function KanbanColumn({
   onDrop: () => void;
   onDragStart: (taskId: string) => void;
   activeColumnId: string | null;
+  highlightedTaskIds?: Set<string>;
 }) {
   const isDragOver = activeColumnId === columnId;
 
@@ -66,6 +68,7 @@ export function KanbanColumn({
             onDelete={() => onDelete(task)}
             onDragStart={onDragStart}
             onDragEnd={onDrop}
+            isHighlighted={highlightedTaskIds?.has(task.id) ?? false}
           />
         ))}
 

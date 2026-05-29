@@ -19,6 +19,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Panel } from "../components/ui/Panel";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Button } from "../components/ui/Button";
@@ -48,6 +49,11 @@ import type { ActivityGroup, TitleCandidate } from "../types/activityGroup";
 import type { WeeklyTask } from "../types/weeklyTask";
 import { useEscapeKey } from "../hooks/useEscapeKey";
 
+type ActivityTimelineLocationState = {
+  searchQuery?: string;
+  frictionInsightId?: string;
+} | null;
+
 const activityFilters = [
   { label: "All", value: "all", icon: BarChart3 },
   { label: "Commits", value: "commit", icon: Code },
@@ -61,6 +67,8 @@ export function ActivityTimelinePage() {
   const queryClient = useQueryClient();
   const toast = useToast();
   const speech = useSpeech();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [activityType, setActivityType] = useState("all");
   const [projectId, setProjectId] = useState("all");
@@ -70,6 +78,17 @@ export function ActivityTimelinePage() {
   const [syncMenuOpen, setSyncMenuOpen] = useState(false);
   const [organizePhase, setOrganizePhase] = useState<"idle" | "evidence" | "grouping">("idle");
   const [viewMode, setViewMode] = useState<"timeline" | "story">("timeline");
+
+  useEffect(() => {
+    const state = location.state as ActivityTimelineLocationState;
+    if (!state?.searchQuery) {
+      return;
+    }
+    setSearchQuery(state.searchQuery);
+    setActivityType("all");
+    setProjectId("all");
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.pathname, location.state, navigate]);
 
   const weekRange = useMemo(() => currentWeekRange(currentDate), [currentDate]);
 

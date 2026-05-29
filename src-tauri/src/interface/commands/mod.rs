@@ -6,6 +6,7 @@ pub mod daily_plan;
 pub mod dashboard;
 pub mod embeddings;
 pub mod focus_sessions;
+pub mod friction;
 pub mod git_sync;
 pub mod github;
 pub mod manual_logs;
@@ -92,6 +93,7 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         focus_sessions::start_focus_session,
         focus_sessions::stop_focus_session,
         focus_sessions::cancel_focus_session,
+        friction::get_friction_insights,
         git_sync::sync_commits,
         github::start_github_device_auth,
         github::complete_github_device_auth,
