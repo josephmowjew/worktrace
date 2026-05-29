@@ -48,6 +48,7 @@
     "shortDescription": "WorkTrace, developed by Joseph Mojoo.",
     "longDescription": "WorkTrace is a local-first developer productivity and weekly reporting desktop app developed by Joseph Mojoo.",
     "resources": [
+      "../CHANGELOG.md",
       "resources/voice/*",
       "resources/ai/*"
     ],
