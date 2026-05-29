@@ -37,6 +37,8 @@ const NVIDIA_BUILD_URL: &str = "https://integrate.api.nvidia.com/v1/chat/complet
 const NVIDIA_BUILD_MODELS_URL: &str = "https://integrate.api.nvidia.com/v1/models";
 const PROVIDER_REQUEST_TIMEOUT_SECONDS: u64 = 120;
 const STREAM_CHUNK_POLL_TIMEOUT_SECONDS: u64 = 2;
+const REPORT_POLISH_MAX_TOKENS: i32 = 1600;
+const NVIDIA_REASONING_REPORT_POLISH_MAX_TOKENS: i32 = 4096;
 
 pub struct ReportAiService;
 
@@ -111,6 +113,7 @@ impl ReportAiService {
             None,
         )
         .await?;
+        validate_provider_test_response(&response)?;
 
         Ok(format!("{} is ready using {model}.", response.provider))
     }
@@ -175,7 +178,9 @@ impl ReportAiService {
                 provider: provider.as_str().to_string(),
                 model: model_for_provider(&provider, &settings),
                 used_fallback: true,
+                fallback_reason: FallbackReason::ProviderUnavailable.as_str().to_string(),
                 message: unavailable_message(&provider, &settings),
+                diagnostics: None,
             });
         }
 
@@ -187,6 +192,8 @@ impl ReportAiService {
                 .as_deref()
                 .map(|stream_id| ReportAiStream::new(app, stream_id))
         });
+        let max_tokens = polish_max_tokens(&provider, &settings);
+        let stream = stream.filter(|_| !should_use_non_stream_first(&provider, &settings));
         let response = call_provider(
             &provider,
             &settings,
@@ -194,7 +201,7 @@ impl ReportAiService {
                 chat_message("system", polish_system_message()),
                 chat_message("user", &prompt),
             ],
-            1600,
+            max_tokens,
             stream.as_ref(),
         )
         .await;
@@ -205,24 +212,27 @@ impl ReportAiService {
                 provider: response.provider,
                 model: response.model,
                 used_fallback: false,
+                fallback_reason: FallbackReason::None.as_str().to_string(),
                 message: "Report polished with AI.".to_string(),
+                diagnostics: response.diagnostics,
             }),
             Ok(response) => Ok(ReportPolishResult {
                 content: input.draft,
                 provider: response.provider,
                 model: response.model,
                 used_fallback: true,
-                message: response.diagnostics.unwrap_or_else(|| {
-                    "The provider returned an empty response; kept the deterministic draft."
-                        .to_string()
-                }),
+                fallback_reason: response.fallback_reason.as_str().to_string(),
+                message: fallback_message(response.fallback_reason),
+                diagnostics: response.diagnostics,
             }),
             Err(error) => Ok(ReportPolishResult {
                 content: input.draft,
                 provider: provider.as_str().to_string(),
                 model: model_for_provider(&provider, &settings),
                 used_fallback: true,
-                message: error.to_string(),
+                fallback_reason: fallback_reason_for_error(&error).as_str().to_string(),
+                message: fallback_message(fallback_reason_for_error(&error)),
+                diagnostics: Some(error.to_string()),
             }),
         }
     }
@@ -328,6 +338,30 @@ struct AiResponse {
     model: String,
     content: String,
     diagnostics: Option<String>,
+    fallback_reason: FallbackReason,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FallbackReason {
+    None,
+    ProviderUnavailable,
+    ProviderError,
+    EmptyOutput,
+    LengthLimit,
+    Cancelled,
+}
+
+impl FallbackReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::ProviderUnavailable => "provider_unavailable",
+            Self::ProviderError => "provider_error",
+            Self::EmptyOutput => "empty_output",
+            Self::LengthLimit => "length_limit",
+            Self::Cancelled => "cancelled",
+        }
+    }
 }
 
 struct ReportAiStream<'a> {
@@ -393,7 +427,7 @@ fn local_status(settings: &Settings) -> ReportAiProviderStatus {
 
     ReportAiProviderStatus {
         provider: ReportAiProvider::LocalLlamaCpp.as_str().to_string(),
-        available: configured,
+        available: false,
         configured,
         online: false,
         model: if settings.report_ai_local_model_path.trim().is_empty() {
@@ -402,7 +436,7 @@ fn local_status(settings: &Settings) -> ReportAiProviderStatus {
             settings.report_ai_local_model_path.clone()
         },
         message: if configured {
-            "Local model path is configured. llama.cpp sidecar setup can use this model."
+            "Local model path is configured, but local llama.cpp polish is not wired up yet."
                 .to_string()
         } else {
             "Choose a local GGUF model path before using offline AI polish.".to_string()
@@ -434,10 +468,7 @@ fn online_status(
 
 fn provider_unavailable(provider: &ReportAiProvider, settings: &Settings) -> bool {
     match provider {
-        ReportAiProvider::LocalLlamaCpp => {
-            settings.report_ai_local_model_path.trim().is_empty()
-                || !Path::new(&settings.report_ai_local_model_path).exists()
-        }
+        ReportAiProvider::LocalLlamaCpp => true,
         ReportAiProvider::OpenrouterFree => {
             !settings.report_ai_online_allowed
                 || !settings.report_ai_privacy_acknowledged
@@ -459,7 +490,8 @@ fn provider_unavailable(provider: &ReportAiProvider, settings: &Settings) -> boo
 fn unavailable_message(provider: &ReportAiProvider, settings: &Settings) -> String {
     match provider {
         ReportAiProvider::LocalLlamaCpp => {
-            "Local report AI is not configured yet. Choose a GGUF model path; the deterministic draft was kept.".to_string()
+            "Local report AI polish is not available yet; the deterministic draft was kept."
+                .to_string()
         }
         ReportAiProvider::OpenrouterFree
         | ReportAiProvider::Groq
@@ -480,6 +512,72 @@ fn model_for_provider(provider: &ReportAiProvider, settings: &Settings) -> Strin
         ReportAiProvider::Groq => settings.report_ai_groq_model.clone(),
         ReportAiProvider::NvidiaBuild => settings.report_ai_nvidia_model.clone(),
     }
+}
+
+fn polish_max_tokens(provider: &ReportAiProvider, settings: &Settings) -> i32 {
+    if is_nvidia_reasoning_model(provider, &settings.report_ai_nvidia_model) {
+        NVIDIA_REASONING_REPORT_POLISH_MAX_TOKENS
+    } else {
+        REPORT_POLISH_MAX_TOKENS
+    }
+}
+
+fn should_use_non_stream_first(provider: &ReportAiProvider, settings: &Settings) -> bool {
+    is_nvidia_reasoning_model(provider, &settings.report_ai_nvidia_model)
+}
+
+fn is_nvidia_reasoning_model(provider: &ReportAiProvider, model: &str) -> bool {
+    if !matches!(provider, ReportAiProvider::NvidiaBuild) {
+        return false;
+    }
+
+    let model = model.to_ascii_lowercase();
+    model.contains("nemotron") || model.contains("reasoning")
+}
+
+fn fallback_reason_for_error(error: &ReportAiError) -> FallbackReason {
+    match error {
+        ReportAiError::Provider(message) if message.contains("cancelled") => {
+            FallbackReason::Cancelled
+        }
+        _ => FallbackReason::ProviderError,
+    }
+}
+
+fn fallback_message(reason: FallbackReason) -> String {
+    match reason {
+        FallbackReason::ProviderUnavailable => {
+            "The selected AI provider is not ready, so WorkTrace kept your draft.".to_string()
+        }
+        FallbackReason::LengthLimit => {
+            "The AI model ran out of output budget, so WorkTrace kept your draft.".to_string()
+        }
+        FallbackReason::Cancelled => {
+            "Report polish was cancelled. WorkTrace kept your draft.".to_string()
+        }
+        FallbackReason::ProviderError => {
+            "The AI provider could not polish the report, so WorkTrace kept your draft.".to_string()
+        }
+        FallbackReason::EmptyOutput | FallbackReason::None => {
+            "The AI provider returned no usable report text, so WorkTrace kept your draft."
+                .to_string()
+        }
+    }
+}
+
+fn validate_provider_test_response(response: &AiResponse) -> Result<(), ReportAiError> {
+    if response.content.trim() == "ok" {
+        return Ok(());
+    }
+
+    Err(ReportAiError::Provider(
+        response.diagnostics.clone().unwrap_or_else(|| {
+            format!(
+                "{} returned an invalid provider test response.",
+                response.provider
+            )
+        }),
+    ))
 }
 
 async fn call_provider(
@@ -597,21 +695,26 @@ async fn call_openai_compatible_non_stream(
         .json()
         .await
         .map_err(|error| ReportAiError::Provider(error.to_string()))?;
-    let first_choice = body.choices.first();
-    let content = first_choice
-        .and_then(|choice| choice.message.content.clone())
-        .unwrap_or_default();
+    let parsed = parse_chat_completion_content(&body);
+    let content = parsed.content;
     let diagnostics = if content.trim().is_empty() {
         Some(format!(
-            "{provider} returned empty non-stream output (model={} choices={} finish_reason={}).",
+            "{provider} returned empty non-stream output (model={} choices={} finish_reasons=[{}] reasoning_fields={} shape={}).",
             body.model.clone().unwrap_or_else(|| model.to_string()),
             body.choices.len(),
-            first_choice
-                .and_then(|choice| choice.finish_reason.clone())
-                .unwrap_or_else(|| "missing".to_string())
+            parsed.finish_reasons.join(","),
+            parsed.reasoning_fields,
+            parsed.shape_summary
         ))
     } else {
         None
+    };
+    let fallback_reason = if content.trim().is_empty() && parsed.has_length_finish_reason {
+        FallbackReason::LengthLimit
+    } else if content.trim().is_empty() {
+        FallbackReason::EmptyOutput
+    } else {
+        FallbackReason::None
     };
 
     Ok(AiResponse {
@@ -619,6 +722,7 @@ async fn call_openai_compatible_non_stream(
         model: body.model.unwrap_or_else(|| model.to_string()),
         content,
         diagnostics,
+        fallback_reason,
     })
 }
 
@@ -731,6 +835,7 @@ async fn call_openai_compatible_streaming(
     )?;
 
     stream.emit("done", "", None);
+    let has_length_finish_reason = finish_reasons.iter().any(|reason| reason == "length");
     let diagnostics = if content.trim().is_empty() {
         Some(format!(
             "{provider} returned empty streamed output (model={} saw_events={} content_deltas={} reasoning_deltas={} finish_reasons=[{}]).",
@@ -743,11 +848,20 @@ async fn call_openai_compatible_streaming(
     } else {
         None
     };
+    let fallback_reason = if content.trim().is_empty() && has_length_finish_reason {
+        FallbackReason::LengthLimit
+    } else if content.trim().is_empty() {
+        FallbackReason::EmptyOutput
+    } else {
+        FallbackReason::None
+    };
+
     Ok(AiResponse {
         provider: provider.to_string(),
         model: response_model,
         content,
         diagnostics,
+        fallback_reason,
     })
 }
 
@@ -1281,6 +1395,95 @@ fn chat_message(role: &str, content: &str) -> serde_json::Value {
     json!({ "role": role, "content": content })
 }
 
+#[derive(Debug)]
+struct ParsedChatContent {
+    content: String,
+    finish_reasons: Vec<String>,
+    has_length_finish_reason: bool,
+    reasoning_fields: usize,
+    shape_summary: String,
+}
+
+fn parse_chat_completion_content(body: &ChatCompletionResponse) -> ParsedChatContent {
+    let mut content = String::new();
+    let mut finish_reasons = Vec::new();
+    let mut reasoning_fields = 0usize;
+    let mut shapes = Vec::new();
+
+    for choice in &body.choices {
+        if let Some(reason) = choice
+            .finish_reason
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            finish_reasons.push(reason.to_string());
+        }
+        if choice
+            .message
+            .reasoning
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .is_some()
+        {
+            reasoning_fields += 1;
+        }
+        if choice
+            .message
+            .reasoning_content
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .is_some()
+        {
+            reasoning_fields += 1;
+        }
+
+        match &choice.message.content {
+            Some(ChatMessageContent::Text(text)) => {
+                shapes.push("text");
+                if content.trim().is_empty() && !text.trim().is_empty() {
+                    content = text.clone();
+                }
+            }
+            Some(ChatMessageContent::Parts(parts)) => {
+                shapes.push("parts");
+                let text = parts
+                    .iter()
+                    .filter_map(|part| {
+                        let content_type = part.content_type.as_deref().unwrap_or("text");
+                        if content_type == "text" {
+                            part.text.as_deref()
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("");
+                if content.trim().is_empty() && !text.trim().is_empty() {
+                    content = text;
+                }
+            }
+            None => shapes.push("missing"),
+        }
+    }
+
+    if finish_reasons.is_empty() {
+        finish_reasons.push("missing".to_string());
+    }
+
+    let has_length_finish_reason = finish_reasons.iter().any(|reason| reason == "length");
+    ParsedChatContent {
+        content,
+        finish_reasons,
+        has_length_finish_reason,
+        reasoning_fields,
+        shape_summary: if shapes.is_empty() {
+            "no_choices".to_string()
+        } else {
+            shapes.join(",")
+        },
+    }
+}
+
 fn key_user(provider: &ReportAiProvider) -> Result<&'static str, ReportAiError> {
     match provider {
         ReportAiProvider::OpenrouterFree => Ok(OPENROUTER_KEY_USER),
@@ -1332,7 +1535,23 @@ struct ChatChoice {
 
 #[derive(Debug, Deserialize)]
 struct ChatMessage {
-    content: Option<String>,
+    content: Option<ChatMessageContent>,
+    reasoning: Option<String>,
+    reasoning_content: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum ChatMessageContent {
+    Text(String),
+    Parts(Vec<ChatMessageContentPart>),
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatMessageContentPart {
+    #[serde(rename = "type")]
+    content_type: Option<String>,
+    text: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1388,7 +1607,13 @@ struct GroqModel {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_polish_prompt, polish_system_message};
+    use super::{
+        build_polish_prompt, parse_chat_completion_content, polish_max_tokens,
+        polish_system_message, should_use_non_stream_first, validate_provider_test_response,
+        AiResponse, ChatChoice, ChatCompletionResponse, ChatMessage, ChatMessageContent,
+        ChatMessageContentPart, FallbackReason, ReportAiProvider, Settings,
+        NVIDIA_REASONING_REPORT_POLISH_MAX_TOKENS,
+    };
 
     #[test]
     fn polish_prompt_requires_generic_email_style_report() {
@@ -1433,5 +1658,116 @@ mod tests {
         assert!(system.contains("do not invent work"));
         assert!(prompt.contains("Preserve facts, counts, dates, names, project names, statuses, blockers, decisions, and evidence"));
         assert!(prompt.contains("Do not invent work, outcomes, meetings, people, departments, dates, or status changes."));
+    }
+
+    #[test]
+    fn parses_content_from_later_non_stream_choice() {
+        let body = ChatCompletionResponse {
+            model: Some("test-model".to_string()),
+            choices: vec![
+                choice(None, Some("stop")),
+                choice(
+                    Some(ChatMessageContent::Text("Polished report".to_string())),
+                    Some("stop"),
+                ),
+            ],
+        };
+
+        let parsed = parse_chat_completion_content(&body);
+
+        assert_eq!(parsed.content, "Polished report");
+        assert_eq!(parsed.finish_reasons, vec!["stop", "stop"]);
+    }
+
+    #[test]
+    fn parses_structured_non_stream_content_parts() {
+        let body = ChatCompletionResponse {
+            model: Some("test-model".to_string()),
+            choices: vec![choice(
+                Some(ChatMessageContent::Parts(vec![
+                    ChatMessageContentPart {
+                        content_type: Some("text".to_string()),
+                        text: Some("Hello".to_string()),
+                    },
+                    ChatMessageContentPart {
+                        content_type: Some("text".to_string()),
+                        text: Some(", report".to_string()),
+                    },
+                ])),
+                Some("stop"),
+            )],
+        };
+
+        let parsed = parse_chat_completion_content(&body);
+
+        assert_eq!(parsed.content, "Hello, report");
+        assert_eq!(parsed.shape_summary, "parts");
+    }
+
+    #[test]
+    fn empty_non_stream_length_finish_reason_is_detected() {
+        let body = ChatCompletionResponse {
+            model: Some("nvidia/nemotron".to_string()),
+            choices: vec![ChatChoice {
+                message: ChatMessage {
+                    content: Some(ChatMessageContent::Text(String::new())),
+                    reasoning: Some("thinking".to_string()),
+                    reasoning_content: None,
+                },
+                finish_reason: Some("length".to_string()),
+            }],
+        };
+
+        let parsed = parse_chat_completion_content(&body);
+        let fallback_reason = if parsed.content.trim().is_empty() && parsed.has_length_finish_reason
+        {
+            FallbackReason::LengthLimit
+        } else {
+            FallbackReason::EmptyOutput
+        };
+
+        assert_eq!(fallback_reason, FallbackReason::LengthLimit);
+        assert_eq!(parsed.reasoning_fields, 1);
+    }
+
+    #[test]
+    fn nvidia_reasoning_models_use_non_stream_first_and_larger_budget() {
+        let mut settings = Settings::default();
+        settings.report_ai_nvidia_model = "nvidia/nemotron-3-nano-30b-a3b".to_string();
+
+        assert!(should_use_non_stream_first(
+            &ReportAiProvider::NvidiaBuild,
+            &settings
+        ));
+        assert_eq!(
+            polish_max_tokens(&ReportAiProvider::NvidiaBuild, &settings),
+            NVIDIA_REASONING_REPORT_POLISH_MAX_TOKENS
+        );
+    }
+
+    #[test]
+    fn provider_test_rejects_empty_output() {
+        let response = AiResponse {
+            provider: "nvidia_build".to_string(),
+            model: "nvidia/nemotron".to_string(),
+            content: String::new(),
+            diagnostics: Some("empty provider test output".to_string()),
+            fallback_reason: FallbackReason::EmptyOutput,
+        };
+
+        let error = validate_provider_test_response(&response).unwrap_err();
+
+        assert!(error.to_string().contains("empty provider test output"));
+    }
+
+    fn choice(content: Option<ChatMessageContent>, finish_reason: Option<&str>) -> ChatChoice {
+        ChatChoice {
+            message: ChatMessage {
+                content,
+                reasoning: None,
+                reasoning_content: None,
+            },
+            finish_reason: finish_reason.map(str::to_string),
+        }
     }
 }

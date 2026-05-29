@@ -91,6 +91,7 @@ export function ReportsWorkspaceProvider({ children }: PropsWithChildren) {
   const [activePolishStreamId, setActivePolishStreamId] = useState<string | null>(null);
   const [polishCancelled, setPolishCancelled] = useState(false);
   const activePolishStreamIdRef = useRef<string | null>(null);
+  const polishStreamReceivedContentRef = useRef(false);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -102,14 +103,21 @@ export function ReportsWorkspaceProvider({ children }: PropsWithChildren) {
       }
 
       if (payload.eventType === "start") {
-        setContent("");
+        polishStreamReceivedContentRef.current = false;
         setPolishStreamStatus("Connecting to AI provider...");
         return;
       }
 
       if (payload.eventType === "delta") {
         setPolishStreamStatus("Writing polished report...");
-        setContent((current) => `${current}${payload.content}`);
+        setContent((current) => {
+          if (!polishStreamReceivedContentRef.current) {
+            polishStreamReceivedContentRef.current = true;
+            return payload.content;
+          }
+
+          return `${current}${payload.content}`;
+        });
       }
 
       if (payload.eventType === "reasoning") {
@@ -120,6 +128,7 @@ export function ReportsWorkspaceProvider({ children }: PropsWithChildren) {
         setPolishStreamStatus("Finalizing report...");
         setPolishCancelled(false);
         activePolishStreamIdRef.current = null;
+        polishStreamReceivedContentRef.current = false;
         setActivePolishStreamId(null);
       }
 
@@ -127,6 +136,7 @@ export function ReportsWorkspaceProvider({ children }: PropsWithChildren) {
         setPolishStreamStatus(payload.message ?? "AI stream ended with an error.");
         setPolishCancelled(false);
         activePolishStreamIdRef.current = null;
+        polishStreamReceivedContentRef.current = false;
         setActivePolishStreamId(null);
       }
 
@@ -134,6 +144,7 @@ export function ReportsWorkspaceProvider({ children }: PropsWithChildren) {
         setPolishCancelled(true);
         setPolishStreamStatus(payload.message ?? "Report polish was cancelled.");
         activePolishStreamIdRef.current = null;
+        polishStreamReceivedContentRef.current = false;
         setActivePolishStreamId(null);
       }
     }).then((cleanup) => {
@@ -194,6 +205,7 @@ export function ReportsWorkspaceProvider({ children }: PropsWithChildren) {
       beginPolishStream: () => {
         const streamId = createStreamId();
         activePolishStreamIdRef.current = streamId;
+        polishStreamReceivedContentRef.current = false;
         setActivePolishStreamId(streamId);
         setPolishCancelled(false);
         setPolishStreamStatus("Preparing report context...");
@@ -201,6 +213,7 @@ export function ReportsWorkspaceProvider({ children }: PropsWithChildren) {
       },
       finishPolishStream: () => {
         activePolishStreamIdRef.current = null;
+        polishStreamReceivedContentRef.current = false;
         setActivePolishStreamId(null);
         setPolishCancelled(false);
         setPolishStreamStatus(null);

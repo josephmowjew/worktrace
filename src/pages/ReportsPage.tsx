@@ -224,10 +224,12 @@ export function ReportsPage() {
 
       finishPolishStream();
       setContent(result.content);
-      toast.success(
-        result.usedFallback ? "AI polish used fallback" : "Report polished",
-        result.message,
-      );
+      if (result.usedFallback) {
+        toast.warning("AI polish kept draft", result.message);
+        return;
+      }
+
+      toast.success("Report polished", result.message);
     },
     onError: (error) => {
       finishPolishStream();

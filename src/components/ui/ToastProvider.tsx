@@ -1,4 +1,4 @@
-import { CheckCircle2, Info, X, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Info, X, XCircle } from "lucide-react";
 import {
   createContext,
   useCallback,
@@ -8,7 +8,7 @@ import {
 } from "react";
 import type { PropsWithChildren } from "react";
 
-type ToastTone = "success" | "error" | "info";
+type ToastTone = "success" | "error" | "info" | "warning";
 
 type Toast = {
   id: string;
@@ -24,6 +24,7 @@ type ToastContextValue = {
   success: (title: string, message?: string) => void;
   error: (title: string, message?: string) => void;
   info: (title: string, message?: string) => void;
+  warning: (title: string, message?: string) => void;
 };
 
 const ToastContext = createContext<ToastContextValue | null>(null);
@@ -32,12 +33,14 @@ const toneClasses: Record<ToastTone, string> = {
   success: "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-100",
   error: "border-red-500/20 bg-red-500/10 text-red-700 dark:text-red-100",
   info: "border-blue-500/20 bg-blue-500/10 text-blue-700 dark:text-blue-100",
+  warning: "border-amber-500/20 bg-amber-500/10 text-amber-800 dark:text-amber-100",
 };
 
 const iconClasses: Record<ToastTone, string> = {
   success: "text-emerald-600 dark:text-emerald-300",
   error: "text-red-600 dark:text-red-300",
   info: "text-blue-600 dark:text-blue-300",
+  warning: "text-amber-600 dark:text-amber-300",
 };
 
 export function ToastProvider({ children }: PropsWithChildren) {
@@ -62,6 +65,7 @@ export function ToastProvider({ children }: PropsWithChildren) {
       success: (title, message) => notify({ tone: "success", title, message }),
       error: (title, message) => notify({ tone: "error", title, message }),
       info: (title, message) => notify({ tone: "info", title, message }),
+      warning: (title, message) => notify({ tone: "warning", title, message }),
     }),
     [notify],
   );
@@ -76,7 +80,9 @@ export function ToastProvider({ children }: PropsWithChildren) {
               ? CheckCircle2
               : toast.tone === "error"
                 ? XCircle
-                : Info;
+                : toast.tone === "warning"
+                  ? AlertTriangle
+                  : Info;
 
           return (
             <div

@@ -96,7 +96,15 @@ export type ReportPolishResult = {
   provider: string;
   model: string;
   usedFallback: boolean;
+  fallbackReason:
+    | "none"
+    | "provider_unavailable"
+    | "provider_error"
+    | "empty_output"
+    | "length_limit"
+    | "cancelled";
   message: string;
+  diagnostics?: string | null;
 };
 
 export type ReportAiStreamPayload = {

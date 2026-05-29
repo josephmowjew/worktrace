@@ -178,7 +178,9 @@ pub struct ReportPolishResult {
     pub provider: String,
     pub model: String,
     pub used_fallback: bool,
+    pub fallback_reason: String,
     pub message: String,
+    pub diagnostics: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
