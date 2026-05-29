@@ -7,6 +7,7 @@ import { useEscapeKey } from "../../hooks/useEscapeKey";
 import type { Project } from "../../types/project";
 import type { ActivityType, CreateManualLogInput } from "../../types/manualLog";
 import { Button } from "./Button";
+import { DatePicker } from "./DatePicker";
 import { ModalShell } from "./ModalShell";
 import { SelectField } from "./SelectField";
 
@@ -94,7 +95,17 @@ export function QuickManualLogModal({
         >
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Date" error={form.formState.errors.date?.message}>
-              <input type="date" className={inputClass} {...form.register("date")} />
+              <DatePicker
+                value={form.watch("date")}
+                onChange={(value) =>
+                  form.setValue("date", value, {
+                    shouldDirty: true,
+                    shouldValidate: true,
+                  })
+                }
+                label="Log"
+                subtitle="Manual log date"
+              />
             </Field>
             <Field label="Duration">
               <input
@@ -154,13 +165,13 @@ export function QuickManualLogModal({
             />
           </Field>
 
-          <label className="flex items-center gap-3 rounded-xl border border-white/10 bg-slate-950/45 px-3 py-2 text-sm text-slate-300">
+          <label className="flex items-center gap-3 rounded-xl border border-[var(--wt-border)] bg-[var(--wt-surface-muted)] px-3 py-2 text-sm text-[var(--wt-text)]">
             <input type="checkbox" className="h-4 w-4 accent-blue-500" {...form.register("includedInReport")} />
             Include in weekly report
           </label>
 
           {error ? (
-            <div className="rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-xs text-red-100">
+            <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-600 dark:text-red-100">
               {error}
             </div>
           ) : null}
@@ -189,10 +200,10 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <label className="grid gap-2 text-xs font-semibold text-slate-300">
+    <label className="grid gap-2 text-xs font-semibold text-[var(--wt-text-muted)]">
       {label}
       {children}
-      {error ? <span className="text-[11px] text-red-300">{error}</span> : null}
+      {error ? <span className="text-[11px] text-red-500">{error}</span> : null}
     </label>
   );
 }
@@ -226,4 +237,4 @@ function toInput(values: FormValues): CreateManualLogInput {
 }
 
 const inputClass =
-  "h-10 w-full rounded-xl border border-white/10 bg-slate-950/75 px-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-blue-300/50 focus:ring-2 focus:ring-blue-500/15";
+  "wt-input h-10 w-full rounded-xl px-3 text-sm transition-[border-color,box-shadow,background-color]";

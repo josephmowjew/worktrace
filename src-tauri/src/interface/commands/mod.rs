@@ -10,9 +10,9 @@ pub mod git_sync;
 pub mod github;
 pub mod manual_logs;
 pub mod nudges;
+pub mod priority_reminders;
 pub mod project_stats;
 pub mod projects;
-pub mod priority_reminders;
 pub mod reports;
 pub mod settings;
 pub mod sparc_force;
@@ -153,6 +153,12 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         windows::toggle_quick_capture,
         windows::get_quick_capture_status,
         windows::configure_quick_capture_shortcut,
+        windows::get_desktop_lifecycle_status,
+        windows::configure_desktop_lifecycle,
+        windows::show_main_window,
+        windows::hide_main_window_to_tray,
+        windows::quit_app,
+        windows::request_tray_sync,
         workspaces::list_workspaces,
         workspaces::create_workspace,
         workspaces::update_workspace,

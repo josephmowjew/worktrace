@@ -13,7 +13,7 @@ import { SelectField } from "./SelectField";
 import { useToast } from "./ToastProvider";
 
 const projectSchema = z.object({
-  name: z.string().trim().min(1, "Project name is required"),
+  name: z.string().trim().min(1, "Repository name is required"),
   description: z.string().trim().optional(),
   repoPath: z.string().trim().optional(),
   githubUrl: z
@@ -160,15 +160,15 @@ export function ProjectFormPanel({
           <div>
             <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-blue-300/15 bg-blue-300/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-blue-200">
               <FolderKanban className="h-3.5 w-3.5" />
-              {isEditing ? "Edit Project" : "New Project"}
+              {isEditing ? "Edit Repository" : "Add Repository"}
             </div>
             <h2 className="text-lg font-semibold text-white">
-              {isEditing ? "Modify Project Details" : "Register a New Source"}
+              {isEditing ? "Modify Repository Details" : "Register a New Source"}
             </h2>
             <p className="mt-1 text-xs text-slate-400">
               {isEditing
-                ? "Update project settings and repository configuration."
-                : "Use the native picker or paste a local repository path. Git-backed projects auto-sync on save."}
+                ? "Update repository settings and source configuration."
+                : "Use the native picker or paste a local repository path. Git-backed repositories auto-sync on save."}
             </p>
           </div>
           <Button variant="ghost" onClick={onCancel} aria-label="Close form" className="shrink-0">
@@ -179,7 +179,7 @@ export function ProjectFormPanel({
         <form className="space-y-4 p-5" onSubmit={form.handleSubmit(submit)}>
           <div className="grid gap-4 sm:grid-cols-2">
             <TextField
-              label="Project Name"
+              label="Repository Name"
               placeholder="Sparc Force API"
               error={form.formState.errors.name?.message}
               {...form.register("name")}
@@ -222,7 +222,7 @@ export function ProjectFormPanel({
             />
 
             <label className="grid gap-2 text-xs font-semibold text-slate-300">
-              Project Type
+              Repository Type
               <SelectField
                 control={form.control}
                 name="projectType"
@@ -267,7 +267,7 @@ export function ProjectFormPanel({
               Cancel
             </Button>
             <Button type="submit" variant="primary" className="flex-1 py-2.5" disabled={isSaving}>
-              {isSaving ? "Saving..." : isEditing ? "Save Changes" : "Create Project"}
+              {isSaving ? "Saving..." : isEditing ? "Save Changes" : "Add Repository"}
             </Button>
           </div>
         </form>

@@ -157,9 +157,9 @@ fn validate_update(input: &UpdateSettingsInput) -> Result<(), SettingsServiceErr
     }
 
     if let Some(theme) = &input.theme {
-        if !["dark", "system"].contains(&theme.as_str()) {
+        if !["dark", "light", "system"].contains(&theme.as_str()) {
             return Err(SettingsServiceError::Validation(
-                "Theme must be dark or system".to_string(),
+                "Theme must be dark, light, or system".to_string(),
             ));
         }
     }
@@ -575,6 +575,15 @@ fn merge_settings(mut settings: Settings, input: &UpdateSettingsInput) -> Settin
     if let Some(value) = input.quick_capture_include_in_report {
         settings.quick_capture_include_in_report = value;
     }
+    if let Some(value) = input.startup_enabled {
+        settings.startup_enabled = value;
+    }
+    if let Some(value) = input.start_minimized_to_tray {
+        settings.start_minimized_to_tray = value;
+    }
+    if let Some(value) = input.minimize_to_tray_on_close {
+        settings.minimize_to_tray_on_close = value;
+    }
     if let Some(value) = input.priority_reminders_enabled {
         settings.priority_reminders_enabled = value;
     }
@@ -708,6 +717,9 @@ fn update_input_from_settings(settings: Settings) -> UpdateSettingsInput {
         quick_capture_enabled: Some(settings.quick_capture_enabled),
         quick_capture_shortcut: Some(settings.quick_capture_shortcut),
         quick_capture_include_in_report: Some(settings.quick_capture_include_in_report),
+        startup_enabled: Some(settings.startup_enabled),
+        start_minimized_to_tray: Some(settings.start_minimized_to_tray),
+        minimize_to_tray_on_close: Some(settings.minimize_to_tray_on_close),
         priority_reminders_enabled: Some(settings.priority_reminders_enabled),
         priority_reminder_desktop_enabled: Some(settings.priority_reminder_desktop_enabled),
         priority_reminder_checkpoints: Some(settings.priority_reminder_checkpoints),
@@ -769,7 +781,7 @@ mod tests {
                 default_report_template: Some("project_based".to_string()),
                 working_days: Some(vec!["monday".to_string(), "friday".to_string()]),
                 daily_work_minutes: Some(420),
-                theme: Some("system".to_string()),
+                theme: Some("light".to_string()),
                 backup_enabled: Some(true),
                 backup_schedule: Some("weekly".to_string()),
                 backup_time: Some("18:30".to_string()),
@@ -789,7 +801,7 @@ mod tests {
         .expect("update settings");
 
         assert_eq!(updated.name, "Joseph");
-        assert_eq!(updated.theme, "system");
+        assert_eq!(updated.theme, "light");
         assert!(updated.backup_enabled);
         assert_eq!(updated.backup_schedule, "weekly");
         assert_eq!(updated.daily_work_minutes, 420);

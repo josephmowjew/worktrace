@@ -29,22 +29,22 @@ export function TitleBar() {
         { action: handleMaximize, icon: Square, label: "Maximize", color: "hover:bg-green-500" },
       ]
     : [
-        { action: handleMinimize, icon: Minus, label: "Minimize", color: "hover:bg-white/10" },
-        { action: handleMaximize, icon: Square, label: "Maximize", color: "hover:bg-white/10" },
+        { action: handleMinimize, icon: Minus, label: "Minimize", color: "hover:bg-[var(--wt-surface-hover)]" },
+        { action: handleMaximize, icon: Square, label: "Maximize", color: "hover:bg-[var(--wt-surface-hover)]" },
         { action: handleClose, icon: X, label: "Close", color: "hover:bg-red-500" },
       ];
 
   return (
     <div
-      className="relative z-50 flex h-9 items-center justify-between border-b border-white/10 bg-[#07111f]/95 backdrop-blur-xl"
+      className="relative z-50 flex h-9 items-center justify-between border-b border-[var(--wt-border)] bg-[var(--wt-surface-strong)]"
       data-tauri-drag-region
     >
       <div className="flex items-center gap-2 pl-4" data-tauri-drag-region>
         <img src="/worktrace-icon.svg" alt="" className="h-5 w-5 rounded-md" draggable={false} />
-        <span className="text-xs font-medium text-slate-300" data-tauri-drag-region>
+        <span className="text-xs font-medium text-[var(--wt-text-strong)]" data-tauri-drag-region>
           WorkTrace
         </span>
-        <span className="hidden text-[10px] text-slate-500 sm:inline" data-tauri-drag-region>
+        <span className="hidden text-[10px] text-[var(--wt-text-faint)] sm:inline" data-tauri-drag-region>
           {appSignature.developerCredit}
         </span>
       </div>
@@ -54,7 +54,7 @@ export function TitleBar() {
           <button
             key={control.label}
             onClick={control.action}
-            className={`flex h-9 w-12 items-center justify-center text-slate-400 transition-colors ${control.color}`}
+            className={`flex h-9 w-12 items-center justify-center text-[var(--wt-text-muted)] transition-colors ${control.color}`}
             title={control.label}
           >
             <control.icon className="h-3.5 w-3.5" />

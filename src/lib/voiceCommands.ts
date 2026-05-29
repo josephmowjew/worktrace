@@ -90,7 +90,8 @@ function parseNavigation(normalized: string): NormalizedVoiceCommand | null {
   const routes: Record<string, { path: string; label: string }> = {
     today: { path: "/", label: "Go to Today" },
     dashboard: { path: "/dashboard", label: "Go to Dashboard" },
-    projects: { path: "/projects", label: "Go to Projects" },
+    projects: { path: "/projects", label: "Go to Repositories" },
+    repositories: { path: "/projects", label: "Go to Repositories" },
     "activity timeline": { path: "/activity", label: "Go to Activity Timeline" },
     activity: { path: "/activity", label: "Go to Activity Timeline" },
     backup: { path: "/backup", label: "Go to Backup" },

@@ -10,10 +10,10 @@ export function AreaChart({
   if (data.length === 0) {
     return (
       <div
-        className="flex items-center justify-center rounded-xl border border-dashed border-white/8 bg-white/[0.02]"
+        className="flex items-center justify-center rounded-xl border border-dashed border-[var(--wt-border-strong)] bg-[var(--wt-surface-muted)]"
         style={{ height }}
       >
-        <p className="text-xs text-slate-500">No activity data for this week</p>
+        <p className="text-xs text-[var(--wt-text-muted)]">No activity data for this week</p>
       </div>
     );
   }
@@ -40,8 +40,8 @@ export function AreaChart({
     >
       <defs>
         <linearGradient id="areaGradient" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.4" />
-          <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.02" />
+          <stop offset="0%" stopColor="var(--wt-chart-fill-start)" />
+          <stop offset="100%" stopColor="var(--wt-chart-fill-end)" />
         </linearGradient>
       </defs>
 
@@ -54,14 +54,14 @@ export function AreaChart({
               y1={y}
               x2={chartWidth - padding.right}
               y2={y}
-              stroke="rgba(255,255,255,0.06)"
+              stroke="var(--wt-chart-grid)"
               strokeWidth="1"
             />
             <text
               x={padding.left - 8}
               y={y + 4}
               textAnchor="end"
-              fill="rgba(148,163,184,0.6)"
+              fill="var(--wt-chart-label)"
               fontSize="10"
             >
               {tick}h
@@ -71,16 +71,16 @@ export function AreaChart({
       })}
 
       <path d={areaPath} fill="url(#areaGradient)" />
-      <path d={linePath} fill="none" stroke="#3b82f6" strokeWidth="2" />
+      <path d={linePath} fill="none" stroke="var(--wt-accent)" strokeWidth="2" />
 
       {points.map((p, i) => (
         <g key={i}>
-          <circle cx={p.x} cy={p.y} r="4" fill="#1e3a5f" stroke="#3b82f6" strokeWidth="2" />
+          <circle cx={p.x} cy={p.y} r="4" fill="var(--wt-chart-point)" stroke="var(--wt-accent)" strokeWidth="2" />
           <text
             x={p.x}
             y={padding.top + chartHeight + 18}
             textAnchor="middle"
-            fill="rgba(148,163,184,0.6)"
+            fill="var(--wt-chart-label)"
             fontSize="10"
           >
             {data[i].day}
@@ -89,7 +89,7 @@ export function AreaChart({
             x={p.x}
             y={p.y - 10}
             textAnchor="middle"
-            fill="rgba(226,232,240,0.8)"
+            fill="var(--wt-text-strong)"
             fontSize="10"
             fontWeight="500"
           >

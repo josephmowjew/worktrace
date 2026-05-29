@@ -127,7 +127,7 @@ export function CategoryLegend({
       ))}
       <div className="border-t border-white/8 pt-2">
         <div className="flex items-center justify-between text-xs">
-          <span className="font-semibold text-slate-300">Total Projects</span>
+          <span className="font-semibold text-slate-300">Active Repos</span>
           <span className="text-lg font-semibold text-white">{total}</span>
         </div>
       </div>

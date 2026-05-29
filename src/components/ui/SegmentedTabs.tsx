@@ -21,7 +21,7 @@ export function SegmentedTabs<T extends string>({
 }) {
   return (
     <div
-      className={`rounded-2xl border border-white/10 bg-gradient-to-r from-[#071127] via-[#0a1730] to-[#071127] p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_18px_50px_rgba(2,6,23,0.42)] ${className}`}
+      className={`rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface)] p-2 shadow-[var(--wt-control-shadow)] ${className}`}
     >
       <div className="flex flex-wrap gap-2">
         {items.map((tab) => {
@@ -33,19 +33,19 @@ export function SegmentedTabs<T extends string>({
               type="button"
               onClick={() => onChange(tab.id)}
               className={[
-                "relative min-w-[112px] rounded-xl px-4 py-2.5 text-sm font-medium transition-[color,background-color,box-shadow,border-color] duration-150",
+                "relative min-w-[112px] rounded-xl px-4 py-2.5 text-sm font-medium outline-none transition-[color,background-color,box-shadow,border-color] duration-150 focus-visible:ring-2 focus-visible:ring-blue-400/45 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--wt-bg)]",
                 fullWidth ? "flex-1" : "",
                 "flex items-center justify-center gap-2 border",
                 isActive
-                  ? "border-blue-300/35 bg-blue-500/16 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.14),0_10px_24px_rgba(37,99,235,0.20)]"
-                  : "border-transparent text-slate-300 hover:border-white/12 hover:bg-white/6 hover:text-slate-100",
+                  ? "border-blue-500/24 bg-[var(--wt-selected)] text-[var(--wt-accent-text)] shadow-[var(--wt-control-shadow)]"
+                  : "border-transparent text-[var(--wt-text-muted)] hover:border-[var(--wt-border)] hover:bg-[var(--wt-surface-muted)] hover:text-[var(--wt-text-strong)]",
               ].join(" ")}
               aria-pressed={isActive}
             >
               {Icon ? <Icon className="h-4 w-4" /> : null}
               <span>{tab.label}</span>
               {isActive ? (
-                <span className="absolute inset-x-4 -bottom-2 h-0.5 rounded-full bg-cyan-300" />
+                <span className="absolute inset-x-4 -bottom-2 h-0.5 rounded-full bg-blue-500" />
               ) : null}
             </button>
           );

@@ -4,13 +4,13 @@ import type { WeeklyTask } from "../../types/weeklyTask";
 function getPriorityBadge(priority: string): { label: string; color: string } {
   switch (priority) {
     case "high":
-      return { label: "High", color: "border-red-300/20 bg-red-500/10 text-red-200" };
+      return { label: "High", color: "border-red-500/20 bg-red-500/10 text-red-600" };
     case "normal":
-      return { label: "Medium", color: "border-orange-300/20 bg-orange-500/10 text-orange-200" };
+      return { label: "Medium", color: "border-orange-500/20 bg-orange-500/10 text-orange-600" };
     case "low":
-      return { label: "Low", color: "border-blue-300/20 bg-blue-500/10 text-blue-200" };
+      return { label: "Low", color: "border-blue-500/20 bg-blue-500/10 text-blue-600" };
     default:
-      return { label: "Medium", color: "border-orange-300/20 bg-orange-500/10 text-orange-200" };
+      return { label: "Medium", color: "border-orange-500/20 bg-orange-500/10 text-orange-600" };
   }
 }
 
@@ -19,7 +19,7 @@ export function BlockersPanel({ tasks }: { tasks: WeeklyTask[] }) {
 
   if (blockers.length === 0) {
     return (
-      <div className="flex h-32 items-center justify-center text-xs text-slate-500">
+      <div className="flex h-32 items-center justify-center text-xs text-[var(--wt-text-muted)]">
         No blockers - keep shipping!
       </div>
     );
@@ -33,18 +33,18 @@ export function BlockersPanel({ tasks }: { tasks: WeeklyTask[] }) {
         return (
           <div
             key={task.id}
-            className="flex items-start gap-3 rounded-xl border border-white/8 bg-slate-950/35 p-3"
+            className="flex items-start gap-3 rounded-xl border border-[var(--wt-border)] bg-[var(--wt-surface-muted)] p-3"
           >
-            <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-red-500/15 text-red-200">
+            <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-red-500/10 text-red-600">
               <AlertTriangle className="h-3.5 w-3.5" />
             </div>
 
             <div className="min-w-0 flex-1">
-              <p className="truncate text-xs font-medium text-slate-200">
+              <p className="truncate text-xs font-medium text-[var(--wt-text-strong)]">
                 {task.title}
               </p>
               {task.projectName && (
-                <p className="truncate text-[10px] text-slate-500">
+                <p className="truncate text-[10px] text-[var(--wt-text-muted)]">
                   {task.projectName}
                 </p>
               )}

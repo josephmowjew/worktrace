@@ -110,6 +110,33 @@ npm run tauri:build
 5. Put persistence code in `src-tauri/src/infrastructure/database/repositories.rs`.
 6. Update TypeScript types in `src/types/*` when Rust DTOs or command payloads change.
 
+## Commit Style
+
+WorkTrace turns commit history into activity summaries and weekly reports, so commit messages are part of the product experience. Prefer focused commits with clear scopes:
+
+```text
+feat(activity): group related commits into editable work items
+fix(updater): publish signed Windows artifact in latest manifest
+docs(readme): clarify local-first reporting behavior
+```
+
+Use a short body when a commit spans several files or behaviors:
+
+```text
+feat(reports): render grouped activity in weekly reports
+
+- Add persisted activity group records
+- Render group titles before raw commit evidence
+- Keep report AI context aligned with deterministic reports
+```
+
+Guidelines:
+
+- Keep one coherent work item per commit.
+- Use scopes that match product areas, such as `activity`, `reports`, `weekly-plan`, `settings`, `sync`, `sparc-force`, `updater`, `calendar`, or `backup`.
+- Split unrelated tests, docs, release packaging, and refactors into separate commits when they represent different workstreams.
+- Avoid vague subjects like `updates`, `fix stuff`, or `WIP`; they make activity grouping and reports less useful.
+
 ## Verification
 
 Run TypeScript and Vite build checks:

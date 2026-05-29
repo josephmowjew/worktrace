@@ -56,13 +56,13 @@ import { gravatarUrl } from "../../lib/gravatar";
 
 const navItems = [
   { label: "Today", href: "/", icon: Home },
-  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  { label: "Projects", href: "/projects", icon: FolderKanban },
-  { label: "Activity Timeline", href: "/activity", icon: Activity },
-  { label: "Backup", href: "/backup", icon: DatabaseBackup },
-  { label: "Manual Log", href: "/manual-log", icon: ClipboardEdit },
   { label: "Weekly Plan", href: "/weekly-plan", icon: ListChecks },
+  { label: "Manual Log", href: "/manual-log", icon: ClipboardEdit },
+  { label: "Activity Timeline", href: "/activity", icon: Activity },
   { label: "Reports", href: "/reports", icon: BarChart3 },
+  { label: "Repositories", href: "/projects", icon: FolderKanban },
+  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+  { label: "Backup", href: "/backup", icon: DatabaseBackup },
   { label: "Guide", href: "/guide", icon: BookOpen },
   { label: "Settings", href: "/settings", icon: Settings },
 ];
@@ -429,6 +429,39 @@ export function AppLayout({ children }: PropsWithChildren) {
   }, [queryClient]);
 
   useEffect(() => {
+    let unlistenSettings: (() => void) | undefined;
+    let unlistenSync: (() => void) | undefined;
+    let unlistenLifecycle: (() => void) | undefined;
+
+    listen("tray://open-settings", () => {
+      navigate("/settings");
+    }).then((dispose) => {
+      unlistenSettings = dispose;
+    }).catch(() => {});
+
+    listen("tray://sync-projects", () => {
+      if (!commandSyncMutation.isPending) {
+        commandSyncMutation.mutate();
+      }
+    }).then((dispose) => {
+      unlistenSync = dispose;
+    }).catch(() => {});
+
+    listen("tray://lifecycle-changed", () => {
+      queryClient.invalidateQueries({ queryKey: ["settings"] });
+      queryClient.invalidateQueries({ queryKey: ["desktopLifecycleStatus"] });
+    }).then((dispose) => {
+      unlistenLifecycle = dispose;
+    }).catch(() => {});
+
+    return () => {
+      unlistenSettings?.();
+      unlistenSync?.();
+      unlistenLifecycle?.();
+    };
+  }, [commandSyncMutation, navigate, queryClient]);
+
+  useEffect(() => {
     if (!hasSyncableProjects) {
       return;
     }
@@ -463,28 +496,33 @@ export function AppLayout({ children }: PropsWithChildren) {
   }, [commandSparcForceSyncMutation, sparcForceAvailable, sparcForceStatusQuery.data?.connected]);
 
   return (
-    <div className="h-screen overflow-hidden bg-[#06101d] text-slate-100">
-      <div className="fixed inset-0 bg-[radial-gradient(circle_at_18%_12%,rgba(37,99,235,0.32),transparent_28%),radial-gradient(circle_at_86%_20%,rgba(20,184,166,0.18),transparent_25%),radial-gradient(circle_at_50%_100%,rgba(14,165,233,0.1),transparent_30%),linear-gradient(135deg,#050b14_0%,#09182a_46%,#06101d_100%)]" />
-      <div className="fixed inset-0 bg-[linear-gradient(rgba(255,255,255,0.025)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:42px_42px] opacity-30" />
+    <div className="h-screen overflow-hidden bg-[var(--wt-bg)] text-[var(--wt-text)]">
+      <div
+        className="fixed inset-0"
+        style={{
+          background:
+            "linear-gradient(135deg, var(--wt-bg) 0%, var(--wt-bg-elevated) 52%, var(--wt-bg) 100%)",
+        }}
+      />
       <div className="relative flex h-screen flex-col overflow-hidden">
         <TitleBar />
         <div className="flex min-h-0 flex-1 overflow-hidden">
-          <aside className="m-2 mt-0 hidden min-h-0 w-[236px] shrink-0 flex-col rounded-lg border border-white/10 bg-slate-950/70 p-3 shadow-2xl shadow-blue-950/30 backdrop-blur-2xl lg:flex">
-            <div className="mb-5 rounded-2xl border border-white/8 bg-white/[0.035] p-3">
+          <aside className="m-2 mt-0 hidden min-h-0 w-[236px] shrink-0 flex-col rounded-lg border border-[var(--wt-border)] bg-[var(--wt-shell)] p-3 shadow-[var(--wt-panel-shadow)] lg:flex">
+            <div className="mb-5 rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface)] p-3 shadow-[var(--wt-control-shadow)]">
               <div className="flex items-center gap-2.5">
                 <img
                   src="/worktrace-icon.svg"
                   alt=""
-                  className="h-10 w-10 rounded-xl object-contain shadow-lg shadow-blue-500/20"
+                  className="h-10 w-10 rounded-xl object-contain shadow-sm"
                   draggable={false}
                 />
                 <div>
                   <p className="text-base font-semibold tracking-tight">WorkTrace</p>
-                  <p className="text-[10px] text-slate-500">Track. Focus. Deliver.</p>
+                  <p className="text-[10px] text-[var(--wt-text-muted)]">Track. Focus. Deliver.</p>
                 </div>
               </div>
-              <div className="mt-3 h-1.5 rounded-full bg-slate-900">
-                <div className="h-full w-2/3 rounded-full bg-gradient-to-r from-blue-500 to-cyan-300 shadow-lg shadow-cyan-400/20" />
+              <div className="mt-3 h-1.5 rounded-full bg-[var(--wt-surface-muted)]">
+                <div className="h-full w-2/3 rounded-full bg-blue-500" />
               </div>
             </div>
 
@@ -498,20 +536,20 @@ export function AppLayout({ children }: PropsWithChildren) {
                     [
                       "group relative flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-semibold transition-all duration-150",
                       isActive
-                        ? "bg-blue-600/25 text-white shadow-lg shadow-blue-500/20"
-                        : "text-slate-400 hover:bg-white/10 hover:text-slate-200",
+                        ? "bg-[var(--wt-selected)] text-[var(--wt-accent-text)] shadow-[var(--wt-control-shadow)]"
+                        : "text-[var(--wt-text-muted)] hover:bg-[var(--wt-surface-hover)] hover:text-[var(--wt-text-strong)]",
                     ].join(" ")
                   }
                 >
                   {({ isActive }) => (
                     <>
                       {isActive ? (
-                        <span className="absolute inset-y-2 left-0 w-1 rounded-r-full bg-cyan-300" />
+                        <span className="absolute inset-y-2 left-0 w-1 rounded-r-full bg-blue-500" />
                       ) : null}
                       <item.icon
                         className={[
                           "h-4 w-4",
-                          isActive ? "text-cyan-200" : "text-slate-500",
+                          isActive ? "text-[var(--wt-accent-text)]" : "text-[var(--wt-text-faint)]",
                         ].join(" ")}
                       />
                       {item.label}
@@ -521,17 +559,17 @@ export function AppLayout({ children }: PropsWithChildren) {
               ))}
             </nav>
 
-            <div className="mt-3 overflow-hidden rounded-lg border border-cyan-300/15 bg-cyan-400/10 p-3 shadow-xl shadow-cyan-950/20">
-              <div className="mb-3 flex items-center gap-1.5 text-xs text-cyan-300/80">
+            <div className="mt-3 overflow-hidden rounded-lg border border-blue-500/15 bg-[var(--wt-accent-soft)] p-3 shadow-[var(--wt-control-shadow)]">
+              <div className="mb-3 flex items-center gap-1.5 text-xs text-[var(--wt-accent-text)]">
                 <Activity className="h-3.5 w-3.5" />
                 This Week
               </div>
               <p className="text-2xl font-semibold">{activityItems.length}</p>
-              <p className="mt-0.5 text-xs text-slate-500">
+              <p className="mt-0.5 text-xs text-[var(--wt-text-muted)]">
                 {commitCount} commits / {manualCount} manual
               </p>
               {hasSyncableProjects ? (
-                <p className="mt-1 text-[10px] text-cyan-200/70">
+                <p className="mt-1 text-[10px] text-[var(--wt-accent-text)]">
                   Auto-sync every 5 min
                 </p>
               ) : null}
@@ -539,7 +577,7 @@ export function AppLayout({ children }: PropsWithChildren) {
                 {[35, 62, 48, 76, 52, 28, 42].map((height, index) => (
                   <span
                     key={index}
-                    className="rounded-t bg-gradient-to-t from-blue-500/30 to-cyan-300/60"
+                    className="rounded-t bg-blue-400/70"
                     style={{ height: `${height}%` }}
                   />
                 ))}
@@ -550,7 +588,7 @@ export function AppLayout({ children }: PropsWithChildren) {
               type="button"
               onClick={() => widgetMutation.mutate()}
               disabled={widgetMutation.isPending}
-              className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-blue-300/20 bg-blue-500/15 px-3 py-2.5 text-xs font-semibold text-blue-100 shadow-lg shadow-blue-950/20 transition hover:border-blue-300/35 hover:bg-blue-500/25 disabled:opacity-60"
+              className="mt-3 flex w-full min-h-10 items-center justify-center gap-2 rounded-xl border border-blue-500/18 bg-[var(--wt-selected)] px-3 py-2.5 text-xs font-semibold text-[var(--wt-accent-text)] shadow-[var(--wt-control-shadow)] transition-[background-color,border-color,transform] duration-150 hover:border-blue-500/30 hover:bg-[var(--wt-accent-soft)] active:scale-[0.96] disabled:scale-100 disabled:opacity-60"
             >
               <ListTodo className="h-4 w-4" />
               {widgetMutation.isPending ? "Opening..." : "Todo Widget"}
@@ -560,10 +598,10 @@ export function AppLayout({ children }: PropsWithChildren) {
               href={appSignature.developerProfileUrl}
               target="_blank"
               rel="noreferrer"
-              className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-white/8 bg-white/[0.03] px-3 py-2 text-[10px] text-slate-500 transition hover:border-cyan-300/20 hover:bg-cyan-300/5 hover:text-cyan-100"
+              className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-[var(--wt-border)] bg-[var(--wt-surface)] px-3 py-2 text-[10px] text-[var(--wt-text-muted)] transition-[background-color,border-color,color] duration-150 hover:border-blue-500/20 hover:bg-[var(--wt-surface-hover)] hover:text-[var(--wt-accent-text)]"
             >
               <span className="min-w-0">
-                <span className="block truncate font-semibold text-slate-300">
+                <span className="block truncate font-semibold text-[var(--wt-text-strong)]">
                   {appSignature.developerCredit}
                 </span>
                 <span className="block truncate">GitHub profile</span>
@@ -589,7 +627,7 @@ export function AppLayout({ children }: PropsWithChildren) {
               </div>
             ) : null}
 
-            <nav className="mb-3 flex shrink-0 gap-2 overflow-x-auto rounded-lg border border-white/10 bg-slate-950/55 p-2 shadow-lg shadow-black/10 backdrop-blur-xl lg:hidden">
+            <nav className="mb-3 flex shrink-0 gap-2 overflow-x-auto rounded-lg border border-[var(--wt-border)] bg-[var(--wt-surface)] p-2 shadow-[var(--wt-control-shadow)] lg:hidden">
               {navItems.map((item) => (
                 <NavLink
                   key={item.href}
@@ -601,8 +639,8 @@ export function AppLayout({ children }: PropsWithChildren) {
                     [
                       "flex h-10 min-w-10 items-center justify-center rounded-md border px-3 text-xs font-semibold transition",
                       isActive
-                        ? "border-blue-300/30 bg-blue-500 text-white shadow-lg shadow-blue-500/20"
-                        : "border-white/8 bg-white/[0.03] text-slate-400 hover:bg-white/10 hover:text-slate-100",
+                        ? "border-blue-500/30 bg-blue-600 text-white shadow-[var(--wt-primary-shadow)]"
+                        : "border-[var(--wt-border)] bg-[var(--wt-input)] text-[var(--wt-text-muted)] hover:bg-[var(--wt-surface-hover)] hover:text-[var(--wt-text-strong)]",
                     ].join(" ")
                   }
                 >
@@ -612,8 +650,8 @@ export function AppLayout({ children }: PropsWithChildren) {
               ))}
             </nav>
             <header className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5 rounded-xl border border-white/10 bg-slate-950/50 px-3 py-2 text-xs text-slate-400 shadow-lg shadow-black/10 backdrop-blur-xl">
-                <CalendarDays className="h-4 w-4 text-blue-400/60" />
+              <div className="wt-control flex items-center gap-2.5 rounded-xl px-3 py-2 text-xs text-[var(--wt-text-muted)]">
+                <CalendarDays className="h-4 w-4 text-[var(--wt-accent-text)]" />
                 {weekRange.label}
               </div>
 
@@ -622,15 +660,15 @@ export function AppLayout({ children }: PropsWithChildren) {
                   <button
                     type="button"
                     onClick={() => setIsHelpMenuOpen((open) => !open)}
-                    className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/50 px-3 py-2 text-xs font-semibold text-slate-200 shadow-lg shadow-black/10 backdrop-blur-xl transition hover:bg-white/10"
+                    className="wt-control inline-flex min-h-10 items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold"
                   >
                     <HelpCircle className="h-4 w-4" />
                     Help
                   </button>
                   {isHelpMenuOpen ? (
-                    <div className="absolute right-0 z-20 mt-2 w-72 rounded-xl border border-white/10 bg-slate-950/95 p-2 shadow-2xl">
-                      <p className="rounded-lg px-2 py-1.5 text-[11px] text-slate-400">
-                        Current version: <span className="font-semibold text-slate-200">{appVersionQuery.data?.version ?? "Unavailable"}</span>
+                    <div className="absolute right-0 z-20 mt-2 w-72 rounded-xl border border-[var(--wt-border)] bg-[var(--wt-surface)] p-2 shadow-[var(--wt-panel-shadow)]">
+                      <p className="rounded-lg px-2 py-1.5 text-[11px] text-[var(--wt-text-muted)]">
+                        Current version: <span className="font-semibold text-[var(--wt-text-strong)]">{appVersionQuery.data?.version ?? "Unavailable"}</span>
                       </p>
                       <button
                         type="button"
@@ -638,9 +676,9 @@ export function AppLayout({ children }: PropsWithChildren) {
                           setIsWhatsNewOpen(true);
                           setIsHelpMenuOpen(false);
                         }}
-                        className="mt-1 flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs text-slate-200 transition hover:bg-white/10"
+                        className="mt-1 flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs text-[var(--wt-text)] transition hover:bg-[var(--wt-surface-hover)]"
                       >
-                        <ArrowUpCircle className="h-4 w-4 text-cyan-300" />
+                        <ArrowUpCircle className="h-4 w-4 text-[var(--wt-accent-text)]" />
                         What's New
                       </button>
                       <button
@@ -662,7 +700,7 @@ export function AppLayout({ children }: PropsWithChildren) {
                           })
                         }
                         disabled={checkForUpdateMutation.isPending}
-                        className="mt-1 flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs text-slate-200 transition hover:bg-white/10 disabled:opacity-60"
+                        className="mt-1 flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs text-[var(--wt-text)] transition hover:bg-[var(--wt-surface-hover)] disabled:opacity-60"
                       >
                         <RefreshCw className="h-4 w-4 text-blue-300" />
                         Check for updates
@@ -674,12 +712,12 @@ export function AppLayout({ children }: PropsWithChildren) {
                   type="button"
                   onClick={() => widgetMutation.mutate()}
                   disabled={widgetMutation.isPending}
-                  className="inline-flex items-center gap-2 rounded-xl border border-blue-300/20 bg-blue-500/15 px-3 py-2 text-xs font-semibold text-blue-100 shadow-lg shadow-black/10 backdrop-blur-xl transition hover:border-blue-300/35 hover:bg-blue-500/25 disabled:opacity-60"
+                  className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-blue-500/18 bg-[var(--wt-selected)] px-3 py-2 text-xs font-semibold text-[var(--wt-accent-text)] shadow-[var(--wt-control-shadow)] transition-[background-color,border-color,transform] duration-150 hover:border-blue-500/30 hover:bg-[var(--wt-accent-soft)] active:scale-[0.96] disabled:scale-100 disabled:opacity-60"
                 >
                   <ListTodo className="h-4 w-4" />
                   Widget
                 </button>
-                <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/50 px-3 py-2 shadow-lg shadow-black/10 backdrop-blur-xl">
+                <div className="wt-control flex items-center gap-2 rounded-xl px-3 py-2">
                   <ProfileAvatar
                     imageUrl={profileImageUrl}
                     name={settings?.name ?? "John Developer"}
@@ -687,7 +725,7 @@ export function AppLayout({ children }: PropsWithChildren) {
                   />
                   <div className="min-w-0">
                     <p className="truncate text-xs font-medium">{settings?.name ?? "John Developer"}</p>
-                    <p className="truncate text-[10px] text-slate-500">
+                    <p className="truncate text-[10px] text-[var(--wt-text-muted)]">
                       {settings?.email ?? "johndev@worktrace.app"}
                     </p>
                   </div>
@@ -722,23 +760,23 @@ export function AppLayout({ children }: PropsWithChildren) {
         }}
       />
       {isWhatsNewOpen ? (
-        <div className="fixed inset-0 z-[10001] flex items-center justify-center bg-slate-950/75 p-4">
-          <div className="w-full max-w-2xl rounded-xl border border-white/10 bg-slate-950 p-4 shadow-2xl">
+        <div className="fixed inset-0 z-[10001] flex items-center justify-center bg-[var(--wt-overlay)] p-4">
+          <div className="w-full max-w-2xl rounded-xl border border-[var(--wt-border)] bg-[var(--wt-surface)] p-4 shadow-[var(--wt-panel-shadow)]">
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-white">What's New</h2>
-              <button type="button" onClick={() => setIsWhatsNewOpen(false)} className="rounded-lg p-1 text-slate-400 hover:bg-white/10 hover:text-white">
+              <h2 className="text-sm font-semibold text-[var(--wt-text-strong)]">What's New</h2>
+              <button type="button" onClick={() => setIsWhatsNewOpen(false)} className="rounded-lg p-1 text-[var(--wt-text-muted)] hover:bg-[var(--wt-surface-hover)] hover:text-[var(--wt-text-strong)]">
                 <X className="h-4 w-4" />
               </button>
             </div>
             <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
-              {releaseNotesQuery.isLoading ? <p className="text-xs text-slate-400">Loading release notes...</p> : null}
+              {releaseNotesQuery.isLoading ? <p className="text-xs text-[var(--wt-text-muted)]">Loading release notes...</p> : null}
               {(releaseNotesQuery.data?.releases ?? []).map((release) => (
-                <article key={`${release.version}-${release.publishedAt ?? "na"}`} className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
+                <article key={`${release.version}-${release.publishedAt ?? "na"}`} className="rounded-lg border border-[var(--wt-border)] bg-[var(--wt-surface-muted)] p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
-                    <p className="text-xs font-semibold text-cyan-200">{release.version}</p>
-                    <p className="text-[10px] text-slate-500">{release.publishedAt ? new Date(release.publishedAt).toLocaleDateString() : "Unknown date"}</p>
+                    <p className="text-xs font-semibold text-[var(--wt-accent-text)]">{release.version}</p>
+                    <p className="text-[10px] text-[var(--wt-text-muted)]">{release.publishedAt ? new Date(release.publishedAt).toLocaleDateString() : "Unknown date"}</p>
                   </div>
-                  <pre className="whitespace-pre-wrap text-xs text-slate-300">{release.notes || "No notes."}</pre>
+                  <pre className="whitespace-pre-wrap text-xs text-[var(--wt-text)]">{release.notes || "No notes."}</pre>
                 </article>
               ))}
             </div>
@@ -758,7 +796,7 @@ export function AppLayout({ children }: PropsWithChildren) {
                     },
                   })
                 }
-                className="rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-200 hover:bg-white/10"
+                className="rounded-lg border border-[var(--wt-border)] px-3 py-2 text-xs text-[var(--wt-text)] hover:bg-[var(--wt-surface-hover)]"
               >
                 Check for updates
               </button>
@@ -776,7 +814,7 @@ export function AppLayout({ children }: PropsWithChildren) {
                     },
                   })
                 }
-                className="rounded-lg border border-blue-300/30 bg-blue-500/20 px-3 py-2 text-xs text-blue-100 hover:bg-blue-500/30"
+                className="rounded-lg border border-blue-500/30 bg-blue-600 px-3 py-2 text-xs text-white hover:bg-blue-500"
               >
                 Install update
               </button>
@@ -805,7 +843,7 @@ function ProfileAvatar({
   }, [imageUrl]);
 
   return (
-    <div className="grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-full border border-cyan-300/20 bg-gradient-to-br from-cyan-400/25 via-blue-500/15 to-slate-900 text-[11px] font-semibold text-cyan-100">
+    <div className="grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-full border border-blue-500/20 bg-[var(--wt-accent-soft)] text-[11px] font-semibold text-[var(--wt-accent-text)]">
       {imageUrl && !imageFailed ? (
         <img
           src={imageUrl}

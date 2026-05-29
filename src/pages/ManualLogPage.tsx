@@ -239,18 +239,17 @@ export function ManualLogPage() {
 
       <div className="grid min-h-0 gap-4 2xl:grid-cols-[minmax(420px,0.84fr)_minmax(620px,1.16fr)]">
         <Panel className="relative overflow-hidden p-0">
-          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-purple-300/50 to-transparent" />
-          <div className="flex items-center justify-between gap-3 border-b border-white/8 px-5 py-4">
+          <div className="flex items-center justify-between gap-3 border-b border-[var(--wt-border)] px-5 py-4">
             <div className="flex items-center gap-2">
-              <Clock3 className="h-4 w-4 text-purple-300" />
-              <h2 className="text-sm font-semibold text-white">Recent Manual Logs</h2>
+              <Clock3 className="h-4 w-4 text-violet-600 dark:text-purple-300" />
+              <h2 className="text-sm font-semibold text-[var(--wt-text-strong)]">Recent Manual Logs</h2>
             </div>
             <button
               type="button"
               onClick={() =>
                 setSortDirection((current) => (current === "desc" ? "asc" : "desc"))
               }
-              className="inline-flex h-9 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-slate-300 transition hover:border-cyan-300/25 hover:bg-cyan-300/10 hover:text-cyan-100"
+              className="inline-flex h-9 min-w-[132px] items-center justify-center gap-2 rounded-xl border border-[var(--wt-border)] bg-[var(--wt-input)] px-3 text-xs font-semibold text-[var(--wt-text-strong)] shadow-[var(--wt-control-shadow)] transition-[background-color,border-color,color,transform] duration-150 hover:border-blue-500/25 hover:bg-[var(--wt-surface-hover)] hover:text-[var(--wt-accent-text)] active:scale-[0.96]"
             >
               {sortDirection === "desc" ? "Most recent" : "Oldest first"}
               <ArrowRight className="h-3.5 w-3.5" />
@@ -263,22 +262,22 @@ export function ManualLogPage() {
               onClick={clearForm}
               className={`group flex w-full items-center justify-between rounded-2xl border px-4 py-4 text-left transition ${
                 editingLog
-                  ? "border-white/10 bg-white/[0.03] hover:border-purple-300/30"
-                  : "border-purple-300/60 bg-purple-500/10 shadow-lg shadow-purple-500/10"
+                  ? "border-[var(--wt-border)] bg-[var(--wt-surface)] hover:border-violet-500/25"
+                  : "border-violet-500/30 bg-violet-500/10 shadow-[0_10px_24px_rgb(124_58_237/0.10)]"
               }`}
             >
               <span className="flex items-center gap-4">
-                <span className="grid h-12 w-12 place-items-center rounded-2xl border border-purple-300/35 bg-purple-500/20 text-purple-100">
+                <span className="grid h-12 w-12 place-items-center rounded-2xl border border-violet-500/20 bg-violet-500/12 text-violet-600 dark:text-purple-100">
                   <NotebookText className="h-5 w-5" />
                 </span>
                 <span>
-                  <span className="block text-sm font-semibold text-white">New Entry</span>
-                  <span className="mt-1 block text-xs text-slate-400">
+                  <span className="block text-sm font-semibold text-[var(--wt-text-strong)]">New Entry</span>
+                  <span className="mt-1 block text-xs text-[var(--wt-text-muted)]">
                     Create a new manual log
                   </span>
                 </span>
               </span>
-              <ArrowRight className="h-4 w-4 text-slate-500 transition group-hover:translate-x-0.5 group-hover:text-purple-200" />
+              <ArrowRight className="h-4 w-4 text-[var(--wt-text-muted)] transition group-hover:translate-x-0.5 group-hover:text-violet-600" />
             </button>
 
             {logsQuery.isLoading ? (
@@ -286,12 +285,12 @@ export function ManualLogPage() {
                 {[0, 1, 2, 3].map((item) => (
                   <div
                     key={item}
-                    className="h-20 animate-pulse rounded-2xl border border-white/8 bg-white/[0.03]"
+                    className="h-20 animate-pulse rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface-muted)]"
                   />
                 ))}
               </div>
             ) : logsQuery.isError ? (
-              <div className="rounded-2xl border border-red-400/20 bg-red-500/10 p-4 text-sm text-red-100">
+              <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-600 dark:text-red-100">
                 {logsQuery.error instanceof Error
                   ? logsQuery.error.message
                   : "Manual logs could not be loaded."}
@@ -318,16 +317,15 @@ export function ManualLogPage() {
         </Panel>
 
         <Panel className="relative overflow-hidden p-0">
-          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-blue-300/0 via-cyan-300/50 to-blue-300/0" />
-          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/8 px-5 py-4">
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--wt-border)] px-5 py-4">
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-xl font-semibold tracking-tight text-white">
+                <h2 className="text-xl font-semibold tracking-tight text-[var(--wt-text-strong)]">
                   {editingLog ? "Edit Non-Code Work" : "Log Non-Code Work"}
                 </h2>
                 <Badge tone="blue">{editingLog ? "Editing" : "New Entry"}</Badge>
               </div>
-              <p className="mt-1 text-sm text-slate-400">
+              <p className="mt-1 text-sm text-[var(--wt-text-muted)]">
                 Add the details of the work you performed.
               </p>
             </div>
@@ -444,13 +442,13 @@ export function ManualLogPage() {
               />
             </Field>
 
-            <div className="rounded-2xl border border-white/10 bg-slate-950/45 p-4 lg:col-span-2">
+            <div className="rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface-muted)] p-4 lg:col-span-2">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div>
-                  <p className="text-sm font-semibold text-white">
+                  <p className="text-sm font-semibold text-[var(--wt-text-strong)]">
                     Include in weekly report
                   </p>
-                  <p className="mt-1 text-xs text-slate-400">
+                  <p className="mt-1 text-xs text-[var(--wt-text-muted)]">
                     When enabled, this log will be included in your weekly report.
                   </p>
                 </div>
@@ -460,7 +458,7 @@ export function ManualLogPage() {
                     className="peer sr-only"
                     {...form.register("includedInReport")}
                   />
-                  <span className="h-7 w-14 rounded-full border border-white/10 bg-slate-800 transition peer-checked:border-purple-300/40 peer-checked:bg-gradient-to-r peer-checked:from-purple-500 peer-checked:to-blue-500" />
+                  <span className="h-7 w-14 rounded-full border border-[var(--wt-border)] bg-[var(--wt-surface)] transition peer-checked:border-blue-500/40 peer-checked:bg-blue-600" />
                   <span className="absolute left-1 grid h-5 w-5 place-items-center rounded-full bg-white text-slate-700 shadow transition peer-checked:translate-x-7 peer-checked:text-blue-600">
                     <Check className="h-3 w-3" />
                   </span>
@@ -469,7 +467,7 @@ export function ManualLogPage() {
             </div>
 
             {saveMutation.isError ? (
-              <div className="rounded-2xl border border-red-400/20 bg-red-500/10 p-4 text-sm text-red-100 lg:col-span-2">
+              <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-600 dark:text-red-100 lg:col-span-2">
                 {saveMutation.error instanceof Error
                   ? saveMutation.error.message
                   : "Manual log could not be saved."}
@@ -485,7 +483,7 @@ export function ManualLogPage() {
                 type="submit"
                 variant="primary"
                 disabled={saveMutation.isPending}
-                className="min-w-40 bg-gradient-to-r from-blue-600 to-indigo-500 shadow-blue-500/30 hover:from-blue-500 hover:to-indigo-400"
+                className="min-w-40"
               >
                 <Save className="h-4 w-4" />
                 {saveMutation.isPending
@@ -520,7 +518,7 @@ function ManualLogHero({
       title="Manual Log"
       description={`Capture meetings, planning, testing, support, reviews, and other non-code work for ${weekLabel}.`}
       meta={
-        <div className="grid min-w-[340px] gap-3 rounded-xl border border-white/10 bg-slate-950/45 p-3 sm:grid-cols-3">
+        <div className="grid min-w-[340px] gap-3 rounded-xl border border-[var(--wt-border)] bg-[var(--wt-surface-muted)] p-3 sm:grid-cols-3">
           <HeroStat icon={FileText} label="Logs" value={totalLogs.toString()} detail="Total logs" tone="blue" />
           <HeroStat icon={Check} label="Included" value={includedCount.toString()} detail="Included in report" tone="green" />
           <HeroStat icon={Clock3} label="Logged Time" value={formatMinutes(totalMinutes)} detail="This week" tone="orange" />
@@ -544,16 +542,16 @@ function HeroStat({
   tone: IconTone;
 }) {
   return (
-    <div className="flex items-center gap-3 border-white/10 sm:border-r sm:last:border-r-0">
+    <div className="flex items-center gap-3 border-[var(--wt-border)] sm:border-r sm:last:border-r-0">
       <IconBubble tone={tone} size="lg">
         <Icon className="h-5 w-5" />
       </IconBubble>
       <div className="min-w-0">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--wt-text-muted)]">
           {label}
         </p>
-        <p className="mt-1 text-2xl font-semibold text-white">{value}</p>
-        <p className="text-xs text-slate-400">{detail}</p>
+        <p className="mt-1 text-2xl font-semibold text-[var(--wt-text-strong)]">{value}</p>
+        <p className="text-xs text-[var(--wt-text-muted)]">{detail}</p>
       </div>
     </div>
   );
@@ -576,7 +574,7 @@ function ManualLogRow({
   const Icon = activity?.icon ?? NotebookText;
 
   return (
-    <article className="group rounded-2xl border border-white/10 bg-slate-950/35 p-4 shadow-lg shadow-black/10 transition hover:border-cyan-300/25 hover:bg-white/[0.045]">
+    <article className="group rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface)] p-4 shadow-[var(--wt-panel-shadow)] transition hover:border-blue-500/18 hover:bg-[var(--wt-surface-muted)]">
       <div className="flex items-center gap-4">
         <IconBubble tone={activity?.tone ?? "slate"}>
           <Icon className="h-4 w-4" />
@@ -584,42 +582,52 @@ function ManualLogRow({
 
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--wt-text-muted)]">
               {formatDate(log.date)}
             </span>
             <span className="text-slate-700">•</span>
-            <span className="text-xs text-slate-400">
+            <span className="text-xs text-[var(--wt-text-muted)]">
               {activity?.label ?? log.activityType}
             </span>
             {projectName ? (
               <>
                 <span className="text-slate-700">•</span>
-                <span className="truncate text-xs text-slate-500">{projectName}</span>
+                <span className="truncate text-xs text-[var(--wt-text-muted)]">{projectName}</span>
               </>
             ) : null}
           </div>
-          <p className="mt-1 truncate text-sm font-semibold text-slate-100">
+          <p className="mt-1 truncate text-sm font-semibold text-[var(--wt-text-strong)]">
             {log.summary}
           </p>
         </div>
 
-        <div className="hidden shrink-0 text-sm font-semibold text-slate-300 sm:block">
+        <div className="hidden shrink-0 text-sm font-semibold text-[var(--wt-text-strong)] sm:block">
           {log.durationMinutes ? formatMinutes(log.durationMinutes) : "0m"}
         </div>
         <Badge tone={log.includedInReport ? "green" : "slate"}>
           {log.includedInReport ? "Included" : "Not included"}
         </Badge>
-        <div className="flex shrink-0 items-center gap-1 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100">
-          <Button variant="ghost" onClick={onEdit} className="h-8 w-8 px-0">
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            variant="ghost"
+            onClick={onEdit}
+            className="wt-action-info h-8 min-h-8 px-2.5"
+            aria-label={`Edit manual log: ${log.summary}`}
+            title="Edit manual log"
+          >
             <Edit3 className="h-4 w-4" />
+            <span className="hidden text-xs sm:inline">Edit</span>
           </Button>
           <Button
             variant="ghost"
             onClick={onDelete}
             disabled={isDeleting}
-            className="h-8 w-8 px-0 text-red-200 hover:border-red-300/20 hover:bg-red-500/10"
+            className="wt-action-danger h-8 min-h-8 px-2.5"
+            aria-label={`Delete manual log: ${log.summary}`}
+            title="Delete manual log"
           >
             <Trash2 className="h-4 w-4" />
+            <span className="hidden text-xs sm:inline">Delete</span>
           </Button>
         </div>
       </div>
@@ -629,14 +637,14 @@ function ManualLogRow({
 
 function EmptyLogs() {
   return (
-    <div className="flex min-h-[210px] items-center rounded-2xl border border-white/10 bg-slate-950/35 p-8">
+    <div className="flex min-h-[210px] items-center rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface-muted)] p-8">
       <div className="flex items-center gap-5">
-        <div className="grid h-14 w-14 place-items-center rounded-2xl border border-slate-500/20 bg-slate-700/20 text-slate-400">
+        <div className="grid h-14 w-14 place-items-center rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface)] text-[var(--wt-text-muted)]">
           <ClipboardCheck className="h-7 w-7" />
         </div>
         <div>
-          <p className="text-sm font-semibold text-white">No logs yet</p>
-          <p className="mt-1 max-w-sm text-sm leading-6 text-slate-400">
+          <p className="text-sm font-semibold text-[var(--wt-text-strong)]">No logs yet</p>
+          <p className="mt-1 max-w-sm text-sm leading-6 text-[var(--wt-text-muted)]">
             Once you add more non-code work, it will appear here.
           </p>
         </div>
@@ -659,13 +667,13 @@ function Field({
   children: ReactNode;
 }) {
   return (
-    <label className={`grid gap-2 text-xs font-semibold text-slate-200 ${className}`}>
+    <label className={`grid gap-2 text-xs font-semibold text-[var(--wt-text-muted)] ${className}`}>
       {label}
       {children}
       {error ? (
-        <span className="text-[11px] text-red-300">{error}</span>
+        <span className="text-[11px] text-red-500">{error}</span>
       ) : help ? (
-        <span className="text-[11px] font-medium leading-5 text-slate-500">{help}</span>
+        <span className="text-[11px] font-medium leading-5 text-[var(--wt-text-faint)]">{help}</span>
       ) : null}
     </label>
   );
@@ -682,18 +690,18 @@ function IconBubble({
 }) {
   const sizeClass = size === "lg" ? "h-14 w-14 rounded-2xl" : "h-12 w-12 rounded-2xl";
   const toneClass: Record<IconTone, string> = {
-    blue: "border-blue-300/25 bg-blue-500/15 text-blue-200 shadow-blue-500/10",
-    cyan: "border-cyan-300/25 bg-cyan-500/15 text-cyan-200 shadow-cyan-500/10",
-    green: "border-emerald-300/25 bg-emerald-500/15 text-emerald-200 shadow-emerald-500/10",
-    purple: "border-purple-300/25 bg-purple-500/15 text-purple-200 shadow-purple-500/10",
-    orange: "border-orange-300/25 bg-orange-500/15 text-orange-200 shadow-orange-500/10",
-    amber: "border-amber-300/25 bg-amber-500/15 text-amber-200 shadow-amber-500/10",
-    slate: "border-slate-300/15 bg-slate-500/10 text-slate-300 shadow-black/10",
+    blue: "border-blue-500/20 bg-blue-500/10 text-blue-600 dark:text-blue-200",
+    cyan: "border-cyan-500/20 bg-cyan-500/10 text-cyan-600 dark:text-cyan-200",
+    green: "border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-200",
+    purple: "border-violet-500/20 bg-violet-500/10 text-violet-600 dark:text-purple-200",
+    orange: "border-orange-500/20 bg-orange-500/10 text-orange-600 dark:text-orange-200",
+    amber: "border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-200",
+    slate: "border-[var(--wt-border)] bg-[var(--wt-surface-muted)] text-[var(--wt-text-muted)]",
   };
 
   return (
     <span
-      className={`grid shrink-0 place-items-center border shadow-lg ${sizeClass} ${toneClass[tone]}`}
+      className={`grid shrink-0 place-items-center border shadow-[var(--wt-control-shadow)] ${sizeClass} ${toneClass[tone]}`}
     >
       {children}
     </span>
@@ -701,7 +709,7 @@ function IconBubble({
 }
 
 const inputClass =
-  "w-full rounded-xl border border-white/10 bg-slate-950/70 px-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-blue-300/50 focus:ring-2 focus:ring-blue-500/15 disabled:opacity-60 h-10";
+  "wt-input h-10 w-full rounded-xl px-3 text-sm transition-[border-color,box-shadow,background-color] disabled:opacity-60";
 
 function defaultValues(date: string): ManualLogFormValues {
   return {

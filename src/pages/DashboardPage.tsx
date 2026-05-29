@@ -43,27 +43,23 @@ type StatTone = "blue" | "purple" | "cyan" | "violet";
 
 const statToneClasses: Record<
   StatTone,
-  { panel: string; icon: string; border: string }
+  { icon: string; border: string }
 > = {
   blue: {
-    panel: "bg-slate-950/58",
-    icon: "border-blue-300/25 bg-blue-500/15 text-blue-200 shadow-blue-500/20",
-    border: "hover:border-blue-300/40",
+    icon: "border-blue-500/18 bg-blue-500/10 text-blue-600",
+    border: "hover:border-blue-500/28",
   },
   purple: {
-    panel: "bg-slate-950/58",
-    icon: "border-purple-300/25 bg-purple-500/15 text-purple-200 shadow-purple-500/20",
-    border: "hover:border-purple-300/40",
+    icon: "border-violet-500/18 bg-violet-500/10 text-violet-600",
+    border: "hover:border-violet-500/28",
   },
   cyan: {
-    panel: "bg-slate-950/58",
-    icon: "border-cyan-300/25 bg-cyan-500/15 text-cyan-200 shadow-cyan-500/20",
-    border: "hover:border-cyan-300/40",
+    icon: "border-cyan-500/18 bg-cyan-500/10 text-cyan-600",
+    border: "hover:border-cyan-500/28",
   },
   violet: {
-    panel: "bg-slate-950/58",
-    icon: "border-fuchsia-300/25 bg-fuchsia-500/15 text-fuchsia-200 shadow-fuchsia-500/20",
-    border: "hover:border-fuchsia-300/40",
+    icon: "border-fuchsia-500/18 bg-fuchsia-500/10 text-fuchsia-600",
+    border: "hover:border-fuchsia-500/28",
   },
 };
 
@@ -87,21 +83,21 @@ function DashboardStatCard({
 
   return (
     <div
-      className={`group relative overflow-hidden rounded-2xl border border-white/10 ${toneClasses.panel} p-5 shadow-[0_18px_48px_rgba(2,6,23,0.24),inset_0_1px_0_rgba(255,255,255,0.035)] transition-[border-color,background-color,box-shadow] duration-150 ${toneClasses.border}`}
+      className={`group relative overflow-hidden rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface)] p-5 shadow-[var(--wt-panel-shadow)] transition-[border-color,background-color,box-shadow] duration-150 ${toneClasses.border}`}
     >
       <div className="relative flex items-center gap-4">
         <div
-          className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border shadow-xl ${toneClasses.icon}`}
+          className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border ${toneClasses.icon}`}
         >
           <Icon className="h-6 w-6" />
         </div>
         <div className="min-w-0">
-          <p className="text-sm font-medium text-slate-300">{label}</p>
-          <p className="mt-1 text-3xl font-semibold tracking-tight text-white tabular-nums">
+          <p className="text-sm font-medium text-[var(--wt-text-strong)]">{label}</p>
+          <p className="mt-1 text-3xl font-semibold tracking-tight text-[var(--wt-text-strong)] tabular-nums">
             {value}
           </p>
-          <p className="mt-1 flex items-center gap-1 text-xs text-slate-400 tabular-nums">
-            <span className={isPositive ? "text-emerald-300" : "text-rose-300"}>
+          <p className="mt-1 flex items-center gap-1 text-xs text-[var(--wt-text-muted)] tabular-nums">
+            <span className={isPositive ? "text-[var(--wt-success)]" : "text-[var(--wt-danger)]"}>
               {isPositive ? "+" : "-"}{Math.abs(delta)}
             </span>
             {deltaLabel}
@@ -128,19 +124,19 @@ function DashboardSectionHeader({
   return (
     <div className="mb-4 flex items-start justify-between gap-3">
       <div className="flex items-start gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-blue-300/20 bg-blue-500/10 text-blue-200">
+        <div className="wt-icon-chip flex h-9 w-9 shrink-0 items-center justify-center rounded-xl">
           <Icon className="h-4.5 w-4.5" />
         </div>
         <div>
-          <h2 className="text-base font-semibold text-white">{title}</h2>
-          {subtitle ? <p className="mt-1 text-xs text-slate-400">{subtitle}</p> : null}
+          <h2 className="text-base font-semibold text-[var(--wt-text-strong)]">{title}</h2>
+          {subtitle ? <p className="mt-1 text-xs text-[var(--wt-text-muted)]">{subtitle}</p> : null}
         </div>
       </div>
       {actionLabel && onAction ? (
         <button
           type="button"
           onClick={onAction}
-          className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-blue-200 transition hover:bg-blue-500/10 hover:text-blue-100"
+          className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-[var(--wt-accent-text)] transition hover:bg-[var(--wt-accent-soft)]"
         >
           {actionLabel}
           <ArrowRight className="h-3.5 w-3.5" />
@@ -290,16 +286,16 @@ export function DashboardPage() {
         }
         actions={
           <>
-          <div className="flex min-w-[260px] max-w-md flex-1 items-center gap-2 rounded-2xl border border-white/10 bg-slate-950/70 px-3 py-2.5 shadow-xl shadow-slate-950/20">
-            <Search className="h-4 w-4 shrink-0 text-slate-400" />
+          <div className="wt-control flex min-h-10 min-w-[260px] max-w-md flex-1 items-center gap-2 rounded-2xl px-3 py-2.5">
+            <Search className="h-4 w-4 shrink-0 text-[var(--wt-text-muted)]" />
             <input
               type="text"
               placeholder="Search projects, tasks, commits..."
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.currentTarget.value)}
-              className="min-w-0 flex-1 bg-transparent text-sm text-slate-200 placeholder:text-slate-500 focus:outline-none"
+              className="min-w-0 flex-1 bg-transparent text-sm text-[var(--wt-text-strong)] placeholder:text-[var(--wt-text-faint)] focus:outline-none"
             />
-            <span className="hidden items-center gap-1 rounded-md border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] font-semibold text-slate-400 sm:inline-flex">
+            <span className="hidden items-center gap-1 rounded-md border border-[var(--wt-border)] bg-[var(--wt-surface-muted)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--wt-text-muted)] sm:inline-flex">
               <Command className="h-3 w-3" /> K
             </span>
           </div>
@@ -359,7 +355,6 @@ export function DashboardPage() {
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)]">
         <Panel className="relative overflow-hidden">
-          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-blue-300/35 to-transparent" />
           <DashboardSectionHeader
             icon={Activity}
             title="Weekly Activity Overview"
@@ -367,19 +362,18 @@ export function DashboardPage() {
           />
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <Badge tone="blue">{totalActivityHours.toFixed(1)}h total</Badge>
-            <div className="rounded-xl border border-white/10 bg-slate-950/70 px-3 py-1.5 text-xs font-semibold text-slate-300">
+            <div className="wt-control rounded-xl px-3 py-1.5 text-xs font-semibold">
               Activity (hrs)
             </div>
           </div>
           {activityHoursQuery.isLoading ? (
-            <div className="h-64 animate-pulse rounded-xl border border-white/8 bg-white/[0.03]" />
+            <div className="h-64 animate-pulse rounded-xl border border-[var(--wt-border)] bg-[var(--wt-surface-muted)]" />
           ) : (
             <AreaChart data={activityHoursQuery.data ?? []} height={270} />
           )}
         </Panel>
 
         <Panel className="relative overflow-hidden">
-          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/35 to-transparent" />
           <DashboardSectionHeader
             icon={Zap}
             title="Recent Activity"
@@ -388,14 +382,14 @@ export function DashboardPage() {
             onAction={() => navigate("/activity")}
           />
           {syncMutation.data ? (
-            <div className="mb-3 rounded-xl border border-emerald-400/20 bg-emerald-500/10 p-3 text-xs text-emerald-100">
+            <div className="mb-3 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-xs text-[var(--wt-text-strong)]">
               Synced {syncMutation.data.scannedProjects} projects. Added{" "}
               {syncMutation.data.newCommits} commits and updated{" "}
               {syncMutation.data.updatedCommits}.
             </div>
           ) : null}
           {syncMutation.isError ? (
-            <div className="mb-3 rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-xs text-red-100">
+            <div className="mb-3 rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs text-[var(--wt-text-strong)]">
               {syncMutation.error instanceof Error
                 ? syncMutation.error.message
                 : "Sync failed."}
@@ -407,7 +401,7 @@ export function DashboardPage() {
                 <RecentActivityItem key={item.id} item={item} />
               ))
             ) : (
-              <div className="rounded-xl border border-dashed border-white/8 bg-white/[0.02] p-4 text-xs leading-5 text-slate-400">
+              <div className="rounded-xl border border-dashed border-[var(--wt-border-strong)] bg-[var(--wt-surface-muted)] p-4 text-xs leading-5 text-[var(--wt-text-muted)]">
                 {searchQuery.trim()
                   ? "No matching activity for that search."
                   : "No activity yet. Sync repositories or add manual logs to see your week at a glance."}
@@ -427,7 +421,7 @@ export function DashboardPage() {
             onAction={() => navigate("/projects")}
           />
           {breakdownQuery.isLoading ? (
-            <div className="h-40 animate-pulse rounded-xl border border-white/8 bg-white/[0.03]" />
+            <div className="h-40 animate-pulse rounded-xl border border-[var(--wt-border)] bg-[var(--wt-surface-muted)]" />
           ) : (
             <ProjectBreakdownPanel
               breakdown={breakdownQuery.data ?? []}
@@ -445,7 +439,7 @@ export function DashboardPage() {
             onAction={() => navigate("/weekly-plan")}
           />
           {tasksQuery.isLoading ? (
-            <div className="h-40 animate-pulse rounded-xl border border-white/8 bg-white/[0.03]" />
+            <div className="h-40 animate-pulse rounded-xl border border-[var(--wt-border)] bg-[var(--wt-surface-muted)]" />
           ) : (
             <UpcomingWorkPanel tasks={upcomingTasks.slice(0, 5)} />
           )}
@@ -460,18 +454,18 @@ export function DashboardPage() {
             onAction={() => navigate("/weekly-plan")}
           />
           {tasksQuery.isLoading ? (
-            <div className="h-40 animate-pulse rounded-xl border border-white/8 bg-white/[0.03]" />
+            <div className="h-40 animate-pulse rounded-xl border border-[var(--wt-border)] bg-[var(--wt-surface-muted)]" />
           ) : (
             <BlockersPanel tasks={filteredTasks} />
           )}
         </Panel>
       </div>
 
-      <Panel className="flex flex-wrap items-center justify-between gap-3 border-blue-300/10 bg-gradient-to-r from-slate-950/70 via-blue-950/25 to-slate-950/70 py-3">
-        <div className="flex items-center gap-2 text-sm text-slate-300">
-          <ListChecks className="h-4 w-4 text-cyan-200" />
+      <Panel className="flex flex-wrap items-center justify-between gap-3 py-3">
+        <div className="flex items-center gap-2 text-sm text-[var(--wt-text-muted)]">
+          <ListChecks className="h-4 w-4 text-[var(--wt-accent-text)]" />
           <span>Report-ready items</span>
-          <span className="font-semibold text-white">{reportReadyItems}</span>
+          <span className="font-semibold text-[var(--wt-text-strong)]">{reportReadyItems}</span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="ghost" onClick={() => navigate("/manual-log")}>

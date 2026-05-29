@@ -4,3 +4,11 @@ export type QuickCaptureStatus = {
   registered: boolean;
   lastError?: string | null;
 };
+
+export type DesktopLifecycleStatus = {
+  startupEnabled: boolean;
+  startMinimizedToTray: boolean;
+  minimizeToTrayOnClose: boolean;
+  autostartRegistered: boolean;
+  lastError?: string | null;
+};

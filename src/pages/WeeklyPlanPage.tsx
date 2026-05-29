@@ -9,7 +9,8 @@ import {
   CheckCircle2,
   FolderKanban,
 } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { FastFindSearch, type FastFindPreviewItem } from "../components/ui/FastFindSearch";
 import { KanbanColumn } from "../components/ui/KanbanColumn";
 import { Panel } from "../components/ui/Panel";
 import { ProgressDonut } from "../components/ui/ProgressDonut";
@@ -55,6 +56,28 @@ const statuses: Array<{ value: WeeklyTaskStatus; label: string }> = [
   { value: "dropped", label: "Dropped" },
 ];
 
+const taskTypeLabels: Record<WeeklyTaskType, string> = {
+  planned_work: "Planned Work",
+  blocker: "Blocker",
+  carryover: "Carryover",
+  completed_checklist: "Completed Checklist",
+  follow_up: "Follow-up",
+};
+
+const statusLabels: Record<WeeklyTaskStatus, string> = {
+  todo: "Todo",
+  in_progress: "In Progress",
+  blocked: "Blocked",
+  completed: "Completed",
+  dropped: "Dropped",
+};
+
+const priorityLabels: Record<WeeklyTaskPriority, string> = {
+  low: "Low priority",
+  normal: "Normal priority",
+  high: "High priority",
+};
+
 export function WeeklyPlanPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -63,6 +86,8 @@ export function WeeklyPlanPage() {
   const [typeFilter, setTypeFilter] = useState<WeeklyTaskType | "all">("all");
   const [statusFilter, setStatusFilter] = useState<WeeklyTaskStatus | "all">("all");
   const [projectFilter, setProjectFilter] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<WeeklyTask | null>(null);
   const [viewingTask, setViewingTask] = useState<WeeklyTask | null>(null);
@@ -74,6 +99,7 @@ export function WeeklyPlanPage() {
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [activeColumnId, setActiveColumnId] = useState<string | null>(null);
   const dragOverColumnRef = useRef<string | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   async function invalidateWeeklyTaskViews() {
     await Promise.all([
@@ -122,22 +148,76 @@ export function WeeklyPlanPage() {
   const projects = (projectsQuery.data ?? []).filter(
     (project) => project.status === "active",
   );
+  const searchIndex = useMemo(
+    () =>
+      tasks.map((task) => ({
+        task,
+        haystack: buildTaskSearchText(task),
+      })),
+    [tasks],
+  );
+  const searchTokens = useMemo(
+    () =>
+      normalizeSearchText(deferredSearchQuery)
+        .split(" ")
+        .filter(Boolean),
+    [deferredSearchQuery],
+  );
+  const visibleTasks = useMemo(() => {
+    if (!searchTokens.length) {
+      return tasks;
+    }
+
+    return searchIndex
+      .filter((entry) => searchTokens.every((token) => entry.haystack.includes(token)))
+      .map((entry) => entry.task);
+  }, [searchIndex, searchTokens, tasks]);
+  const isSearching = searchQuery.trim().length > 0;
+  const searchPreviewTasks = useMemo(
+    () => (isSearching ? visibleTasks.slice(0, 5) : []),
+    [isSearching, visibleTasks],
+  );
+
+  useEffect(() => {
+    function handleSearchShortcut(event: KeyboardEvent) {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "k") {
+        return;
+      }
+
+      const target = event.target as HTMLElement | null;
+      const isTextField =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target?.isContentEditable;
+
+      if (isTextField) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      searchInputRef.current?.focus();
+    }
+
+    window.addEventListener("keydown", handleSearchShortcut, true);
+    return () => window.removeEventListener("keydown", handleSearchShortcut, true);
+  }, []);
 
   const planned = useMemo(
-    () => tasks.filter((t) => t.status === "todo" && t.taskType !== "carryover"),
-    [tasks]
+    () => visibleTasks.filter((t) => t.status === "todo" && t.taskType !== "carryover"),
+    [visibleTasks]
   );
   const inProgress = useMemo(
-    () => tasks.filter((t) => t.status === "in_progress" && t.taskType !== "carryover"),
-    [tasks]
+    () => visibleTasks.filter((t) => t.status === "in_progress" && t.taskType !== "carryover"),
+    [visibleTasks]
   );
   const done = useMemo(
-    () => tasks.filter((t) => t.status === "completed"),
-    [tasks]
+    () => visibleTasks.filter((t) => t.status === "completed"),
+    [visibleTasks]
   );
   const carryForward = useMemo(
-    () => tasks.filter((t) => t.taskType === "carryover" && t.status !== "completed"),
-    [tasks]
+    () => visibleTasks.filter((t) => t.taskType === "carryover" && t.status !== "completed"),
+    [visibleTasks]
   );
 
   const recentlyCompleted = useMemo(
@@ -361,6 +441,21 @@ export function WeeklyPlanPage() {
     setViewingTask(task);
   }, []);
 
+  const searchPreviewItems = useMemo<FastFindPreviewItem[]>(
+    () =>
+      searchPreviewTasks.map((task) => ({
+        id: task.id,
+        title: task.title,
+        detail: `${taskTypeLabels[task.taskType]} / ${statusLabels[task.status]}${
+          task.projectName ? ` / ${task.projectName}` : ""
+        }`,
+        badge: task.targetDate ? task.targetDate.slice(5) : undefined,
+        icon: CheckCircle2,
+        onSelect: () => handleViewTask(task),
+      })),
+    [handleViewTask, searchPreviewTasks],
+  );
+
   const handleToggleComplete = useCallback((task: WeeklyTask) => {
     const newStatus = task.status === "completed" ? "todo" : "completed";
     updateMutation.mutate({ id: task.id, status: newStatus });
@@ -377,6 +472,7 @@ export function WeeklyPlanPage() {
   }
 
   const hasActiveFilters = typeFilter !== "all" || statusFilter !== "all" || projectFilter !== "all";
+  const visibleTaskCount = visibleTasks.length;
 
   return (
     <div className="space-y-4">
@@ -406,65 +502,80 @@ export function WeeklyPlanPage() {
         </div>
       </Panel>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="grid gap-1">
-          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">Type</span>
-          <Select
-            value={typeFilter}
-            onChange={setTypeFilter}
-            options={[
-              { value: "all", label: "All Types", icon: ListTodo },
-              ...taskTypes.map((type) => ({
-                value: type.value,
-                label: type.label,
-                icon: ListTodo,
-              })),
-            ]}
-            size="sm"
+      <Panel className="relative overflow-visible p-3">
+        <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/45 to-transparent" />
+        <div className="grid gap-3 xl:grid-cols-[minmax(320px,1fr)_auto] xl:items-end">
+          <WeeklyPlanSearch
+            inputRef={searchInputRef}
+            value={searchQuery}
+            onChange={setSearchQuery}
+            visibleCount={visibleTaskCount}
+            totalCount={tasks.length}
+            isSearching={isSearching}
+            previewItems={searchPreviewItems}
           />
+
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="grid gap-1">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">Type</span>
+              <Select
+                value={typeFilter}
+                onChange={setTypeFilter}
+                options={[
+                  { value: "all", label: "All Types", icon: ListTodo },
+                  ...taskTypes.map((type) => ({
+                    value: type.value,
+                    label: type.label,
+                    icon: ListTodo,
+                  })),
+                ]}
+                size="sm"
+              />
+            </div>
+            <div className="grid gap-1">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">Status</span>
+              <Select
+                value={statusFilter}
+                onChange={setStatusFilter}
+                options={[
+                  { value: "all", label: "All Statuses", icon: CheckCircle2 },
+                  ...statuses.map((status) => ({
+                    value: status.value,
+                    label: status.label,
+                    icon: status.value === "completed" ? CheckCircle2 : ListTodo,
+                  })),
+                ]}
+                size="sm"
+              />
+            </div>
+            <div className="grid gap-1">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">Project</span>
+              <Select
+                value={projectFilter}
+                onChange={setProjectFilter}
+                options={[
+                  { value: "all", label: "All Projects", icon: FolderKanban },
+                  ...projects.map((project) => ({
+                    value: project.id,
+                    label: project.name,
+                    icon: FolderKanban,
+                  })),
+                ]}
+                size="sm"
+              />
+            </div>
+            {hasActiveFilters && (
+              <button
+                onClick={handleClearFilters}
+                className="flex h-9 items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-200"
+              >
+                <RotateCcw className="h-3 w-3" />
+                Clear
+              </button>
+            )}
+          </div>
         </div>
-        <div className="grid gap-1">
-          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">Status</span>
-          <Select
-            value={statusFilter}
-            onChange={setStatusFilter}
-            options={[
-              { value: "all", label: "All Statuses", icon: CheckCircle2 },
-              ...statuses.map((status) => ({
-                value: status.value,
-                label: status.label,
-                icon: status.value === "completed" ? CheckCircle2 : ListTodo,
-              })),
-            ]}
-            size="sm"
-          />
-        </div>
-        <div className="grid gap-1">
-          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">Project</span>
-          <Select
-            value={projectFilter}
-            onChange={setProjectFilter}
-            options={[
-              { value: "all", label: "All Projects", icon: FolderKanban },
-              ...projects.map((project) => ({
-                value: project.id,
-                label: project.name,
-                icon: FolderKanban,
-              })),
-            ]}
-            size="sm"
-          />
-        </div>
-        {hasActiveFilters && (
-          <button
-            onClick={handleClearFilters}
-            className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-200"
-          >
-            <RotateCcw className="h-3 w-3" />
-            Clear
-          </button>
-        )}
-      </div>
+      </Panel>
 
       <AddItemBar
         onAdd={handleAddItem}
@@ -673,6 +784,39 @@ function MiniStat({
   );
 }
 
+function WeeklyPlanSearch({
+  inputRef,
+  value,
+  onChange,
+  visibleCount,
+  totalCount,
+  isSearching,
+  previewItems,
+}: {
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  value: string;
+  onChange: (value: string) => void;
+  visibleCount: number;
+  totalCount: number;
+  isSearching: boolean;
+  previewItems: FastFindPreviewItem[];
+}) {
+  return (
+    <FastFindSearch
+      inputRef={inputRef}
+      value={value}
+      onChange={onChange}
+      visibleCount={visibleCount}
+      totalCount={totalCount}
+      isSearching={isSearching}
+      placeholder="Search tasks, projects, status, priority, or dates..."
+      previewItems={previewItems}
+      emptyMessage={`Nothing matched "${value.trim()}". Try a project, status, priority, or task phrase.`}
+      moreLabel={`Showing ${previewItems.length} of ${visibleCount} matches on the board.`}
+    />
+  );
+}
+
 function WeekCapacityStrip({
   capacity,
   isLoading,
@@ -794,4 +938,37 @@ function today() {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function buildTaskSearchText(task: WeeklyTask) {
+  return normalizeSearchText(
+    [
+      task.title,
+      task.details,
+      task.projectName,
+      taskTypeLabels[task.taskType],
+      statusLabels[task.status],
+      priorityLabels[task.priority],
+      task.weekStartDate,
+      task.targetDate,
+      task.completedAt,
+      task.includedInReport ? "included report" : "not included report",
+      task.estimatedMinutes ? `${task.estimatedMinutes} minutes ${formatMinutes(task.estimatedMinutes)}` : null,
+      task.progressPercent !== undefined && task.progressPercent !== null
+        ? `${task.progressPercent} percent progress`
+        : null,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+}
+
+function normalizeSearchText(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[_-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }

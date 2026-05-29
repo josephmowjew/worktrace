@@ -12,6 +12,7 @@ import type {
   WeeklyTaskType,
 } from "../../types/weeklyTask";
 import { Button } from "./Button";
+import { DatePicker } from "./DatePicker";
 import { ModalShell } from "./ModalShell";
 import { SelectField } from "./SelectField";
 
@@ -61,7 +62,7 @@ const priorities: Array<{ value: WeeklyTaskPriority; label: string }> = [
 ];
 
 const inputClass =
-  "h-10 w-full rounded-xl border border-white/10 bg-slate-950/75 px-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-blue-300/50 focus:ring-2 focus:ring-blue-500/15";
+  "wt-input h-10 w-full rounded-xl px-3 text-sm transition-[border-color,box-shadow,background-color]";
 
 function defaultValues(weekStartDate: string): TaskFormValues {
   return {
@@ -198,10 +199,30 @@ export function AddTaskModal({
 
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Week Start">
-              <input type="date" className={inputClass} {...form.register("weekStartDate")} />
+              <DatePicker
+                value={form.watch("weekStartDate")}
+                onChange={(value) =>
+                  form.setValue("weekStartDate", value, {
+                    shouldDirty: true,
+                    shouldValidate: true,
+                  })
+                }
+                label="Week"
+                subtitle="Week start"
+              />
             </Field>
             <Field label="Target Date">
-              <input type="date" className={inputClass} {...form.register("targetDate")} />
+              <DatePicker
+                value={form.watch("targetDate") ?? ""}
+                onChange={(value) =>
+                  form.setValue("targetDate", value, {
+                    shouldDirty: true,
+                    shouldValidate: true,
+                  })
+                }
+                label="Target"
+                subtitle="Target date"
+              />
             </Field>
           </div>
 
@@ -248,7 +269,7 @@ export function AddTaskModal({
             />
           </Field>
 
-          <label className="flex items-center gap-3 rounded-xl border border-white/10 bg-slate-950/45 px-3 py-2 text-sm text-slate-300">
+          <label className="flex items-center gap-3 rounded-xl border border-[var(--wt-border)] bg-[var(--wt-surface-muted)] px-3 py-2 text-sm text-[var(--wt-text)]">
             <input
               type="checkbox"
               className="h-4 w-4 accent-blue-500"
@@ -258,7 +279,7 @@ export function AddTaskModal({
           </label>
 
           {error ? (
-            <div className="rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-xs text-red-100">
+            <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-600 dark:text-red-100">
               {error}
             </div>
           ) : null}
@@ -292,10 +313,10 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <label className="grid gap-2 text-xs font-semibold text-slate-300">
+    <label className="grid gap-2 text-xs font-semibold text-[var(--wt-text-muted)]">
       {label}
       {children}
-      {error ? <span className="text-[11px] text-red-300">{error}</span> : null}
+      {error ? <span className="text-[11px] text-red-500">{error}</span> : null}
     </label>
   );
 }

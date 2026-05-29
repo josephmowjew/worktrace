@@ -182,7 +182,7 @@ export function Select<T extends string = string>({
   const dropdown = isOpen && (
     <div
       ref={dropdownRef}
-      className={`fixed z-[9999] max-h-64 overflow-y-auto border border-white/10 bg-slate-950/90 shadow-2xl shadow-black/40 backdrop-blur-2xl ${classes.dropdown}`}
+      className={`fixed z-[9999] max-h-64 overflow-y-auto border border-[var(--wt-border)] bg-[var(--wt-surface)] shadow-[var(--wt-panel-shadow)] ${classes.dropdown}`}
       style={{
         top: position.direction === "down" ? `${position.top}px` : undefined,
         bottom: position.direction === "up" ? `calc(100vh - ${position.top}px)` : undefined,
@@ -221,16 +221,16 @@ export function Select<T extends string = string>({
               }}
               className={`flex w-full items-center transition-[background-color,color] duration-150 ${classes.option} ${
                 isSelected
-                  ? "bg-blue-500/10 text-white"
-                  : "text-slate-300 hover:bg-white/8 hover:text-white"
+                  ? "bg-[var(--wt-selected)] text-[var(--wt-accent-text)]"
+                  : "text-[var(--wt-text-muted)] hover:bg-[var(--wt-surface-muted)] hover:text-[var(--wt-text-strong)]"
               }`}
             >
               {OptionIcon && (
                 <div
                   className={`flex items-center justify-center border ${classes.iconWrapper} ${
                     isSelected
-                      ? "border-blue-300/20 bg-blue-500/10 text-blue-400"
-                      : "border-white/10 bg-white/5 text-slate-400"
+                      ? "border-blue-500/20 bg-[var(--wt-accent-soft)] text-[var(--wt-accent-text)]"
+                      : "border-[var(--wt-border)] bg-[var(--wt-surface-muted)] text-[var(--wt-text-muted)]"
                   }`}
                 >
                   <OptionIcon className={classes.icon} />
@@ -250,14 +250,14 @@ export function Select<T extends string = string>({
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className={`flex items-center justify-between gap-2 border border-white/10 bg-slate-950/70 font-medium text-white backdrop-blur-xl transition-[background-color,border-color,box-shadow] duration-150 hover:border-blue-300/24 hover:bg-slate-950/82 focus:border-blue-300/40 focus:outline-none focus:ring-2 focus:ring-blue-500/20 ${classes.trigger}`}
+        className={`flex items-center justify-between gap-2 border border-[var(--wt-border)] bg-[var(--wt-input)] font-medium text-[var(--wt-text-strong)] transition-[background-color,border-color,box-shadow] duration-150 hover:border-blue-500/30 hover:bg-[var(--wt-surface)] focus:border-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-500/20 ${classes.trigger}`}
       >
         <span className="flex min-w-0 flex-1 items-center gap-2">
           {Icon && <Icon className={`${classes.icon} shrink-0`} />}
           <span className="truncate">{selectedOption?.label ?? placeholder}</span>
         </span>
         <ChevronDown
-          className={`text-slate-400 transition-transform duration-200 ${classes.chevron}`}
+          className={`text-[var(--wt-text-muted)] transition-transform duration-200 ${classes.chevron}`}
           style={{ transform: isOpen ? (position.direction === "up" ? "rotate(0deg)" : "rotate(180deg)") : "rotate(0deg)" }}
         />
       </button>

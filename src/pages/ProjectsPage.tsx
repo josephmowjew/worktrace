@@ -12,15 +12,15 @@ import {
   GitBranch,
   Layers,
   Plus,
-  Search,
   ShieldCheck,
   RefreshCw,
   LayoutGrid,
 } from "lucide-react";
-import { useMemo, useState, useEffect, useRef } from "react";
+import { useDeferredValue, useMemo, useState, useEffect, useRef } from "react";
 import type { InputHTMLAttributes } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/Button";
+import { FastFindSearch, type FastFindPreviewItem } from "../components/ui/FastFindSearch";
 import { Panel } from "../components/ui/Panel";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Select } from "../components/ui/Select";
@@ -73,6 +73,7 @@ export function ProjectsPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
+  const deferredSearch = useDeferredValue(search);
   const [viewMode, setViewMode] = useState<"workspaces" | "projects">("workspaces");
   const [statusFilter, setStatusFilter] = useState<"active" | "archived" | "all">("active");
   const [sourceFilter, setSourceFilter] = useState<"all" | "workspace" | "personal">("all");
@@ -95,6 +96,7 @@ export function ProjectsPage() {
 
   const projectFormRef = useRef<HTMLDivElement>(null);
   const workspacePanelRef = useRef<HTMLDivElement>(null);
+  const repositorySearchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (isFormOpen && projectFormRef.current) {
@@ -111,6 +113,34 @@ export function ProjectsPage() {
       setIsWorkspaceFormOpen(false);
     }
   }, isFormOpen || isWorkspaceFormOpen);
+
+  useEffect(() => {
+    function handleRepositorySearchShortcut(event: KeyboardEvent) {
+      if (viewMode !== "projects") {
+        return;
+      }
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "k") {
+        return;
+      }
+
+      const target = event.target as HTMLElement | null;
+      const isTextField =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target?.isContentEditable;
+
+      if (isTextField) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      repositorySearchRef.current?.focus();
+    }
+
+    window.addEventListener("keydown", handleRepositorySearchShortcut, true);
+    return () => window.removeEventListener("keydown", handleRepositorySearchShortcut, true);
+  }, [viewMode]);
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -155,7 +185,7 @@ export function ProjectsPage() {
       }),
     onMutate: (projectId) => {
       const project = projects.find((item) => item.id === projectId);
-      speech.announce(syncStartedAnnouncement(project ? `${project.name} activity` : "project activity"), {
+      speech.announce(syncStartedAnnouncement(project ? `${project.name} activity` : "repository activity"), {
         category: "sync",
       });
     },
@@ -165,13 +195,13 @@ export function ProjectsPage() {
       await queryClient.invalidateQueries({ queryKey: ["recentCommits"] });
       await queryClient.invalidateQueries({ queryKey: ["topContributors"] });
       toast.success(
-        "Project sync complete",
+        "Repository sync complete",
         `Added ${result.newCommits} commits and updated ${result.updatedCommits}.`,
       );
       speech.announce(syncAnnouncement(result), { category: "sync" });
     },
     onError: (error) => {
-      toast.error("Project sync failed", toMessage(error));
+      toast.error("Repository sync failed", toMessage(error));
     },
   });
 
@@ -220,7 +250,7 @@ export function ProjectsPage() {
       await queryClient.invalidateQueries({ queryKey: ["projectStats"] });
       await queryClient.invalidateQueries({ queryKey: ["categoryDistribution"] });
       toast.success(
-        editingProject ? "Project updated" : "Project created",
+        editingProject ? "Repository updated" : "Repository added",
         `${project.name} is saved.`,
       );
       closeForm();
@@ -237,7 +267,7 @@ export function ProjectsPage() {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["projectStats"] });
       queryClient.invalidateQueries({ queryKey: ["categoryDistribution"] });
-      toast.success("Project archived", `${project.name} is hidden from active workflows.`);
+      toast.success("Repository archived", `${project.name} is hidden from active workflows.`);
     },
     onError: (error) => {
       toast.error("Archive failed", toMessage(error));
@@ -248,7 +278,7 @@ export function ProjectsPage() {
     mutationFn: (project: Project) => updateProject(project.id, { status: "active" }),
     onSuccess: async (project) => {
       await invalidateProjectViews(queryClient);
-      toast.success("Project restored", `${project.name} is visible in active workflows again.`);
+      toast.success("Repository restored", `${project.name} is visible in active workflows again.`);
     },
     onError: (error) => {
       toast.error("Restore failed", toMessage(error));
@@ -324,7 +354,7 @@ export function ProjectsPage() {
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
       await queryClient.invalidateQueries({ queryKey: ["workspaces"] });
       await invalidateProjectViews(queryClient);
-      toast.success("Repositories imported", `${importedProjects.length} projects are now tracked or restored.`);
+      toast.success("Repositories imported", `${importedProjects.length} repositories are now tracked or restored.`);
       if (selectedWorkspaceId) {
         scanWorkspaceMutation.mutate(selectedWorkspaceId);
       }
@@ -398,11 +428,47 @@ export function ProjectsPage() {
   }, [statsQuery.data]);
 
   const categories = categoryQuery.data ?? [];
+  const workspaces = workspacesQuery.data ?? [];
+  const workspaceNameById = useMemo(
+    () => new Map(workspaces.map((workspace) => [workspace.id, workspace.name])),
+    [workspaces],
+  );
   const totalProjects = projects.filter((p) => p.status === "active").length;
+  const repositorySearchIndex = useMemo(
+    () =>
+      projects.map((project) => ({
+        project,
+        haystack: buildRepositorySearchText(
+          project,
+          project.workspaceId ? workspaceNameById.get(project.workspaceId) : null,
+        ),
+      })),
+    [projects, workspaceNameById],
+  );
+  const repositorySearchTokens = useMemo(
+    () =>
+      normalizeRepositorySearchText(deferredSearch)
+        .split(" ")
+        .filter(Boolean),
+    [deferredSearch],
+  );
+  const searchMatchedProjects = useMemo(() => {
+    if (!repositorySearchTokens.length) {
+      return projects;
+    }
+
+    return repositorySearchIndex
+      .filter((entry) =>
+        repositorySearchTokens.every((token) => entry.haystack.includes(token)),
+      )
+      .map((entry) => entry.project);
+  }, [projects, repositorySearchIndex, repositorySearchTokens]);
+  const searchMatchedProjectIds = useMemo(
+    () => new Set(searchMatchedProjects.map((project) => project.id)),
+    [searchMatchedProjects],
+  );
 
   const filteredProjects = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-
     return projects.filter((project) => {
       const matchesStatus = statusFilter === "all" || project.status === statusFilter;
       const matchesCategory =
@@ -414,15 +480,19 @@ export function ProjectsPage() {
         (sourceFilter === "workspace" && Boolean(project.workspaceId)) ||
         (sourceFilter === "personal" && !project.workspaceId);
       const matchesSearch =
-        !needle ||
-        project.name.toLowerCase().includes(needle) ||
-        project.description?.toLowerCase().includes(needle) ||
-        project.repoPath?.toLowerCase().includes(needle) ||
-        project.githubUrl?.toLowerCase().includes(needle);
+        repositorySearchTokens.length === 0 || searchMatchedProjectIds.has(project.id);
 
       return matchesStatus && matchesCategory && matchesClassification && matchesSource && matchesSearch;
     });
-  }, [projects, search, statusFilter, categoryFilter, classificationFilter, sourceFilter]);
+  }, [
+    projects,
+    statusFilter,
+    categoryFilter,
+    classificationFilter,
+    sourceFilter,
+    repositorySearchTokens.length,
+    searchMatchedProjectIds,
+  ]);
 
   const sortedProjects = useMemo(() => {
     const sorted = [...filteredProjects];
@@ -452,10 +522,28 @@ export function ProjectsPage() {
     (currentPage - 1) * ITEMS_PER_PAGE,
     currentPage * ITEMS_PER_PAGE,
   );
+  const repositorySearchPreviewItems = useMemo<FastFindPreviewItem[]>(
+    () =>
+      sortedProjects.slice(0, 5).map((project) => ({
+        id: project.id,
+        title: project.name,
+        detail: [
+          project.projectType || "Repository",
+          classificationLabel(project.classification),
+          project.workspaceId ? "Workspace" : "Personal",
+          project.repoPath,
+        ]
+          .filter(Boolean)
+          .join(" / "),
+        badge: project.status,
+        icon: FolderKanban,
+        onSelect: () => navigate(`/projects/${project.id}`),
+      })),
+    [navigate, sortedProjects],
+  );
 
   const activeProjects = projects.filter((project) => project.status === "active");
   const archivedProjects = projects.filter((project) => project.status === "archived");
-  const workspaces = workspacesQuery.data ?? [];
   const visibleWorkspaces = workspaces.filter(
     (workspace) => workspaceStatusFilter === "all" || workspace.status === workspaceStatusFilter,
   );
@@ -577,17 +665,17 @@ export function ProjectsPage() {
     <div className="space-y-4">
       <PageHeader
         icon={ShieldCheck}
-        eyebrow="Project Management"
-        title="Projects"
-        description="View and manage all your software projects and repositories."
+        eyebrow="Repository Management"
+        title="Repositories"
+        description="Manage tracked repositories and the workspaces they come from."
         meta={
             <div className="hidden items-center gap-4 rounded-xl border border-white/8 bg-slate-950/45 px-4 py-3 shadow-2xl shadow-blue-950/20 backdrop-blur-xl lg:flex">
               <div className="text-right">
                 <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-slate-500">
-                  Total Projects
+                  Active Repos
                 </p>
                 <p className="mt-1 text-2xl font-semibold text-white">
-                  {projects.length}
+                  {totalProjects}
                 </p>
               </div>
             </div>
@@ -596,7 +684,7 @@ export function ProjectsPage() {
           <>
             <Button variant="primary" onClick={openCreateForm}>
               <Plus className="h-4 w-4" />
-              New Project
+              Add Repository
             </Button>
             <Button variant="secondary" onClick={openWorkspaceForm}>
               <Layers className="h-4 w-4" />
@@ -646,13 +734,13 @@ export function ProjectsPage() {
                 : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
             }`}
           >
-            Projects
+            Repositories
           </button>
         </div>
         <p className="text-xs text-slate-500">
           {viewMode === "workspaces"
             ? "Pick a workspace to scan, review, import, restore, and sync its repositories."
-            : "Browse individual projects across personal and workspace sources."}
+            : "Browse individual repositories across personal and workspace sources."}
         </p>
       </Panel>
 
@@ -678,7 +766,7 @@ export function ProjectsPage() {
                 <div className="space-y-3 rounded-xl border border-blue-300/15 bg-blue-500/5 p-3">
                   <TextField
                     label="Workspace Name"
-                    placeholder="Documents Projects"
+                    placeholder="Documents Repos"
                     value={workspaceName}
                     onChange={(event) => setWorkspaceName(event.currentTarget.value)}
                   />
@@ -845,7 +933,7 @@ export function ProjectsPage() {
                 <div className="space-y-4 p-5">
                   {selectedWorkspace.status === "archived" ? (
                     <div className="rounded-xl border border-orange-300/20 bg-orange-500/10 p-3 text-xs leading-5 text-orange-100">
-                      This workspace is archived. Its imported projects keep their own status, but workspace scan and sync are paused.
+                      This workspace is archived. Its imported repositories keep their own status, but workspace scan and sync are paused.
                     </div>
                   ) : null}
 
@@ -870,7 +958,7 @@ export function ProjectsPage() {
                       />
                     </label>
                     <p className="mt-2 text-[11px] leading-5 text-slate-500">
-                      New imports inherit this value. Existing project overrides stay unchanged.
+                      New imports inherit this value. Existing repository overrides stay unchanged.
                     </p>
                   </section>
 
@@ -879,7 +967,7 @@ export function ProjectsPage() {
                       <div>
                         <h3 className="text-sm font-semibold text-white">Repositories In This Workspace</h3>
                         <p className="mt-1 text-xs text-slate-500">
-                          Active and archived projects are shown here so imported repos never disappear silently.
+                          Active and archived repositories are shown here so imported repos never disappear silently.
                         </p>
                       </div>
                     </div>
@@ -1020,21 +1108,34 @@ export function ProjectsPage() {
       ) : (
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-4">
-          <Panel className="flex flex-wrap items-center justify-between gap-3 p-3">
-            <label className="flex min-w-0 flex-1 basis-[240px] items-center gap-2 rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2.5 text-xs text-slate-400 shadow-inner shadow-black/20">
-              <Search className="h-4 w-4 text-slate-500" />
-              <input
+          <Panel className="relative overflow-visible p-3">
+            <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/45 to-transparent" />
+            <div className="grid gap-3 xl:grid-cols-[minmax(360px,1fr)_auto] xl:items-end">
+              <FastFindSearch
+                inputRef={repositorySearchRef}
                 value={search}
-                onChange={(event) => {
-                  setSearch(event.currentTarget.value);
+                onChange={(value) => {
+                  setSearch(value);
                   setCurrentPage(1);
                 }}
-                className="w-full bg-transparent text-slate-100 outline-none placeholder:text-slate-500"
-                placeholder="Search projects, repos..."
+                visibleCount={sortedProjects.length}
+                totalCount={projects.length}
+                isSearching={search.trim().length > 0}
+                placeholder="Search repositories, paths, GitHub URLs, categories, or workspace names..."
+                chips={[
+                  { label: "All", icon: LayoutGrid, active: true },
+                  { label: "Repositories", icon: FolderKanban },
+                  { label: "Workspaces", icon: Layers },
+                  { label: "Branches", icon: GitBranch },
+                  { label: "Active", icon: CheckCircle2 },
+                ]}
+                previewItems={repositorySearchPreviewItems}
+                previewTitle="Top repositories"
+                emptyMessage={`Nothing matched "${search.trim()}". Try a repository name, path, category, or source.`}
+                moreLabel={`Showing ${repositorySearchPreviewItems.length} of ${sortedProjects.length} matching repositories.`}
               />
-            </label>
 
-            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-end gap-2">
               <FilterSelect
                 value={statusFilter}
                 onChange={(v) => {
@@ -1115,6 +1216,7 @@ export function ProjectsPage() {
                   Clear
                 </button>
               )}
+              </div>
             </div>
           </Panel>
 
@@ -1123,20 +1225,20 @@ export function ProjectsPage() {
           ) : projectsQuery.isError ? (
             <EmptyProjects
               tone="error"
-              title="Project data is not available"
+              title="Repository data is not available"
               message={toMessage(projectsQuery.error)}
               actionLabel="Try Again"
               onAction={() => projectsQuery.refetch()}
             />
           ) : paginatedProjects.length === 0 ? (
             <EmptyProjects
-              title={projects.length === 0 ? "No projects yet" : "No matching projects"}
+              title={projects.length === 0 ? "No repositories yet" : "No matching repositories"}
               message={
                 projects.length === 0
-                  ? "Create your first project to start tracking activity."
+                  ? "Add your first repository to start tracking activity."
                   : "Adjust your filters or search query."
               }
-              actionLabel="New Project"
+              actionLabel="Add Repository"
               onAction={openCreateForm}
             />
           ) : (
@@ -1214,7 +1316,7 @@ export function ProjectsPage() {
                 <div className="space-y-3 rounded-xl border border-blue-300/15 bg-blue-500/5 p-3">
                   <TextField
                     label="Workspace Name"
-                    placeholder="Documents Projects"
+                    placeholder="Documents Repos"
                     value={workspaceName}
                     onChange={(event) => setWorkspaceName(event.currentTarget.value)}
                   />
@@ -1312,7 +1414,7 @@ export function ProjectsPage() {
                 <div className="space-y-2 rounded-xl border border-white/8 bg-slate-950/35 p-3">
                   {selectedWorkspace.status === "archived" ? (
                     <div className="rounded-xl border border-orange-300/20 bg-orange-500/10 p-3 text-xs leading-5 text-orange-100">
-                      This workspace is archived. Its imported projects remain available according to their own project status, but scanning and workspace sync are paused.
+                      This workspace is archived. Its imported repositories remain available according to their own status, but scanning and workspace sync are paused.
                     </div>
                   ) : null}
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1395,7 +1497,7 @@ export function ProjectsPage() {
 
           <Panel className="p-4">
             <h2 className="mb-4 text-sm font-semibold text-slate-100">
-              Project Categories
+              Repository Categories
             </h2>
             {categoryQuery.isLoading ? (
               <div className="flex h-40 items-center justify-center">
@@ -1439,7 +1541,7 @@ export function ProjectsPage() {
             >
               <span className="flex items-center gap-2">
                 <Archive className="h-3.5 w-3.5" />
-                View Archived Projects
+                View Archived Repositories
               </span>
               <ChevronDown className="h-3.5 w-3.5 -rotate-90" />
             </button>
@@ -1474,7 +1576,7 @@ export function ProjectsPage() {
                 <Plus className="h-4 w-4" />
               </div>
               <div>
-                <p className="text-sm font-semibold text-slate-100">Add Project</p>
+                <p className="text-sm font-semibold text-slate-100">Add Repository</p>
                 <p className="text-xs text-slate-500">Register a new repository</p>
               </div>
             </button>
@@ -1695,7 +1797,7 @@ function WorkspaceDiscoveryList({
                 {repo.projectName ? (
                   <p className={`mt-1 text-[11px] ${repo.status === "archived" ? "text-orange-200" : "text-emerald-300/80"}`}>
                     {repo.status === "archived"
-                      ? `Already exists as archived project "${repo.projectName}". Select it and import to reactivate it.`
+                      ? `Already exists as archived repository "${repo.projectName}". Select it and import to reactivate it.`
                       : `Imported as ${repo.projectName}`}
                   </p>
                 ) : null}
@@ -1745,4 +1847,35 @@ async function invalidateProjectViews(queryClient: QueryClient) {
 
 function toMessage(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong.";
+}
+
+function buildRepositorySearchText(project: Project, workspaceName?: string | null) {
+  return normalizeRepositorySearchText(
+    [
+      project.name,
+      project.description,
+      project.repoPath,
+      project.githubUrl,
+      project.projectType,
+      project.workspaceRelativePath,
+      workspaceName,
+      project.workspaceId ? "workspace" : "personal",
+      project.classification,
+      project.status,
+      project.createdAt,
+      project.updatedAt,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+}
+
+function normalizeRepositorySearchText(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[_-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }

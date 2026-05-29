@@ -23,6 +23,7 @@ import { SegmentedTabs } from "../components/ui/SegmentedTabs";
 import { SelectField } from "../components/ui/SelectField";
 import { useSpeech } from "../components/ui/SpeechProvider";
 import { useToast } from "../components/ui/ToastProvider";
+import { THEME_PREVIEW_EVENT } from "../app/ThemeProvider";
 import { activateSparcForceAddon, exportSettingsToFile, getSettings, importSettings, updateSettings } from "../lib/api/settings";
 import {
   connectGitHubPat,
@@ -70,7 +71,13 @@ import { currentWeekRange } from "../lib/dates";
 import { weeklyTaskQueryRoots } from "../lib/api/queryKeys";
 import { gravatarUrl } from "../lib/gravatar";
 import { appSignature } from "../lib/appSignature";
-import { configureQuickCaptureShortcut, getQuickCaptureStatus, showQuickCapture } from "../lib/api/windows";
+import {
+  configureDesktopLifecycle,
+  configureQuickCaptureShortcut,
+  getDesktopLifecycleStatus,
+  getQuickCaptureStatus,
+  showQuickCapture,
+} from "../lib/api/windows";
 
 const workingDays = [
   { label: "Mon", value: "monday" },
@@ -107,7 +114,7 @@ const settingsSchema = z.object({
   ]),
   workingDays: z.array(z.string()).min(1, "Select at least one working day"),
   dailyWorkMinutes: z.number().min(60).max(960),
-  theme: z.enum(["dark", "system"]),
+  theme: z.enum(["dark", "light", "system"]),
   announcementsEnabled: z.boolean(),
   announcementVolume: z.number().min(0).max(1),
   announcementVoice: z.string(),
@@ -140,6 +147,9 @@ const settingsSchema = z.object({
   quickCaptureEnabled: z.boolean(),
   quickCaptureShortcut: z.string().trim().min(1, "Shortcut is required"),
   quickCaptureIncludeInReport: z.boolean(),
+  startupEnabled: z.boolean(),
+  startMinimizedToTray: z.boolean(),
+  minimizeToTrayOnClose: z.boolean(),
   priorityRemindersEnabled: z.boolean(),
   priorityReminderDesktopEnabled: z.boolean(),
   priorityReminderCheckpoints: z.string().trim().min(1, "Add at least one checkpoint"),
@@ -216,6 +226,10 @@ export function SettingsPage() {
     queryKey: ["quickCaptureStatus"],
     queryFn: getQuickCaptureStatus,
   });
+  const desktopLifecycleStatusQuery = useQuery({
+    queryKey: ["desktopLifecycleStatus"],
+    queryFn: getDesktopLifecycleStatus,
+  });
   const [openRouterKey, setOpenRouterKey] = useState("");
   const [groqKey, setGroqKey] = useState("");
   const [nvidiaBuildKey, setNvidiaBuildKey] = useState("");
@@ -277,12 +291,21 @@ export function SettingsPage() {
       sparcForceAddonEnabled: false,
     },
   });
+  const selectedTheme = form.watch("theme");
 
   useEffect(() => {
     if (settingsQuery.data && !form.formState.isDirty) {
       form.reset(toFormValues(settingsQuery.data));
     }
   }, [form, form.formState.isDirty, settingsQuery.data]);
+
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent(THEME_PREVIEW_EVENT, { detail: selectedTheme }));
+
+    return () => {
+      window.dispatchEvent(new CustomEvent(THEME_PREVIEW_EVENT, { detail: null }));
+    };
+  }, [selectedTheme]);
 
   useEffect(() => {
     const status = sparcForceStatusQuery.data;
@@ -365,6 +388,9 @@ export function SettingsPage() {
         quickCaptureEnabled: values.quickCaptureEnabled,
         quickCaptureShortcut: values.quickCaptureShortcut,
         quickCaptureIncludeInReport: values.quickCaptureIncludeInReport,
+        startupEnabled: values.startupEnabled,
+        startMinimizedToTray: values.startMinimizedToTray,
+        minimizeToTrayOnClose: values.minimizeToTrayOnClose,
         priorityRemindersEnabled: values.priorityRemindersEnabled,
         priorityReminderDesktopEnabled: values.priorityReminderDesktopEnabled,
         priorityReminderCheckpoints: values.priorityReminderCheckpoints
@@ -381,9 +407,15 @@ export function SettingsPage() {
         enabled: settings.quickCaptureEnabled,
         shortcut: settings.quickCaptureShortcut,
       }).catch(() => null);
+      await configureDesktopLifecycle({
+        startupEnabled: settings.startupEnabled,
+        startMinimizedToTray: settings.startMinimizedToTray,
+        minimizeToTrayOnClose: settings.minimizeToTrayOnClose,
+      }).catch(() => null);
       form.reset(toFormValues(settings));
       await queryClient.invalidateQueries({ queryKey: ["settings"] });
       await queryClient.invalidateQueries({ queryKey: ["quickCaptureStatus"] });
+      await queryClient.invalidateQueries({ queryKey: ["desktopLifecycleStatus"] });
       toast.success("Preferences saved", "Settings have been updated.");
     },
     onError: (error) => {
@@ -939,6 +971,30 @@ export function SettingsPage() {
             </Panel>
             <Panel>
               <div className="mb-4 flex items-center gap-2 text-base font-semibold text-white">
+                <Monitor className="h-4 w-4 text-cyan-300" />
+                Appearance
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field label="Theme Preference">
+                  <SelectField
+                    control={form.control}
+                    name="theme"
+                    disabled={settingsQuery.isLoading}
+                    options={[
+                      { value: "dark", label: "Dark", icon: Monitor },
+                      { value: "light", label: "Light", icon: Monitor },
+                      { value: "system", label: "System", icon: Monitor },
+                    ]}
+                    size="sm"
+                  />
+                </Field>
+              </div>
+              <p className="mt-3 text-xs leading-5 text-slate-500">
+                System follows your OS preference and updates while WorkTrace is open.
+              </p>
+            </Panel>
+            <Panel>
+              <div className="mb-4 flex items-center gap-2 text-base font-semibold text-white">
                 <Bell className="h-4 w-4 text-cyan-300" />
                 Priority Reminders
               </div>
@@ -1032,6 +1088,48 @@ export function SettingsPage() {
               {quickCaptureStatusQuery.data?.lastError ? (
                 <p className="mt-3 rounded-xl border border-orange-300/20 bg-orange-500/10 p-3 text-xs leading-5 text-orange-100">
                   {quickCaptureStatusQuery.data.lastError}
+                </p>
+              ) : null}
+            </Panel>
+            <Panel>
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-base font-semibold text-white">
+                  <Monitor className="h-4 w-4 text-cyan-300" />
+                  Background Mode
+                </div>
+                <Badge tone={desktopLifecycleStatusQuery.data?.autostartRegistered ? "green" : "slate"}>
+                  {desktopLifecycleStatusQuery.data?.autostartRegistered ? "Starts with Windows" : "Tray ready"}
+                </Badge>
+              </div>
+              <div className="grid gap-4 md:grid-cols-3">
+                <ToggleField
+                  label="Start with Windows"
+                  description="Register WorkTrace to launch when you sign in. This stays off until you choose it."
+                  checked={form.watch("startupEnabled")}
+                  onChange={(checked) =>
+                    form.setValue("startupEnabled", checked, { shouldDirty: true })
+                  }
+                />
+                <ToggleField
+                  label="Start in tray"
+                  description="Windows startup opens WorkTrace quietly in the tray instead of showing the main window."
+                  checked={form.watch("startMinimizedToTray")}
+                  onChange={(checked) =>
+                    form.setValue("startMinimizedToTray", checked, { shouldDirty: true })
+                  }
+                />
+                <ToggleField
+                  label="Close to tray"
+                  description="The window close button keeps WorkTrace running for quick capture and reminders."
+                  checked={form.watch("minimizeToTrayOnClose")}
+                  onChange={(checked) =>
+                    form.setValue("minimizeToTrayOnClose", checked, { shouldDirty: true })
+                  }
+                />
+              </div>
+              {desktopLifecycleStatusQuery.data?.lastError ? (
+                <p className="mt-3 rounded-xl border border-orange-300/20 bg-orange-500/10 p-3 text-xs leading-5 text-orange-100">
+                  {desktopLifecycleStatusQuery.data.lastError}
                 </p>
               ) : null}
             </Panel>
@@ -1528,25 +1626,13 @@ export function SettingsPage() {
                   size="sm"
                 />
               </Field>
-              <Field label="Theme Preference">
-                <SelectField
-                  control={form.control}
-                  name="theme"
-                  disabled={settingsQuery.isLoading}
-                  options={[
-                    { value: "dark", label: "Dark", icon: Monitor },
-                    { value: "system", label: "System", icon: Monitor },
-                  ]}
-                  size="sm"
-                />
-              </Field>
             </div>
           </Panel>
           ) : null}
 
           {activeTab === "integrations" ? (
           <Panel className="p-0">
-            <div className="border-b border-white/8 bg-[linear-gradient(90deg,rgba(59,130,246,0.16),rgba(20,184,166,0.08),rgba(15,23,42,0))] px-5 py-5">
+            <div className="border-b border-[var(--wt-border)] bg-[linear-gradient(90deg,color-mix(in_oklch,var(--wt-accent)_10%,transparent),color-mix(in_oklch,oklch(0.7_0.12_190)_8%,transparent),transparent)] px-5 py-5">
               <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_240px_280px_240px] xl:items-center">
                 <div className="flex items-center gap-5">
                   <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-full border border-blue-300/10 bg-blue-400/10 shadow-lg shadow-blue-500/10">
@@ -1736,7 +1822,7 @@ export function SettingsPage() {
             </section>
             {activePanelPlacement === "ai" ? renderIntegrationSetupPanel() : null}
 
-            <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-blue-500/8 px-4 py-3 text-xs text-slate-400">
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-accent-soft)] px-4 py-3 text-xs text-[var(--wt-text-muted)]">
               <span className="inline-flex items-center gap-2">
                 <LockKeyhole className="h-4 w-4 text-slate-300" />
                 Your integrations are private and secure. We never access your data without permission.
@@ -1905,10 +1991,10 @@ function IntegrationMetric({
   tone: "blue" | "cyan" | "green";
 }) {
   return (
-    <div className="rounded-2xl border border-white/8 bg-slate-950/35 p-4">
-      <div className="text-2xl font-semibold text-white">{value}</div>
-      <div className="mt-1 text-xs font-semibold text-slate-200">{label}</div>
-      <div className="mt-1 flex items-center gap-2 text-xs text-slate-400">
+    <div className="rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface)] p-4 shadow-sm shadow-[rgb(var(--wt-shadow)/0.08)]">
+      <div className="text-2xl font-semibold text-[var(--wt-text-strong)]">{value}</div>
+      <div className="mt-1 text-xs font-semibold text-[var(--wt-text)]">{label}</div>
+      <div className="mt-1 flex items-center gap-2 text-xs text-[var(--wt-text-muted)]">
         <span
           className={[
             "h-1.5 w-1.5 rounded-full",
@@ -2006,33 +2092,33 @@ function IntegrationCard({
   disabledDanger?: boolean;
 }) {
   return (
-    <div className="relative min-h-[142px] rounded-2xl border border-white/10 bg-gradient-to-br from-blue-500/10 via-slate-950/55 to-slate-950/35 p-4 shadow-lg shadow-black/10">
+    <div className="relative min-h-[142px] rounded-2xl border border-[var(--wt-border)] bg-[linear-gradient(135deg,color-mix(in_oklch,var(--wt-accent)_8%,var(--wt-surface)),var(--wt-surface)_48%,var(--wt-surface-strong))] p-4 shadow-lg shadow-[rgb(var(--wt-shadow)/0.12)]">
       <button
         type="button"
-        className="absolute right-4 top-4 rounded-lg p-1 text-slate-400 hover:bg-white/8 hover:text-slate-100"
+        className="absolute right-4 top-4 rounded-lg p-1 text-[var(--wt-text-muted)] outline-none transition hover:bg-[var(--wt-surface-muted)] hover:text-[var(--wt-text-strong)] focus-visible:ring-2 focus-visible:ring-blue-400/45"
         onClick={onPrimary}
         aria-label={`Manage ${title}`}
       >
         <MoreHorizontal className="h-4 w-4" />
       </button>
       <div className="flex gap-4 pr-7">
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/8 shadow-lg shadow-black/20">
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface-muted)] shadow-lg shadow-[rgb(var(--wt-shadow)/0.12)]">
           {icon}
         </div>
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h4 className="text-sm font-semibold text-white">{title}</h4>
+            <h4 className="text-sm font-semibold text-[var(--wt-text-strong)]">{title}</h4>
             <Badge tone={connected ? "green" : "slate"}>
               {connected ? "Connected" : "Not connected"}
             </Badge>
           </div>
-          <p className="mt-2 text-xs leading-5 text-slate-400">{description}</p>
+          <p className="mt-2 text-xs leading-5 text-[var(--wt-text-muted)]">{description}</p>
         </div>
       </div>
       <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
         <button
           type="button"
-          className="inline-flex items-center gap-2 text-xs font-semibold text-blue-300 hover:text-blue-200"
+          className="inline-flex items-center gap-2 rounded-lg px-1 py-1 text-xs font-semibold text-blue-600 outline-none transition hover:text-blue-500 focus-visible:ring-2 focus-visible:ring-blue-400/45"
           onClick={onPrimary}
         >
           {primaryLabel}
@@ -2042,7 +2128,7 @@ function IntegrationCard({
           {secondaryLabel && onSecondary ? (
             <button
               type="button"
-              className="rounded-lg border border-blue-300/25 px-3 py-1.5 text-xs font-semibold text-blue-200 hover:bg-blue-500/10"
+              className="rounded-lg border border-blue-300/35 px-3 py-1.5 text-xs font-semibold text-blue-600 outline-none transition hover:bg-blue-500/10 focus-visible:ring-2 focus-visible:ring-blue-400/45"
               onClick={onSecondary}
             >
               {secondaryLabel}
@@ -2051,7 +2137,7 @@ function IntegrationCard({
           {dangerLabel && onDanger ? (
             <button
               type="button"
-              className="rounded-lg border border-red-300/30 px-3 py-1.5 text-xs font-semibold text-red-200 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-lg border border-red-300/35 px-3 py-1.5 text-xs font-semibold text-red-600 outline-none transition hover:bg-red-500/10 focus-visible:ring-2 focus-visible:ring-red-400/35 disabled:cursor-not-allowed disabled:opacity-50"
               onClick={onDanger}
               disabled={disabledDanger}
             >
@@ -3990,7 +4076,7 @@ function Field({
   children: ReactNode;
 }) {
   return (
-    <label className="grid gap-2 text-xs font-semibold text-slate-300">
+    <label className="grid gap-2 text-xs font-semibold text-[var(--wt-text-muted)]">
       {label}
       {children}
       {error ? <span className="text-[11px] text-red-300">{error}</span> : null}
@@ -4010,16 +4096,16 @@ function ToggleField({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-white/10 bg-slate-950/45 p-3">
+    <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface)] p-3">
       <input
         type="checkbox"
         checked={checked}
         onChange={(event) => onChange(event.currentTarget.checked)}
-        className="mt-1 h-4 w-4 accent-cyan-300"
+        className="mt-1 h-4 w-4 accent-blue-500"
       />
       <span className="min-w-0">
-        <span className="block text-sm font-semibold text-slate-100">{label}</span>
-        <span className="mt-1 block text-xs leading-5 text-slate-400">{description}</span>
+        <span className="block text-sm font-semibold text-[var(--wt-text-strong)]">{label}</span>
+        <span className="mt-1 block text-xs leading-5 text-[var(--wt-text-muted)]">{description}</span>
       </span>
     </label>
   );
@@ -4046,8 +4132,8 @@ function ProfileImagePreview({
   }, [imageUrl]);
 
   return (
-    <div className="flex items-center gap-4 rounded-2xl border border-white/10 bg-slate-950/45 p-4 lg:block">
-      <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-full border border-cyan-300/25 bg-gradient-to-br from-cyan-400/25 via-blue-500/15 to-slate-900 shadow-lg shadow-cyan-950/25 lg:mx-auto lg:h-24 lg:w-24">
+    <div className="flex items-center gap-4 rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface)] p-4 lg:block">
+      <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-full border border-blue-500/20 bg-[var(--wt-accent-soft)] shadow-[var(--wt-control-shadow)] lg:mx-auto lg:h-24 lg:w-24">
         {imageUrl && !imageFailed ? (
           <img
             src={imageUrl}
@@ -4056,30 +4142,30 @@ function ProfileImagePreview({
             onError={() => setImageFailed(true)}
           />
         ) : (
-          <div className="grid h-full w-full place-items-center text-xl font-semibold text-cyan-100 lg:text-2xl">
+          <div className="grid h-full w-full place-items-center text-xl font-semibold text-[var(--wt-accent-text)] lg:text-2xl">
             {initials}
           </div>
         )}
       </div>
       <div className="min-w-0 lg:mt-3">
-        <div className="text-sm font-semibold text-slate-100">Profile image</div>
-        <div className="mt-1 text-xs leading-5 text-slate-400">
+        <div className="text-sm font-semibold text-[var(--wt-text-strong)]">Profile image</div>
+        <div className="mt-1 text-xs leading-5 text-[var(--wt-text-muted)]">
           {profileImageStatusText({
             enabled,
             hasUsableEmail,
             hasLoadedImage: Boolean(imageUrl && !imageFailed),
           })}
         </div>
-        <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-xl border border-white/10 bg-slate-900/55 p-2 text-left">
+        <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-xl border border-[var(--wt-border)] bg-[var(--wt-surface-muted)] p-2 text-left">
           <input
             type="checkbox"
             checked={enabled}
             onChange={(event) => onToggle(event.currentTarget.checked)}
-            className="mt-0.5 h-4 w-4 accent-cyan-300"
+            className="mt-0.5 h-4 w-4 accent-blue-500"
           />
-          <span className="text-xs leading-5 text-slate-300">
+          <span className="text-xs leading-5 text-[var(--wt-text)]">
             Use Gravatar
-            <span className="block text-slate-500">
+            <span className="block text-[var(--wt-text-faint)]">
               Loads an external image from Gravatar for this email.
             </span>
           </span>
@@ -4090,9 +4176,9 @@ function ProfileImagePreview({
 }
 
 const inputClass =
-  "h-10 w-full rounded-xl border border-white/10 bg-slate-950/75 px-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-blue-300/50 focus:ring-2 focus:ring-blue-500/15";
+  "h-10 w-full rounded-xl border border-[var(--wt-border)] bg-[var(--wt-input)] px-3 text-sm text-[var(--wt-text-strong)] outline-none transition placeholder:text-[var(--wt-text-faint)] focus:border-blue-300/50 focus:ring-2 focus:ring-blue-500/15";
 const filterSelectClass =
-  "h-10 w-full min-w-0 max-w-full truncate rounded-lg border border-white/10 bg-slate-950/75 px-3 pr-9 text-sm font-semibold text-slate-200 outline-none transition focus:border-blue-300/50 focus:ring-2 focus:ring-blue-500/15 disabled:cursor-not-allowed disabled:opacity-50";
+  "h-10 w-full min-w-0 max-w-full truncate rounded-lg border border-[var(--wt-border)] bg-[var(--wt-input)] px-3 pr-9 text-sm font-semibold text-[var(--wt-text-strong)] outline-none transition focus:border-blue-300/50 focus:ring-2 focus:ring-blue-500/15 disabled:cursor-not-allowed disabled:opacity-50";
 
 function isEmailLike(value: string) {
   const trimmed = value.trim();
@@ -4158,7 +4244,7 @@ function toFormValues(settings: Settings): SettingsFormValues {
       ? settings.workingDays
       : ["monday", "tuesday", "wednesday", "thursday", "friday"],
     dailyWorkMinutes: settings.dailyWorkMinutes || 480,
-    theme: settings.theme === "system" ? "system" : "dark",
+    theme: isThemePreference(settings.theme) ? settings.theme : "dark",
     announcementsEnabled: settings.announcementsEnabled,
     announcementVolume: settings.announcementVolume,
     announcementVoice: settings.announcementVoice,
@@ -4197,6 +4283,9 @@ function toFormValues(settings: Settings): SettingsFormValues {
     quickCaptureEnabled: settings.quickCaptureEnabled ?? true,
     quickCaptureShortcut: settings.quickCaptureShortcut || "CommandOrControl+Shift+Space",
     quickCaptureIncludeInReport: settings.quickCaptureIncludeInReport ?? true,
+    startupEnabled: settings.startupEnabled ?? false,
+    startMinimizedToTray: settings.startMinimizedToTray ?? true,
+    minimizeToTrayOnClose: settings.minimizeToTrayOnClose ?? true,
     priorityRemindersEnabled: settings.priorityRemindersEnabled ?? true,
     priorityReminderDesktopEnabled: settings.priorityReminderDesktopEnabled ?? false,
     priorityReminderCheckpoints: (settings.priorityReminderCheckpoints?.length
@@ -4218,6 +4307,10 @@ function isReportTemplate(
     "project_based",
     "concise_manager_update",
   ].includes(value);
+}
+
+function isThemePreference(value: string): value is SettingsFormValues["theme"] {
+  return ["dark", "light", "system"].includes(value);
 }
 
 function isReportAiProvider(

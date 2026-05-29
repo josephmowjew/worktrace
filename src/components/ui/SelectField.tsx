@@ -182,7 +182,7 @@ export function SelectField<TFieldValues extends FieldValues = FieldValues>({
   const dropdown = isOpen && !disabled && (
     <div
       ref={dropdownRef}
-      className={`fixed z-[9999] max-h-64 overflow-y-auto border border-white/10 bg-slate-950/90 shadow-2xl shadow-black/40 backdrop-blur-2xl ${classes.dropdown}`}
+      className={`fixed z-[9999] max-h-64 overflow-y-auto border border-[var(--wt-border)] bg-[var(--wt-surface)] shadow-[var(--wt-panel-shadow)] ${classes.dropdown}`}
       style={{
         top: position.direction === "down" ? `${position.top}px` : undefined,
         bottom: position.direction === "up" ? `calc(100vh - ${position.top}px)` : undefined,
@@ -218,16 +218,16 @@ export function SelectField<TFieldValues extends FieldValues = FieldValues>({
               onClick={() => handleChange(option.value)}
               className={`flex w-full items-center transition-[background-color,color] duration-150 ${classes.option} ${
                 isSelected
-                  ? "bg-blue-500/10 text-white"
-                  : "text-slate-300 hover:bg-white/8 hover:text-white"
+                  ? "bg-[var(--wt-selected)] text-[var(--wt-accent-text)]"
+                  : "text-[var(--wt-text-muted)] hover:bg-[var(--wt-surface-muted)] hover:text-[var(--wt-text-strong)]"
               }`}
             >
               {OptionIcon && (
                 <div
                   className={`flex items-center justify-center border ${classes.iconWrapper} ${
                     isSelected
-                      ? "border-blue-300/20 bg-blue-500/10 text-blue-400"
-                      : "border-white/10 bg-white/5 text-slate-400"
+                      ? "border-blue-500/20 bg-[var(--wt-accent-soft)] text-[var(--wt-accent-text)]"
+                      : "border-[var(--wt-border)] bg-[var(--wt-surface-muted)] text-[var(--wt-text-muted)]"
                   }`}
                 >
                   <OptionIcon className={classes.icon} />
@@ -262,16 +262,16 @@ export function SelectField<TFieldValues extends FieldValues = FieldValues>({
         type="button"
         onClick={() => !disabled && setIsOpen(!isOpen)}
         disabled={disabled}
-        className={`flex w-full items-center justify-between gap-2 border border-white/10 bg-slate-950/75 text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-blue-300/50 focus:ring-2 focus:ring-blue-500/15 disabled:cursor-not-allowed disabled:opacity-50 ${classes.trigger}`}
+        className={`flex w-full items-center justify-between gap-2 border border-[var(--wt-border)] bg-[var(--wt-input)] text-[var(--wt-text-strong)] outline-none transition placeholder:text-[var(--wt-text-faint)] focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/15 disabled:cursor-not-allowed disabled:opacity-50 ${classes.trigger}`}
       >
         <span className="flex min-w-0 flex-1 items-center gap-2">
           {Icon && <Icon className={`${classes.icon} shrink-0`} />}
-          <span className={`truncate ${field.value ? "text-slate-100" : "text-slate-600"}`}>
+          <span className={`truncate ${field.value ? "text-[var(--wt-text-strong)]" : "text-[var(--wt-text-faint)]"}`}>
             {selectedOption?.label ?? placeholder}
           </span>
         </span>
         <svg
-          className={`text-slate-400 transition-transform duration-200 ${classes.chevron}`}
+          className={`text-[var(--wt-text-muted)] transition-transform duration-200 ${classes.chevron}`}
           style={{ transform: isOpen ? (position.direction === "up" ? "rotate(0deg)" : "rotate(180deg)") : "rotate(0deg)" }}
           fill="none"
           viewBox="0 0 24 24"

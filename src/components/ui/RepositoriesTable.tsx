@@ -37,7 +37,7 @@ export function RepositoriesTable({
 }) {
   if (commits.length === 0) {
     return (
-      <div className="flex h-32 items-center justify-center text-xs text-slate-500">
+      <div className="flex h-32 items-center justify-center text-xs text-[var(--wt-text-muted)]">
         No recent commits
       </div>
     );
@@ -47,20 +47,20 @@ export function RepositoriesTable({
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
         <thead>
-          <tr className="border-b border-white/8">
-            <th className="px-3 py-2 text-left font-semibold text-slate-400">
+          <tr className="border-b border-[var(--wt-border)]">
+            <th className="px-3 py-2 text-left font-semibold text-[var(--wt-text-muted)]">
               Project
             </th>
-            <th className="px-3 py-2 text-left font-semibold text-slate-400">
+            <th className="px-3 py-2 text-left font-semibold text-[var(--wt-text-muted)]">
               Repo Path
             </th>
-            <th className="px-3 py-2 text-left font-semibold text-slate-400">
+            <th className="px-3 py-2 text-left font-semibold text-[var(--wt-text-muted)]">
               Last Commit
             </th>
-            <th className="px-3 py-2 text-left font-semibold text-slate-400">
+            <th className="px-3 py-2 text-left font-semibold text-[var(--wt-text-muted)]">
               Branch
             </th>
-            <th className="px-3 py-2 text-left font-semibold text-slate-400">
+            <th className="px-3 py-2 text-left font-semibold text-[var(--wt-text-muted)]">
               Status
             </th>
           </tr>
@@ -71,29 +71,29 @@ export function RepositoriesTable({
             return (
               <tr
                 key={`${commit.projectId}-${commit.commitHash}`}
-                className={`border-b border-white/5 transition-colors hover:bg-white/5 ${
-                  index % 2 === 0 ? "bg-slate-950/20" : ""
+                className={`border-b border-[var(--wt-border)] transition-colors hover:bg-[var(--wt-surface-hover)] ${
+                  index % 2 === 0 ? "bg-[var(--wt-surface-muted)]" : ""
                 }`}
               >
                 <td className="px-3 py-2.5">
                   <div className="flex items-center gap-2">
-                    <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-blue-500/15 text-blue-200">
+                    <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-200">
                       <GitBranch className="h-3.5 w-3.5" />
                     </div>
-                    <span className="font-medium text-white">
+                    <span className="font-medium text-[var(--wt-text-strong)]">
                       {commit.projectName}
                     </span>
                   </div>
                 </td>
                 <td className="px-3 py-2.5">
-                  <span className="truncate text-slate-400">
+                  <span className="truncate text-[var(--wt-text-muted)]">
                     {commit.repoPath || "N/A"}
                   </span>
                 </td>
                 <td className="px-3 py-2.5">
                   <div className="max-w-[200px]">
-                    <p className="truncate text-slate-300">{short}</p>
-                    <p className="text-[10px] text-slate-500">
+                    <p className="truncate text-[var(--wt-text)]">{short}</p>
+                    <p className="text-[10px] text-[var(--wt-text-muted)]">
                       {hash} • {formatTimeAgo(commit.committedAt)}
                     </p>
                   </div>
@@ -112,7 +112,7 @@ export function RepositoriesTable({
                             : "bg-slate-400"
                       }`}
                     />
-                    <span className="text-slate-300">{commit.status}</span>
+                    <span className="text-[var(--wt-text)]">{commit.status}</span>
                   </div>
                 </td>
               </tr>
@@ -125,7 +125,7 @@ export function RepositoriesTable({
         <div className="mt-3 flex justify-end">
           <button
             onClick={onViewAll}
-            className="text-xs font-medium text-blue-300 transition-colors hover:text-blue-200"
+            className="text-xs font-medium text-[var(--wt-accent-text)] transition-colors hover:text-blue-500"
           >
             View all repositories →
           </button>

@@ -114,13 +114,13 @@ export function DatePicker({
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
-        className="flex h-10 w-full items-center justify-between gap-3 rounded-xl border border-white/10 bg-slate-950/70 px-3 text-left text-sm text-slate-100 outline-none transition hover:border-blue-300/30 hover:bg-slate-950/80 focus:border-blue-300/50 focus:ring-2 focus:ring-blue-500/15"
+        className="wt-input flex h-10 w-full items-center justify-between gap-3 rounded-xl px-3 text-left text-sm transition-[background-color,border-color,box-shadow]"
       >
         <span className="flex min-w-0 items-center gap-2">
-          <CalendarDays className="h-4 w-4 shrink-0 text-cyan-300" />
+          <CalendarDays className="h-4 w-4 shrink-0 text-[var(--wt-accent-text)]" />
           <span className="truncate">{formatLongDate(value)}</span>
         </span>
-        <span className="rounded-lg border border-white/8 bg-white/[0.04] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+        <span className="rounded-lg border border-[var(--wt-border)] bg-[var(--wt-surface-muted)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--wt-text-muted)]">
           {label}
         </span>
       </button>
@@ -129,7 +129,7 @@ export function DatePicker({
         ? createPortal(
             <div
               ref={portalRef}
-              className="fixed z-[9999] rounded-2xl border border-white/10 bg-slate-950/95 p-3 shadow-2xl shadow-black/40 backdrop-blur-2xl"
+              className="fixed z-[9999] rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface)] p-3 shadow-[var(--wt-panel-shadow)]"
               style={{
                 left: `${position.left}px`,
                 width: `${position.width}px`,
@@ -144,31 +144,31 @@ export function DatePicker({
             <button
               type="button"
               onClick={() => shiftMonth(-1)}
-              className="grid h-9 w-9 place-items-center rounded-xl border border-white/10 bg-white/[0.04] text-slate-300 transition hover:border-cyan-300/25 hover:bg-cyan-300/10 hover:text-cyan-100"
+              className="grid h-9 w-9 place-items-center rounded-xl border border-[var(--wt-border)] bg-[var(--wt-input)] text-[var(--wt-text-muted)] transition hover:border-blue-500/25 hover:bg-[var(--wt-accent-soft)] hover:text-[var(--wt-accent-text)]"
               aria-label="Previous month"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
             <div className="text-center">
-              <p className="text-sm font-semibold text-white">
+              <p className="text-sm font-semibold text-[var(--wt-text-strong)]">
                 {new Intl.DateTimeFormat(undefined, {
                   month: "long",
                   year: "numeric",
                 }).format(visibleMonth)}
               </p>
-              <p className="text-[11px] text-slate-500">{subtitle}</p>
+              <p className="text-[11px] text-[var(--wt-text-muted)]">{subtitle}</p>
             </div>
             <button
               type="button"
               onClick={() => shiftMonth(1)}
-              className="grid h-9 w-9 place-items-center rounded-xl border border-white/10 bg-white/[0.04] text-slate-300 transition hover:border-cyan-300/25 hover:bg-cyan-300/10 hover:text-cyan-100"
+              className="grid h-9 w-9 place-items-center rounded-xl border border-[var(--wt-border)] bg-[var(--wt-input)] text-[var(--wt-text-muted)] transition hover:border-blue-500/25 hover:bg-[var(--wt-accent-soft)] hover:text-[var(--wt-accent-text)]"
               aria-label="Next month"
             >
               <ChevronRight className="h-4 w-4" />
             </button>
           </div>
 
-          <div className="grid grid-cols-7 gap-1 pb-1 text-center text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+          <div className="grid grid-cols-7 gap-1 pb-1 text-center text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--wt-text-faint)]">
             {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day) => (
               <span key={day}>{day}</span>
             ))}
@@ -187,11 +187,11 @@ export function DatePicker({
                   onClick={() => selectDate(day.date)}
                   className={`h-9 rounded-xl text-sm font-semibold transition ${
                     selected
-                      ? "bg-gradient-to-br from-blue-500 to-indigo-500 text-white shadow-lg shadow-blue-500/25"
+                      ? "bg-blue-600 text-white shadow-[var(--wt-primary-shadow)]"
                       : day.inMonth
-                        ? "border border-white/0 text-slate-200 hover:border-cyan-300/20 hover:bg-cyan-300/10 hover:text-cyan-100"
-                        : "text-slate-700 hover:bg-white/[0.03]"
-                  } ${isToday && !selected ? "ring-1 ring-cyan-300/30" : ""}`}
+                        ? "border border-transparent text-[var(--wt-text)] hover:border-blue-500/20 hover:bg-[var(--wt-accent-soft)] hover:text-[var(--wt-accent-text)]"
+                        : "text-[var(--wt-text-faint)] opacity-55 hover:bg-[var(--wt-surface-muted)]"
+                  } ${isToday && !selected ? "ring-1 ring-blue-500/30" : ""}`}
                 >
                   {selected ? <Check className="mx-auto h-4 w-4" /> : day.date.getDate()}
                 </button>
@@ -199,18 +199,18 @@ export function DatePicker({
             })}
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/8 pt-3">
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--wt-border)] pt-3">
             <button
               type="button"
               onClick={() => selectDate(new Date())}
-              className="rounded-xl border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-300/15"
+              className="rounded-xl border border-blue-500/20 bg-[var(--wt-accent-soft)] px-3 py-2 text-xs font-semibold text-[var(--wt-accent-text)] transition hover:bg-[var(--wt-selected)]"
             >
               Today
             </button>
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-slate-300 transition hover:bg-white/[0.08]"
+              className="rounded-xl border border-[var(--wt-border)] bg-[var(--wt-input)] px-3 py-2 text-xs font-semibold text-[var(--wt-text)] transition hover:bg-[var(--wt-surface-hover)]"
             >
               Done
             </button>

@@ -29,15 +29,15 @@ type ToastContextValue = {
 const ToastContext = createContext<ToastContextValue | null>(null);
 
 const toneClasses: Record<ToastTone, string> = {
-  success: "border-emerald-300/20 bg-emerald-500/10 text-emerald-100",
-  error: "border-red-300/20 bg-red-500/10 text-red-100",
-  info: "border-blue-300/20 bg-blue-500/10 text-blue-100",
+  success: "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-100",
+  error: "border-red-500/20 bg-red-500/10 text-red-700 dark:text-red-100",
+  info: "border-blue-500/20 bg-blue-500/10 text-blue-700 dark:text-blue-100",
 };
 
 const iconClasses: Record<ToastTone, string> = {
-  success: "text-emerald-300",
-  error: "text-red-300",
-  info: "text-blue-300",
+  success: "text-emerald-600 dark:text-emerald-300",
+  error: "text-red-600 dark:text-red-300",
+  info: "text-blue-600 dark:text-blue-300",
 };
 
 export function ToastProvider({ children }: PropsWithChildren) {
@@ -81,7 +81,7 @@ export function ToastProvider({ children }: PropsWithChildren) {
           return (
             <div
               key={toast.id}
-              className={`pointer-events-auto rounded-2xl border p-3 shadow-2xl shadow-black/30 backdrop-blur-2xl ${toneClasses[toast.tone]}`}
+              className={`pointer-events-auto rounded-2xl border p-3 shadow-[var(--wt-panel-shadow)] ${toneClasses[toast.tone]}`}
             >
               <div className="flex items-start gap-3">
                 <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${iconClasses[toast.tone]}`} />

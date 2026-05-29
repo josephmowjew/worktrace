@@ -6463,6 +6463,15 @@ impl<'a> SettingsRepository<'a> {
         if let Some(value) = input.quick_capture_include_in_report {
             settings.quick_capture_include_in_report = value;
         }
+        if let Some(value) = input.startup_enabled {
+            settings.startup_enabled = value;
+        }
+        if let Some(value) = input.start_minimized_to_tray {
+            settings.start_minimized_to_tray = value;
+        }
+        if let Some(value) = input.minimize_to_tray_on_close {
+            settings.minimize_to_tray_on_close = value;
+        }
         if let Some(value) = input.priority_reminders_enabled {
             settings.priority_reminders_enabled = value;
         }
@@ -6765,6 +6774,33 @@ impl<'a> SettingsRepository<'a> {
         self.upsert(
             "quick_capture.include_in_report",
             if settings.quick_capture_include_in_report {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
+        self.upsert(
+            "desktop.startup_enabled",
+            if settings.startup_enabled {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
+        self.upsert(
+            "desktop.start_minimized_to_tray",
+            if settings.start_minimized_to_tray {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
+        self.upsert(
+            "desktop.minimize_to_tray_on_close",
+            if settings.minimize_to_tray_on_close {
                 "true"
             } else {
                 "false"
@@ -7799,6 +7835,9 @@ fn apply_setting(settings: &mut Settings, key: &str, value: String) {
         "quick_capture.include_in_report" => {
             settings.quick_capture_include_in_report = value == "true"
         }
+        "desktop.startup_enabled" => settings.startup_enabled = value == "true",
+        "desktop.start_minimized_to_tray" => settings.start_minimized_to_tray = value == "true",
+        "desktop.minimize_to_tray_on_close" => settings.minimize_to_tray_on_close = value == "true",
         "priority_reminders.enabled" => settings.priority_reminders_enabled = value == "true",
         "priority_reminders.desktop_enabled" => {
             settings.priority_reminder_desktop_enabled = value == "true"
@@ -10272,7 +10311,7 @@ mod tests {
                 default_report_template: Some("project_based".to_string()),
                 working_days: Some(vec!["monday".to_string(), "tuesday".to_string()]),
                 daily_work_minutes: Some(450),
-                theme: Some("system".to_string()),
+                theme: Some("light".to_string()),
                 backup_enabled: Some(true),
                 backup_schedule: Some("weekly".to_string()),
                 backup_time: Some("17:30".to_string()),
@@ -10297,7 +10336,7 @@ mod tests {
         assert_eq!(updated.backup_time, "17:30");
         assert_eq!(
             repository.get().await.expect("get settings").theme,
-            "system"
+            "light"
         );
         assert_eq!(
             repository

@@ -37,7 +37,7 @@ export function ProjectBreakdownPanel({
 }) {
   if (breakdown.length === 0) {
     return (
-      <div className="flex h-32 items-center justify-center text-xs text-slate-500">
+      <div className="flex h-32 items-center justify-center text-xs text-[var(--wt-text-muted)]">
         No project activity this week
       </div>
     );
@@ -56,20 +56,20 @@ export function ProjectBreakdownPanel({
                 <div className={`flex h-5 w-5 items-center justify-center rounded ${colorClass} bg-opacity-20`}>
                   <Icon className="h-3 w-3 text-white" />
                 </div>
-                <span className="text-xs font-medium text-slate-200">
+                <span className="text-xs font-medium text-[var(--wt-text-strong)]">
                   {item.projectName}
                 </span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-white">
+                <span className="text-xs font-semibold text-[var(--wt-text-strong)]">
                   {item.percentage}%
                 </span>
-                <span className="text-[10px] text-slate-500">
+                <span className="text-[10px] text-[var(--wt-text-muted)]">
                   {formatHours(item.hours)}
                 </span>
               </div>
             </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-slate-800">
+            <div className="h-1.5 overflow-hidden rounded-full bg-[var(--wt-surface-muted)]">
               <div
                 className={`h-full rounded-full ${colorClass} transition-all duration-500`}
                 style={{ width: `${item.percentage}%` }}
@@ -79,10 +79,10 @@ export function ProjectBreakdownPanel({
         );
       })}
 
-      <div className="border-t border-white/8 pt-2">
+      <div className="border-t border-[var(--wt-border)] pt-2">
         <div className="flex items-center justify-between text-xs">
-          <span className="font-semibold text-slate-300">Total</span>
-          <span className="font-semibold text-white">{formatHours(totalHours)}</span>
+          <span className="font-semibold text-[var(--wt-text-muted)]">Total</span>
+          <span className="font-semibold text-[var(--wt-text-strong)]">{formatHours(totalHours)}</span>
         </div>
       </div>
     </div>

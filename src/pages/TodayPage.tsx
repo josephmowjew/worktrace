@@ -15,6 +15,7 @@ import {
   Layers3,
   ListChecks,
   ListTodo,
+  Monitor,
   Plus,
   RefreshCw,
   Sparkles,
@@ -59,6 +60,7 @@ import {
 import { listProjects } from "../lib/api/projects";
 import { listReportNotes, listReports, saveDailyReviewNote } from "../lib/api/reports";
 import { getSettings, updateSettings } from "../lib/api/settings";
+import { configureDesktopLifecycle } from "../lib/api/windows";
 import { listWorkspaces } from "../lib/api/workspaces";
 import { getWeekCapacity } from "../lib/api/calendar";
 import {
@@ -80,8 +82,15 @@ import { currentWeekRange, todayRange } from "../lib/dates";
 import type { CreateManualLogInput } from "../types/manualLog";
 import type { StopFocusSessionInput } from "../types/focusSession";
 import type { WeeklyTask, WeeklyTaskPriority, WeeklyTaskStatus, WeeklyTaskType } from "../types/weeklyTask";
-import type { DailyPlanItem } from "../types/dailyPlan";
+import type { DailyPlanItem, DailyPlanItemStatus } from "../types/dailyPlan";
 import type { PriorityReminder } from "../types/priorityReminder";
+
+type PriorityDraftItem = {
+  title: string;
+  plannedMinutes: string;
+  weeklyTaskId?: string;
+  status?: DailyPlanItemStatus;
+};
 
 type LocationState = {
   openTask?: boolean;
@@ -105,7 +114,7 @@ export function TodayPage() {
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reportPrepOpen, setReportPrepOpen] = useState(false);
   const [stopFocusOpen, setStopFocusOpen] = useState(false);
-  const [priorityDraft, setPriorityDraft] = useState<Array<{ title: string; plannedMinutes: string; weeklyTaskId?: string }>>([]);
+  const [priorityDraft, setPriorityDraft] = useState<PriorityDraftItem[]>([]);
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -254,6 +263,7 @@ export function TodayPage() {
       title: item?.title ?? "",
       plannedMinutes: item?.plannedMinutes ? String(item.plannedMinutes) : "",
       weeklyTaskId: item?.weeklyTaskId ?? undefined,
+      status: item?.status,
     }));
     setPriorityDraft(next);
   }, [commandCenterQuery.data?.topPriorities]);
@@ -505,6 +515,33 @@ export function TodayPage() {
       toast.error("Onboarding update failed", error instanceof Error ? error.message : "Could not update setup progress.");
     },
   });
+  const backgroundModeMutation = useMutation({
+    mutationFn: async () => {
+      const settings = await updateSettings({
+        startupEnabled: true,
+        startMinimizedToTray: true,
+        minimizeToTrayOnClose: true,
+      });
+      await configureDesktopLifecycle({
+        startupEnabled: settings.startupEnabled,
+        startMinimizedToTray: settings.startMinimizedToTray,
+        minimizeToTrayOnClose: settings.minimizeToTrayOnClose,
+      });
+      return settings;
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["settings"] });
+      await queryClient.invalidateQueries({ queryKey: ["desktopLifecycleStatus"] });
+      markOnboardingStep("background");
+      toast.success("Background mode enabled", "WorkTrace can start with Windows and stay available from the tray.");
+    },
+    onError: (error) => {
+      toast.error(
+        "Background mode failed",
+        error instanceof Error ? error.message : "Startup and tray settings could not be saved.",
+      );
+    },
+  });
   const replacePrioritiesMutation = useMutation({
     mutationFn: (items: Array<{ rank: number; title: string; weeklyTaskId?: string; plannedMinutes?: number }>) =>
       replaceDailyPlanItems({
@@ -606,6 +643,9 @@ export function TodayPage() {
     persistedOnboardingSteps.has("sync");
   const captureComplete =
     manualLogsQuery.data?.length ? true : tasks.length > 0 || persistedOnboardingSteps.has("capture");
+  const backgroundComplete =
+    Boolean(settingsQuery.data?.minimizeToTrayOnClose && settingsQuery.data?.startMinimizedToTray) ||
+    persistedOnboardingSteps.has("background");
   const reportComplete =
     reportsQuery.data?.length ? true : persistedOnboardingSteps.has("report");
   const onboardingSteps = [
@@ -643,6 +683,15 @@ export function TodayPage() {
       onAction: () => setLogModalOpen(true),
     },
     {
+      id: "background",
+      title: "Set background access",
+      detail: "Let WorkTrace stay in the tray and start quietly with Windows when you opt in.",
+      action: backgroundModeMutation.isPending ? "Enabling" : "Enable Tray",
+      done: backgroundComplete,
+      onAction: () => backgroundModeMutation.mutate(),
+      disabled: backgroundModeMutation.isPending,
+    },
+    {
       id: "report",
       title: "Preview the weekly report",
       detail: "Open report prep and make sure the trail can become a polished update.",
@@ -657,7 +706,7 @@ export function TodayPage() {
   const onboardingDoneCount = onboardingSteps.filter((step) => step.done).length;
   const onboardingIsComplete = onboardingDoneCount === onboardingSteps.length;
   const hasMeaningfulSetup =
-    projectsComplete || syncComplete || captureComplete || reportComplete || profileComplete;
+    projectsComplete || syncComplete || captureComplete || backgroundComplete || reportComplete || profileComplete;
   const showWelcomeModal =
     Boolean(settingsQuery.data) &&
     !settingsQuery.data?.onboardingDismissedWelcome &&
@@ -880,6 +929,9 @@ export function TodayPage() {
           updatePriorityMutation.isPending ||
           updateFocusGoalMutation.isPending
         }
+        backgroundModeEnabled={Boolean(settingsQuery.data?.minimizeToTrayOnClose)}
+        startupEnabled={Boolean(settingsQuery.data?.startupEnabled)}
+        onOpenBackgroundSettings={() => navigate("/settings")}
       />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -1192,10 +1244,10 @@ function OnboardingWelcomeModal({
           </h2>
           <p className="mt-3 text-sm leading-6 text-slate-300">
             We will set up only what matters: profile details, one project or workspace,
-            a commit sync, one captured non-code item, and a quick report preview.
+            a commit sync, one captured non-code item, tray access, and a quick report preview.
           </p>
           <div className="mt-5 grid gap-2 text-sm text-slate-300">
-            {["Profile", "Project or workspace", "Commit sync", "Manual capture", "Report preview"].map((item) => (
+            {["Profile", "Project or workspace", "Commit sync", "Manual capture", "Tray access", "Report preview"].map((item) => (
               <div key={item} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
                 <CheckCircle2 className="h-4 w-4 text-cyan-200" />
                 {item}
@@ -1259,7 +1311,7 @@ function OnboardingPipelinePanel({
           </Button>
         </div>
 
-        <div className="mt-4 grid gap-3 lg:grid-cols-5">
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
           {steps.map((step, index) => (
             <article
               key={step.id}
@@ -1309,6 +1361,9 @@ function TodayCommandCenterPanel({
   onMarkPriorityDone,
   onStartPriorityFocus,
   isSaving,
+  backgroundModeEnabled,
+  startupEnabled,
+  onOpenBackgroundSettings,
 }: {
   todayDate: string;
   commandCenter?: import("../types/dailyPlan").TodayCommandCenter;
@@ -1317,13 +1372,16 @@ function TodayCommandCenterPanel({
   errorMessage: string | null;
   openTasks: WeeklyTask[];
   reminders: PriorityReminder[];
-  priorityDraft: Array<{ title: string; plannedMinutes: string; weeklyTaskId?: string }>;
-  onPriorityDraftChange: (draft: Array<{ title: string; plannedMinutes: string; weeklyTaskId?: string }>) => void;
+  priorityDraft: PriorityDraftItem[];
+  onPriorityDraftChange: (draft: PriorityDraftItem[]) => void;
   onSavePriorities: () => void;
   onSetFocusGoal: (minutes: number) => void;
   onMarkPriorityDone: (item: DailyPlanItem) => void;
   onStartPriorityFocus: (item: DailyPlanItem) => void;
   isSaving: boolean;
+  backgroundModeEnabled: boolean;
+  startupEnabled: boolean;
+  onOpenBackgroundSettings: () => void;
 }) {
   const currentTask = commandCenter?.currentTask ?? null;
   const suggestedTask = commandCenter?.suggestedNextTask ?? null;
@@ -1349,6 +1407,11 @@ function TodayCommandCenterPanel({
   const focusGoal = commandCenter?.focusGoalMinutes ?? 240;
   const focusActual = commandCenter?.focusActualMinutes ?? 0;
   const focusPercent = Math.min(100, Math.round((focusActual / Math.max(focusGoal, 1)) * 100));
+  const completedPriorityCount = commandCenter?.endOfDayProgress.completedPriorities ?? 0;
+  const totalPriorityCount = commandCenter?.endOfDayProgress.totalPriorities ?? 0;
+  const priorityCompletionPercent =
+    totalPriorityCount > 0 ? Math.round((completedPriorityCount / totalPriorityCount) * 100) : 0;
+  const nextOpenDraftIndex = priorityDraft.findIndex((item) => item.title.trim() && item.status !== "done" && item.status !== "dropped");
   const remindersByItem = new Map(
     reminders
       .filter((reminder) => !reminder.dismissedAt)
@@ -1403,41 +1466,92 @@ function TodayCommandCenterPanel({
 
             <div className="rounded-xl border border-white/10 bg-white/[0.025] p-3">
               <div className="mb-3 flex items-center justify-between gap-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Set Today&apos;s Focus</p>
-                <Badge tone="blue">{commandCenter?.endOfDayProgress.completedPriorities ?? 0}/{commandCenter?.endOfDayProgress.totalPriorities ?? 0} done</Badge>
-              </div>
-            <div className="space-y-2">
-              {priorityDraft.map((item, index) => (
-                <div key={index} className="grid grid-cols-[24px_1fr_84px] items-center gap-2">
-                  <div className="flex h-6 w-6 items-center justify-center rounded-full border border-cyan-300/30 bg-cyan-500/10 text-[11px] font-semibold text-cyan-200">
-                    {index + 1}
-                  </div>
-                  <input
-                    value={item.title}
-                    onChange={(event) => {
-                      const next = [...priorityDraft];
-                      next[index] = { ...next[index], title: event.currentTarget.value };
-                      onPriorityDraftChange(next);
-                    }}
-                    placeholder={`Priority ${index + 1}`}
-                    className="h-9 rounded-lg border border-white/10 bg-slate-950/70 px-2 text-sm text-slate-100 outline-none focus:border-blue-300/50"
-                  />
-                  <input
-                    value={item.plannedMinutes}
-                    onChange={(event) => {
-                      const next = [...priorityDraft];
-                      next[index] = { ...next[index], plannedMinutes: event.currentTarget.value };
-                      onPriorityDraftChange(next);
-                    }}
-                    placeholder="Planned"
-                    className="h-9 rounded-lg border border-white/10 bg-slate-950/70 px-2 text-xs text-slate-100 outline-none focus:border-blue-300/50"
-                  />
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Set Today&apos;s Focus</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {completedPriorityCount > 0
+                      ? `${completedPriorityCount} complete, ${Math.max(totalPriorityCount - completedPriorityCount, 0)} still open`
+                      : "No completed priorities yet"}
+                  </p>
                 </div>
-              ))}
-            </div>
-            <Button onClick={onSavePriorities} className="mt-3 h-9 px-3 text-sm" disabled={isSaving}>
-              Save priorities
-            </Button>
+                <Badge tone={completedPriorityCount > 0 ? "green" : "blue"}>
+                  {completedPriorityCount}/{totalPriorityCount} done
+                </Badge>
+              </div>
+              <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-slate-900 ring-1 ring-white/8">
+                <div
+                  className="h-full rounded-full bg-emerald-300 shadow-[0_0_18px_rgba(110,231,183,0.28)] transition-[width] duration-200 ease-out"
+                  style={{ width: `${priorityCompletionPercent}%` }}
+                />
+              </div>
+              <div className="space-y-2">
+                {priorityDraft.map((item, index) => {
+                  const isDone = item.status === "done";
+                  const isDropped = item.status === "dropped";
+                  const isEmpty = !item.title.trim();
+                  const isNext = index === nextOpenDraftIndex;
+                  const rowState = isDone ? "done" : isDropped ? "dropped" : isNext ? "next" : isEmpty ? "empty" : "open";
+                  return (
+                    <div
+                      key={index}
+                      className={`grid grid-cols-[28px_minmax(0,1fr)_92px_78px] items-center gap-2 rounded-xl px-2 py-2 transition-[background-color,border-color,box-shadow] duration-150 ease-out ${
+                        isDone
+                          ? "border border-emerald-300/20 bg-emerald-500/[0.075] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+                          : isNext
+                            ? "border border-cyan-300/20 bg-cyan-300/[0.055]"
+                            : "border border-white/8 bg-slate-950/35"
+                      }`}
+                    >
+                      <div
+                        className={`flex h-7 w-7 items-center justify-center rounded-full border text-[11px] font-semibold ${
+                          isDone
+                            ? "border-emerald-200/40 bg-emerald-300/15 text-emerald-100"
+                            : isNext
+                              ? "border-cyan-200/40 bg-cyan-300/12 text-cyan-100"
+                              : "border-slate-500/35 bg-slate-900 text-slate-400"
+                        }`}
+                        aria-label={isDone ? `Priority ${index + 1} done` : `Priority ${index + 1}`}
+                      >
+                        {isDone ? <CheckCircle2 className="h-3.5 w-3.5" /> : index + 1}
+                      </div>
+                      <input
+                        value={item.title}
+                        onChange={(event) => {
+                          const next = [...priorityDraft];
+                          next[index] = { ...next[index], title: event.currentTarget.value };
+                          onPriorityDraftChange(next);
+                        }}
+                        placeholder={`Priority ${index + 1}`}
+                        className={`h-10 min-w-0 rounded-lg border px-2 text-sm outline-none transition-[background-color,border-color,color] duration-150 focus:border-blue-300/50 ${
+                          isDone
+                            ? "border-emerald-200/15 bg-emerald-950/20 text-emerald-100 line-through decoration-emerald-200/70"
+                            : "border-white/10 bg-slate-950/70 text-slate-100"
+                        }`}
+                      />
+                      <input
+                        value={item.plannedMinutes}
+                        onChange={(event) => {
+                          const next = [...priorityDraft];
+                          next[index] = { ...next[index], plannedMinutes: event.currentTarget.value };
+                          onPriorityDraftChange(next);
+                        }}
+                        placeholder="Planned"
+                        className={`h-10 rounded-lg border px-2 text-xs tabular-nums outline-none transition-[background-color,border-color,color] duration-150 focus:border-blue-300/50 ${
+                          isDone
+                            ? "border-emerald-200/15 bg-emerald-950/20 text-emerald-200/70"
+                            : "border-white/10 bg-slate-950/70 text-slate-100"
+                        }`}
+                      />
+                      <div className="flex justify-end">
+                        <PriorityDraftStatusBadge state={rowState} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <Button onClick={onSavePriorities} className="mt-3 h-9 px-3 text-sm" disabled={isSaving}>
+                Save priorities
+              </Button>
             </div>
 
             <div className="grid gap-3 md:grid-cols-2">
@@ -1457,6 +1571,28 @@ function TodayCommandCenterPanel({
           </div>
 
           <div className="space-y-3">
+            <div className="rounded-xl border border-white/10 bg-white/[0.025] p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Background access</p>
+                <Monitor className="h-4 w-4 text-slate-500" />
+              </div>
+              <p className="text-sm font-semibold text-slate-100">
+                {backgroundModeEnabled ? "Tray ready" : "Manual window only"}
+              </p>
+              <p className="mt-1 text-xs leading-5 text-slate-500">
+                {startupEnabled
+                  ? "WorkTrace can start quietly with Windows."
+                  : "Enable startup from Settings when you want WorkTrace available after sign-in."}
+              </p>
+              <Button
+                variant="ghost"
+                onClick={onOpenBackgroundSettings}
+                className="mt-3 h-8 px-2 text-xs"
+              >
+                Background settings
+              </Button>
+            </div>
+
             <div className="rounded-xl border border-white/10 bg-white/[0.025] p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Current active project</p>
@@ -1581,6 +1717,47 @@ function PriorityStatusBadge({
   }
   if (reminder?.shownAt) return <Badge tone="orange">Due</Badge>;
   return <Badge tone="slate">Focus</Badge>;
+}
+
+function PriorityDraftStatusBadge({
+  state,
+}: {
+  state: "done" | "dropped" | "next" | "empty" | "open";
+}) {
+  if (state === "done") {
+    return (
+      <span className="inline-flex h-7 min-w-[68px] items-center justify-center gap-1.5 rounded-lg border border-emerald-300/20 bg-emerald-300/10 px-2 text-[11px] font-semibold text-emerald-100">
+        <CheckCircle2 className="h-3.5 w-3.5" />
+        Done
+      </span>
+    );
+  }
+  if (state === "next") {
+    return (
+      <span className="inline-flex h-7 min-w-[68px] items-center justify-center rounded-lg border border-cyan-300/20 bg-cyan-300/10 px-2 text-[11px] font-semibold text-cyan-100">
+        Next
+      </span>
+    );
+  }
+  if (state === "dropped") {
+    return (
+      <span className="inline-flex h-7 min-w-[68px] items-center justify-center rounded-lg border border-slate-500/20 bg-slate-800/50 px-2 text-[11px] font-semibold text-slate-400">
+        Dropped
+      </span>
+    );
+  }
+  if (state === "empty") {
+    return (
+      <span className="inline-flex h-7 min-w-[68px] items-center justify-center rounded-lg border border-dashed border-slate-600/40 px-2 text-[11px] font-medium text-slate-600">
+        Open slot
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex h-7 min-w-[68px] items-center justify-center rounded-lg border border-slate-500/20 bg-slate-900/60 px-2 text-[11px] font-semibold text-slate-300">
+      Open
+    </span>
+  );
 }
 
 function PriorityReminderPanel({

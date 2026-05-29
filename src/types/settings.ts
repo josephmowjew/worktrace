@@ -1,3 +1,5 @@
+export type ThemePreference = "dark" | "light" | "system";
+
 export type Settings = {
   name: string;
   email: string;
@@ -7,7 +9,7 @@ export type Settings = {
   defaultReportTemplate: string;
   workingDays: string[];
   dailyWorkMinutes: number;
-  theme: string;
+  theme: ThemePreference | string;
   backupEnabled: boolean;
   backupSchedule: string;
   backupTime: string;
@@ -52,6 +54,9 @@ export type Settings = {
   quickCaptureEnabled: boolean;
   quickCaptureShortcut: string;
   quickCaptureIncludeInReport: boolean;
+  startupEnabled: boolean;
+  startMinimizedToTray: boolean;
+  minimizeToTrayOnClose: boolean;
   priorityRemindersEnabled: boolean;
   priorityReminderDesktopEnabled: boolean;
   priorityReminderCheckpoints: string[];

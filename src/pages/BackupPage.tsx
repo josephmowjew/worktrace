@@ -1,17 +1,20 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import {
   CalendarClock,
   Check,
   Cloud,
   DatabaseBackup,
+  Download,
   FolderOpen,
   HardDrive,
+  RotateCcw,
   Save,
   ShieldCheck,
+  Upload,
 } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -21,7 +24,9 @@ import { Panel } from "../components/ui/Panel";
 import { SelectField } from "../components/ui/SelectField";
 import { useToast } from "../components/ui/ToastProvider";
 import {
+  exportSettingsToFile,
   getSettings,
+  importSettings,
   updateSettings,
   validateBackupLocation,
 } from "../lib/api/settings";
@@ -91,6 +96,7 @@ const evaluationCriteria = [
 export function BackupPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
+  const importInputRef = useRef<HTMLInputElement>(null);
   const settingsQuery = useQuery({
     queryKey: ["settings"],
     queryFn: getSettings,
@@ -127,6 +133,50 @@ export function BackupPage() {
       toast.error(
         "Backup settings failed",
         error instanceof Error ? error.message : "Backup settings could not be saved.",
+      );
+    },
+  });
+  const exportSettingsMutation = useMutation({
+    mutationFn: async () => {
+      const stamp = new Date().toISOString().slice(0, 10);
+      const path = await save({
+        title: "Export WorkTrace settings",
+        defaultPath: `worktrace-settings-${stamp}.json`,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+
+      if (!path) {
+        return false;
+      }
+
+      await exportSettingsToFile(path);
+      return true;
+    },
+    onSuccess: (saved) => {
+      if (saved) {
+        toast.success("Settings exported", "Your WorkTrace settings export was saved.");
+      }
+    },
+    onError: (error) => {
+      toast.error(
+        "Export failed",
+        error instanceof Error ? error.message : "Settings could not be exported.",
+      );
+    },
+  });
+  const importSettingsMutation = useMutation({
+    mutationFn: importSettings,
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: ["settings"] });
+      toast.success(
+        "Settings restored",
+        result.warnings[0] ?? "Preferences, backup setup, integrations, and reporting defaults were restored.",
+      );
+    },
+    onError: (error) => {
+      toast.error(
+        "Restore failed",
+        error instanceof Error ? error.message : "Settings could not be restored.",
       );
     },
   });
@@ -175,6 +225,16 @@ export function BackupPage() {
         shouldDirty: true,
         shouldValidate: true,
       });
+    }
+  }
+
+  async function importSelectedSettingsFile(file: File | undefined) {
+    if (!file) return;
+
+    const payload = await file.text();
+    importSettingsMutation.mutate(payload);
+    if (importInputRef.current) {
+      importInputRef.current.value = "";
     }
   }
 
@@ -349,6 +409,41 @@ export function BackupPage() {
 
         <div className="space-y-4">
           <Panel className="space-y-3">
+            <div className="flex items-center gap-2 text-base font-semibold text-white">
+              <RotateCcw className="h-4 w-4 text-cyan-300" />
+              Restore And Portability
+            </div>
+            <p className="text-xs leading-5 text-slate-400">
+              Export settings before reinstalling, then restore them here on a fresh install. This covers preferences, backup setup, integrations, voice, reporting, and onboarding state.
+            </p>
+            <div className="grid gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => exportSettingsMutation.mutate()}
+                disabled={exportSettingsMutation.isPending}
+                className="w-full justify-start"
+              >
+                <Download className="h-4 w-4" />
+                {exportSettingsMutation.isPending ? "Exporting..." : "Export Settings Backup"}
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                onClick={() => importInputRef.current?.click()}
+                disabled={importSettingsMutation.isPending}
+                className="w-full justify-start"
+              >
+                <Upload className="h-4 w-4" />
+                {importSettingsMutation.isPending ? "Restoring..." : "Restore Settings From File"}
+              </Button>
+            </div>
+            <div className="rounded-xl border border-white/8 bg-white/[0.03] p-3 text-xs leading-5 text-slate-500">
+              Full app data restore is not wired yet. For now, WorkTrace can restore settings exports from this page.
+            </div>
+          </Panel>
+
+          <Panel className="space-y-3">
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-base font-semibold text-white">MVP Status</h2>
               <Badge tone={status.tone}>{status.label}</Badge>
@@ -408,6 +503,15 @@ export function BackupPage() {
         </div>
       </form>
 
+      <input
+        ref={importInputRef}
+        type="file"
+        accept="application/json,.json"
+        className="hidden"
+        onChange={(event) => {
+          void importSelectedSettingsFile(event.currentTarget.files?.[0]);
+        }}
+      />
     </div>
   );
 }

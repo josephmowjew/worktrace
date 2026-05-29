@@ -5,13 +5,13 @@ import type { WeeklyTask } from "../../types/weeklyTask";
 function getPriorityColor(priority: string): string {
   switch (priority) {
     case "high":
-      return "border-red-300/20 bg-red-500/10 text-red-300";
+      return "border-red-500/20 bg-red-500/10 text-red-600 dark:text-red-300";
     case "normal":
-      return "border-orange-300/20 bg-orange-500/10 text-orange-300";
+      return "border-orange-500/20 bg-orange-500/10 text-orange-600 dark:text-orange-300";
     case "low":
-      return "border-blue-300/20 bg-blue-500/10 text-blue-300";
+      return "border-blue-500/20 bg-blue-500/10 text-blue-600 dark:text-blue-300";
     default:
-      return "border-slate-300/20 bg-slate-500/10 text-slate-300";
+      return "border-[var(--wt-border)] bg-[var(--wt-surface-muted)] text-[var(--wt-text-muted)]";
   }
 }
 
@@ -164,7 +164,7 @@ export function TaskCard({
           onView();
         }
       }}
-      className={`group rounded-xl border border-white/8 bg-slate-950/45 p-3 transition-colors hover:bg-white/5 ${
+      className={`group rounded-xl border border-[var(--wt-border)] bg-[var(--wt-surface)] p-3 shadow-[0_1px_2px_rgb(var(--wt-shadow)/0.06)] transition-colors hover:bg-[var(--wt-surface-muted)] ${
         isDragging ? "cursor-grabbing" : "cursor-pointer"
       }`}
       style={{ transition: isDragging ? "none" : "background-color 0.15s, border-color 0.15s, transform 0.15s" }}
@@ -172,7 +172,7 @@ export function TaskCard({
       <div className="flex items-start gap-2.5">
         <div
           onMouseDown={handleMouseDown}
-          className="mt-0.5 cursor-grab text-slate-600 transition-colors hover:text-slate-400 active:cursor-grabbing"
+          className="mt-0.5 cursor-grab text-[var(--wt-text-faint)] transition-colors hover:text-[var(--wt-text-muted)] active:cursor-grabbing"
         >
           <GripVertical className="h-4 w-4" />
         </div>
@@ -190,7 +190,7 @@ export function TaskCard({
             className={`flex h-4 w-4 items-center justify-center rounded border transition-colors ${
               isCompleted
                 ? "border-emerald-400/50 bg-emerald-500/20 text-emerald-400"
-                : "border-slate-500/50 bg-transparent text-transparent hover:border-slate-400"
+                : "border-[var(--wt-border-strong)] bg-transparent text-transparent hover:border-[var(--wt-text-faint)]"
             }`}
           >
             <Check className="h-3 w-3" />
@@ -200,7 +200,7 @@ export function TaskCard({
         <div className="min-w-0 flex-1">
           <p
             className={`text-xs font-medium leading-5 ${
-              isCompleted ? "line-through text-slate-500" : "text-slate-100"
+              isCompleted ? "line-through text-[var(--wt-text-faint)]" : "text-[var(--wt-text-strong)]"
             }`}
           >
             {task.title}
@@ -213,18 +213,18 @@ export function TaskCard({
               {priorityLabel}
             </span>
             {task.projectName && (
-              <span className="rounded-md bg-slate-700/50 px-1.5 py-0.5 text-[10px] text-slate-400">
+              <span className="rounded-md bg-[var(--wt-surface-muted)] px-1.5 py-0.5 text-[10px] text-[var(--wt-text-muted)]">
                 {task.projectName}
               </span>
             )}
             {task.targetDate ? (
-              <span className="inline-flex items-center gap-1 rounded-md bg-slate-700/50 px-1.5 py-0.5 text-[10px] text-slate-400">
+              <span className="inline-flex items-center gap-1 rounded-md bg-[var(--wt-surface-muted)] px-1.5 py-0.5 text-[10px] text-[var(--wt-text-muted)]">
                 <CalendarDays className="h-3 w-3" />
                 {task.targetDate.slice(5)}
               </span>
             ) : null}
             {task.estimatedMinutes ? (
-              <span className="inline-flex items-center gap-1 rounded-md bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-200">
+              <span className="inline-flex items-center gap-1 rounded-md bg-blue-500/10 px-1.5 py-0.5 text-[10px] text-blue-600 dark:text-cyan-200">
                 <Clock3 className="h-3 w-3" />
                 {formatMinutes(task.estimatedMinutes)}
               </span>
@@ -233,11 +233,11 @@ export function TaskCard({
 
           {isInProgress && task.progressPercent !== undefined && task.progressPercent !== null && (
             <div className="mt-2">
-              <div className="flex items-center justify-between text-[10px] text-slate-500">
+              <div className="flex items-center justify-between text-[10px] text-[var(--wt-text-muted)]">
                 <span>Progress</span>
                 <span>{task.progressPercent}%</span>
               </div>
-              <div className="mt-1 h-1 overflow-hidden rounded-full bg-slate-800">
+              <div className="mt-1 h-1 overflow-hidden rounded-full bg-[var(--wt-surface-muted)]">
                 <div
                   className="h-full rounded-full bg-blue-500 transition-all duration-300"
                   style={{ width: `${task.progressPercent}%` }}
@@ -249,7 +249,7 @@ export function TaskCard({
 
         <div className="flex shrink-0 items-center gap-1">
           <div
-            className="hidden h-6 w-6 items-center justify-center rounded-full bg-slate-700/50 text-[10px] font-medium text-slate-400 2xl:flex"
+            className="hidden h-6 w-6 items-center justify-center rounded-full bg-[var(--wt-surface-muted)] text-[10px] font-medium text-[var(--wt-text-muted)] 2xl:flex"
           >
             {getInitials(task.title)}
           </div>
@@ -260,7 +260,7 @@ export function TaskCard({
                 e.stopPropagation();
                 onEdit();
               }}
-              className="rounded-lg p-1 text-slate-500 transition-colors hover:bg-white/10 hover:text-slate-300"
+              className="rounded-lg p-1 text-[var(--wt-text-muted)] transition-colors hover:bg-[var(--wt-surface-hover)] hover:text-[var(--wt-text-strong)]"
               title="Edit"
             >
               <Edit3 className="h-3 w-3" />
@@ -270,7 +270,7 @@ export function TaskCard({
                 e.stopPropagation();
                 onDelete();
               }}
-              className="rounded-lg p-1 text-slate-500 transition-colors hover:bg-red-500/10 hover:text-red-400"
+              className="rounded-lg p-1 text-[var(--wt-text-muted)] transition-colors hover:bg-red-500/10 hover:text-red-500"
               title="Delete"
             >
               <Trash2 className="h-3 w-3" />
