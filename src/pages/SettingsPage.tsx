@@ -29,10 +29,13 @@ import { activateSparcForceAddon, exportSettingsToFile, getSettings, importSetti
 import {
   completeGitHubDeviceAuth,
   connectGitHubPat,
+  disconnectGitHubAccount,
   disconnectGitHub,
   getGitHubIntegrationStatus,
+  listGitHubAccounts,
   startGitHubDeviceAuth,
   syncGitHubProjectActivity,
+  testGitHubAccount,
   testGitHubConnection,
 } from "../lib/api/github";
 import {
@@ -67,7 +70,7 @@ import {
   verifySparcForceLoginOtp,
 } from "../lib/api/sparcForce";
 import type { ReportAiModelList, ReportAiProvider, ReportAiStatus } from "../types/report";
-import type { GitHubIntegrationStatus, StartGitHubDeviceAuthOutput } from "../types/github";
+import type { GitHubAccount, GitHubIntegrationStatus, StartGitHubDeviceAuthOutput } from "../types/github";
 import type { CalendarSource } from "../types/calendar";
 import type { Settings } from "../types/settings";
 import type { SparcForceImportedItem, SparcForceIntegrationStatus, SparcForceRecordCounts } from "../types/sparcForce";
@@ -204,6 +207,10 @@ export function SettingsPage() {
   const githubStatusQuery = useQuery({
     queryKey: ["githubIntegrationStatus"],
     queryFn: getGitHubIntegrationStatus,
+  });
+  const githubAccountsQuery = useQuery({
+    queryKey: ["githubAccounts"],
+    queryFn: listGitHubAccounts,
   });
   const [githubToken, setGithubToken] = useState("");
   const [githubDeviceAuth, setGithubDeviceAuth] = useState<StartGitHubDeviceAuthOutput | null>(null);
@@ -536,6 +543,7 @@ export function SettingsPage() {
         setGithubDeviceAuth(null);
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: ["githubIntegrationStatus"] }),
+          queryClient.invalidateQueries({ queryKey: ["githubAccounts"] }),
           queryClient.invalidateQueries({ queryKey: ["settings"] }),
         ]);
         toast.success("GitHub connected", "WorkTrace can now sync GitHub PRs and issues.");
@@ -555,6 +563,7 @@ export function SettingsPage() {
       setGithubToken("");
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["githubIntegrationStatus"] }),
+        queryClient.invalidateQueries({ queryKey: ["githubAccounts"] }),
         queryClient.invalidateQueries({ queryKey: ["settings"] }),
       ]);
       toast.success("GitHub connected", "WorkTrace can now create pull requests.");
@@ -568,6 +577,7 @@ export function SettingsPage() {
     onSuccess: async (result) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["githubIntegrationStatus"] }),
+        queryClient.invalidateQueries({ queryKey: ["githubAccounts"] }),
         queryClient.invalidateQueries({ queryKey: ["activity"] }),
       ]);
       toast.success("GitHub activity synced", result.message);
@@ -581,6 +591,7 @@ export function SettingsPage() {
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["githubIntegrationStatus"] }),
+        queryClient.invalidateQueries({ queryKey: ["githubAccounts"] }),
         queryClient.invalidateQueries({ queryKey: ["settings"] }),
       ]);
       toast.success("GitHub connection verified");
@@ -594,12 +605,39 @@ export function SettingsPage() {
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["githubIntegrationStatus"] }),
+        queryClient.invalidateQueries({ queryKey: ["githubAccounts"] }),
         queryClient.invalidateQueries({ queryKey: ["settings"] }),
       ]);
       toast.success("GitHub disconnected");
     },
     onError: (error) => {
       toast.error("Disconnect failed", error instanceof Error ? error.message : "GitHub could not be disconnected.");
+    },
+  });
+  const testGithubAccountMutation = useMutation({
+    mutationFn: (accountId: string) => testGitHubAccount({ accountId }),
+    onSuccess: async (account) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["githubIntegrationStatus"] }),
+        queryClient.invalidateQueries({ queryKey: ["githubAccounts"] }),
+      ]);
+      toast.success("GitHub account verified", account.username ?? "Account is connected.");
+    },
+    onError: (error) => {
+      toast.error("GitHub test failed", error instanceof Error ? error.message : "The account could not be verified.");
+    },
+  });
+  const disconnectGithubAccountMutation = useMutation({
+    mutationFn: (accountId: string) => disconnectGitHubAccount({ accountId }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["githubIntegrationStatus"] }),
+        queryClient.invalidateQueries({ queryKey: ["githubAccounts"] }),
+      ]);
+      toast.success("GitHub account disconnected");
+    },
+    onError: (error) => {
+      toast.error("Disconnect failed", error instanceof Error ? error.message : "GitHub account could not be disconnected.");
     },
   });
 
@@ -865,8 +903,11 @@ export function SettingsPage() {
           connectGithubMutation={connectGithubMutation}
           testGithubMutation={testGithubMutation}
           syncGithubActivityMutation={syncGithubActivityMutation}
+          testGithubAccountMutation={testGithubAccountMutation}
+          disconnectGithubAccountMutation={disconnectGithubAccountMutation}
           githubConnected={githubConnected}
           githubStatus={githubStatusQuery.data}
+          githubAccounts={githubAccountsQuery.data?.accounts ?? []}
           githubError={githubStatusQuery.error}
           githubIsError={githubStatusQuery.isError}
           sparcForceStatus={sparcForceStatusQuery.data}
@@ -2244,8 +2285,11 @@ function IntegrationSetupPanel({
   connectGithubMutation,
   testGithubMutation,
   syncGithubActivityMutation,
+  testGithubAccountMutation,
+  disconnectGithubAccountMutation,
   githubConnected,
   githubStatus,
+  githubAccounts,
   githubError,
   githubIsError,
   sparcForceStatus,
@@ -2306,8 +2350,11 @@ function IntegrationSetupPanel({
   connectGithubMutation: PendingMutation & { mutate: () => void };
   testGithubMutation: PendingMutation & { mutate: () => void };
   syncGithubActivityMutation: PendingMutation & { mutate: () => void };
+  testGithubAccountMutation: PendingMutation & { mutate: (accountId: string) => void };
+  disconnectGithubAccountMutation: PendingMutation & { mutate: (accountId: string) => void };
   githubConnected: boolean;
   githubStatus: GitHubIntegrationStatus | undefined;
+  githubAccounts: GitHubAccount[];
   githubError: unknown;
   githubIsError: boolean;
   sparcForceStatus: SparcForceIntegrationStatus | undefined;
@@ -2420,6 +2467,58 @@ function IntegrationSetupPanel({
                 {githubStatus.lastError}
               </div>
             ) : null}
+
+            <div className="mt-4 grid gap-2">
+              {githubAccounts.length ? (
+                githubAccounts.map((account) => (
+                  <div
+                    key={account.id}
+                    className="grid gap-3 rounded-xl border border-white/10 bg-slate-950/45 p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="truncate text-sm font-semibold text-slate-100">
+                          {account.username ?? "GitHub account"}
+                        </span>
+                        <Badge tone={account.status === "connected" ? "green" : "slate"}>
+                          {account.status === "connected" ? "Connected" : "Disconnected"}
+                        </Badge>
+                        <span className="rounded-lg bg-slate-900/80 px-2 py-1 text-[11px] font-semibold text-slate-400">
+                          {account.authMethod === "oauth_device" ? "Browser sign-in" : "PAT"}
+                        </span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
+                        <span>{account.host}</span>
+                        <span>Checked {account.lastValidatedAt ? formatTimestamp(account.lastValidatedAt) : "not yet"}</span>
+                        <span>Synced {account.lastSyncedAt ? formatTimestamp(account.lastSyncedAt) : "not yet"}</span>
+                      </div>
+                      {account.lastError ? <p className="mt-2 text-xs text-red-200">{account.lastError}</p> : null}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        disabled={testGithubAccountMutation.isPending || account.status !== "connected"}
+                        onClick={() => testGithubAccountMutation.mutate(account.id)}
+                      >
+                        Test
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={disconnectGithubAccountMutation.isPending || account.status !== "connected"}
+                        onClick={() => disconnectGithubAccountMutation.mutate(account.id)}
+                      >
+                        Disconnect
+                      </Button>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-xl border border-white/10 bg-slate-950/35 p-3 text-xs text-slate-400">
+                  No GitHub accounts connected yet.
+                </div>
+              )}
+            </div>
 
             {githubDeviceAuth ? (
               <div className="mt-4 rounded-xl border border-blue-300/20 bg-blue-500/10 p-4">

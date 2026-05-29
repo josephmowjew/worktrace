@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { ActivityItem } from "../../types/activity";
 import type { GitBranch, Project } from "../../types/project";
-import { createGitHubPullRequest, getGitHubIntegrationStatus } from "../../lib/api/github";
+import { createGitHubPullRequest, getGitHubIntegrationStatus, listGitHubAccounts } from "../../lib/api/github";
 import { listGitBranches } from "../../lib/api/projects";
 import {
   fullPrPackageText,
@@ -40,11 +40,19 @@ export function PrBuilderPanel({
   const [title, setTitle] = useState(() => suggestedPrTitle(commits, project.name, groups));
   const [notes, setNotes] = useState(() => suggestedPrNotes(commits, groups));
   const [createdPrUrl, setCreatedPrUrl] = useState<string | null>(null);
+  const [selectedAccountId, setSelectedAccountId] = useState(project.githubAccountId ?? "");
 
   const githubStatusQuery = useQuery({
     queryKey: ["githubIntegrationStatus"],
     queryFn: getGitHubIntegrationStatus,
   });
+  const githubAccountsQuery = useQuery({
+    queryKey: ["githubAccounts"],
+    queryFn: listGitHubAccounts,
+  });
+  const connectedAccounts = (githubAccountsQuery.data?.accounts ?? []).filter(
+    (account) => account.status === "connected",
+  );
 
   useEffect(() => {
     let isActive = true;
@@ -86,7 +94,8 @@ export function PrBuilderPanel({
     setBranchName(suggestedBranchName(project.name, commits, groups));
     setTitle(suggestedPrTitle(commits, project.name, groups));
     setNotes(suggestedPrNotes(commits, groups));
-  }, [commits, groups, project.name]);
+    setSelectedAccountId(project.githubAccountId ?? "");
+  }, [commits, groups, project.githubAccountId, project.name]);
 
   const canGeneratePackage = baseBranch.trim().length > 0;
 
@@ -106,6 +115,7 @@ export function PrBuilderPanel({
   const createPrMutation = useMutation({
     mutationFn: () =>
       createGitHubPullRequest({
+        accountId: selectedAccountId || project.githubAccountId,
         projectId: project.id,
         baseBranch,
         newBranch: branchName,
@@ -233,6 +243,24 @@ export function PrBuilderPanel({
           )}
         </div>
 
+        {connectedAccounts.length ? (
+          <label className="mt-3 grid gap-2 text-xs font-semibold text-slate-300">
+            GitHub account
+            <select
+              className="h-10 rounded-xl border border-white/10 bg-slate-950/75 px-3 text-sm text-slate-100 outline-none transition-colors focus:border-blue-300/50 focus:ring-2 focus:ring-blue-500/15"
+              value={selectedAccountId}
+              onChange={(event) => setSelectedAccountId(event.target.value)}
+            >
+              <option value="">Select account</option>
+              {connectedAccounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.username ?? "GitHub account"}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+
         {!githubStatusQuery.data?.connected ? (
           <div className="mt-3 rounded-xl border border-orange-300/15 bg-orange-500/10 p-3 text-xs leading-5 text-orange-100/85">
             Connect GitHub in Settings before creating PRs from WorkTrace.
@@ -292,6 +320,7 @@ export function PrBuilderPanel({
           disabled={
             !canGeneratePackage ||
             !githubStatusQuery.data?.connected ||
+            !selectedAccountId ||
             createPrMutation.isPending ||
             prPackage.selectedCommits.length === 0
           }

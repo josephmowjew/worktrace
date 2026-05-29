@@ -36,6 +36,12 @@ pub struct WorkspaceRepoDiscovery {
     pub repo_path: String,
     pub relative_path: String,
     pub suggested_name: String,
+    pub github_url: Option<String>,
+    pub github_owner: Option<String>,
+    pub github_repo: Option<String>,
+    pub github_account_id: Option<String>,
+    pub github_account_username: Option<String>,
+    pub github_binding_status: Option<String>,
     pub status: String,
     pub project_id: Option<String>,
     pub project_name: Option<String>,
@@ -54,6 +60,8 @@ pub struct ImportWorkspaceRepositoryInput {
     pub repo_path: String,
     pub name: Option<String>,
     pub project_type: Option<String>,
+    pub github_url: Option<String>,
+    pub github_account_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -10,6 +10,7 @@ pub struct Project {
     pub description: Option<String>,
     pub repo_path: Option<String>,
     pub github_url: Option<String>,
+    pub github_account_id: Option<String>,
     pub project_type: Option<String>,
     pub workspace_id: Option<String>,
     pub workspace_relative_path: Option<String>,
@@ -26,6 +27,7 @@ pub struct CreateProjectInput {
     pub description: Option<String>,
     pub repo_path: Option<String>,
     pub github_url: Option<String>,
+    pub github_account_id: Option<String>,
     pub project_type: Option<String>,
     pub classification: Option<String>,
 }
@@ -37,6 +39,7 @@ pub struct UpdateProjectInput {
     pub description: Option<String>,
     pub repo_path: Option<String>,
     pub github_url: Option<String>,
+    pub github_account_id: Option<String>,
     pub project_type: Option<String>,
     pub workspace_id: Option<String>,
     pub workspace_relative_path: Option<String>,

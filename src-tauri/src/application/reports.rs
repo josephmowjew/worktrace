@@ -549,6 +549,7 @@ mod tests {
                 description: None,
                 repo_path: None,
                 github_url: None,
+                github_account_id: None,
                 project_type: Some("Company".to_string()),
                 classification: None,
             })
@@ -743,6 +744,7 @@ mod tests {
                 description: None,
                 repo_path: None,
                 github_url: None,
+                github_account_id: None,
                 project_type: Some("Backend".to_string()),
                 classification: Some("work".to_string()),
             })
@@ -754,6 +756,7 @@ mod tests {
                 description: None,
                 repo_path: None,
                 github_url: None,
+                github_account_id: None,
                 project_type: Some("Tools".to_string()),
                 classification: Some("personal".to_string()),
             })

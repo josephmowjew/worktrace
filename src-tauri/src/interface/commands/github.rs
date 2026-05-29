@@ -4,8 +4,10 @@ use tauri::{AppHandle, State};
 use crate::application::github::{GitHubService, GitHubServiceError};
 use crate::domain::github::{
     CompleteGitHubDeviceAuthInput, CompleteGitHubDeviceAuthOutput, ConnectGitHubPatInput,
-    CreateGitHubPullRequestInput, CreateGitHubPullRequestOutput, GitHubIntegrationStatus,
-    StartGitHubDeviceAuthOutput, SyncGitHubProjectActivityInput, SyncGitHubProjectActivityOutput,
+    CreateGitHubPullRequestInput, CreateGitHubPullRequestOutput, DetectProjectGitHubBindingInput,
+    DetectProjectGitHubBindingOutput, GitHubAccount, GitHubAccountActionInput,
+    GitHubAccountsStatus, GitHubIntegrationStatus, StartGitHubDeviceAuthOutput,
+    SyncGitHubProjectActivityInput, SyncGitHubProjectActivityOutput,
 };
 use crate::infrastructure::database::repositories::{
     GitHubRepository, ProjectRepository, SettingsRepository,
@@ -22,6 +24,20 @@ pub async fn get_github_integration_status(
 
     Ok(
         match GitHubService::status(&settings_repository, &github_repository).await {
+            Ok(status) => AppResult::ok(status),
+            Err(error) => github_error(error),
+        },
+    )
+}
+
+#[tauri::command]
+pub async fn list_github_accounts(
+    state: State<'_, AppState>,
+) -> Result<AppResult<GitHubAccountsStatus>, String> {
+    let github_repository = GitHubRepository::new(state.database.pool());
+
+    Ok(
+        match GitHubService::list_accounts(&github_repository).await {
             Ok(status) => AppResult::ok(status),
             Err(error) => github_error(error),
         },
@@ -62,9 +78,25 @@ pub async fn connect_github_pat(
     input: ConnectGitHubPatInput,
 ) -> Result<AppResult<GitHubIntegrationStatus>, String> {
     let settings_repository = SettingsRepository::new(state.database.pool());
+    let github_repository = GitHubRepository::new(state.database.pool());
 
     Ok(
-        match GitHubService::connect_pat(&settings_repository, input).await {
+        match GitHubService::connect_pat(&settings_repository, &github_repository, input).await {
+            Ok(status) => AppResult::ok(status),
+            Err(error) => github_error(error),
+        },
+    )
+}
+
+#[tauri::command]
+pub async fn test_github_account(
+    state: State<'_, AppState>,
+    input: GitHubAccountActionInput,
+) -> Result<AppResult<GitHubAccount>, String> {
+    let github_repository = GitHubRepository::new(state.database.pool());
+
+    Ok(
+        match GitHubService::test_account(&github_repository, input).await {
             Ok(status) => AppResult::ok(status),
             Err(error) => github_error(error),
         },
@@ -87,6 +119,21 @@ pub async fn test_github_connection(
 }
 
 #[tauri::command]
+pub async fn disconnect_github_account(
+    state: State<'_, AppState>,
+    input: GitHubAccountActionInput,
+) -> Result<AppResult<GitHubAccountsStatus>, String> {
+    let github_repository = GitHubRepository::new(state.database.pool());
+
+    Ok(
+        match GitHubService::disconnect_account(&github_repository, input).await {
+            Ok(status) => AppResult::ok(status),
+            Err(error) => github_error(error),
+        },
+    )
+}
+
+#[tauri::command]
 pub async fn disconnect_github(
     state: State<'_, AppState>,
 ) -> Result<AppResult<GitHubIntegrationStatus>, String> {
@@ -96,6 +143,24 @@ pub async fn disconnect_github(
     Ok(
         match GitHubService::disconnect(&settings_repository, &github_repository).await {
             Ok(status) => AppResult::ok(status),
+            Err(error) => github_error(error),
+        },
+    )
+}
+
+#[tauri::command]
+pub async fn detect_project_github_binding(
+    state: State<'_, AppState>,
+    input: DetectProjectGitHubBindingInput,
+) -> Result<AppResult<DetectProjectGitHubBindingOutput>, String> {
+    let project_repository = ProjectRepository::new(state.database.pool());
+    let github_repository = GitHubRepository::new(state.database.pool());
+
+    Ok(
+        match GitHubService::detect_project_binding(&project_repository, &github_repository, input)
+            .await
+        {
+            Ok(output) => AppResult::ok(output),
             Err(error) => github_error(error),
         },
     )

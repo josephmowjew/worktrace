@@ -7,6 +7,7 @@ export type Project = {
   description?: string | null;
   repoPath?: string | null;
   githubUrl?: string | null;
+  githubAccountId?: string | null;
   projectType?: string | null;
   workspaceId?: string | null;
   workspaceRelativePath?: string | null;
@@ -21,6 +22,7 @@ export type CreateProjectInput = {
   description?: string | null;
   repoPath?: string | null;
   githubUrl?: string | null;
+  githubAccountId?: string | null;
   projectType?: string | null;
   classification?: ProjectClassification | null;
 };

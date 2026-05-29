@@ -5,6 +5,11 @@ import type {
   ConnectGitHubPatInput,
   CreateGitHubPullRequestInput,
   CreateGitHubPullRequestOutput,
+  DetectProjectGitHubBindingInput,
+  DetectProjectGitHubBindingOutput,
+  GitHubAccount,
+  GitHubAccountActionInput,
+  GitHubAccountsStatus,
   GitHubIntegrationStatus,
   StartGitHubDeviceAuthOutput,
   SyncGitHubProjectActivityInput,
@@ -13,6 +18,10 @@ import type {
 
 export function getGitHubIntegrationStatus() {
   return callCommand<GitHubIntegrationStatus>("get_github_integration_status");
+}
+
+export function listGitHubAccounts() {
+  return callCommand<GitHubAccountsStatus>("list_github_accounts");
 }
 
 export function connectGitHubPat(input: ConnectGitHubPatInput) {
@@ -31,8 +40,20 @@ export function testGitHubConnection() {
   return callCommand<GitHubIntegrationStatus>("test_github_connection");
 }
 
+export function testGitHubAccount(input: GitHubAccountActionInput) {
+  return callCommand<GitHubAccount>("test_github_account", { input });
+}
+
 export function disconnectGitHub() {
   return callCommand<GitHubIntegrationStatus>("disconnect_github");
+}
+
+export function disconnectGitHubAccount(input: GitHubAccountActionInput) {
+  return callCommand<GitHubAccountsStatus>("disconnect_github_account", { input });
+}
+
+export function detectProjectGitHubBinding(input: DetectProjectGitHubBindingInput) {
+  return callCommand<DetectProjectGitHubBindingOutput>("detect_project_github_binding", { input });
 }
 
 export function syncGitHubProjectActivity(input: SyncGitHubProjectActivityInput = {}) {

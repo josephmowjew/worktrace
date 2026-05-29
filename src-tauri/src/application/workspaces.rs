@@ -5,6 +5,7 @@ use crate::domain::workspace::{
 };
 use crate::infrastructure::database::repositories::WorkspaceRepository;
 use crate::infrastructure::filesystem::workspace_scanner::discover_repositories;
+use crate::infrastructure::git::runner;
 
 pub struct WorkspaceService;
 
@@ -89,13 +90,25 @@ impl WorkspaceService {
         let discovered = discover_repositories(&workspace.root_path)
             .map_err(WorkspaceServiceError::Validation)?
             .into_iter()
-            .map(|repo| WorkspaceRepoDiscovery {
-                repo_path: repo.repo_path,
-                relative_path: repo.relative_path,
-                suggested_name: repo.suggested_name,
-                status: "new".to_string(),
-                project_id: None,
-                project_name: None,
+            .map(|repo| {
+                let github = detect_github_remote(&repo.repo_path);
+                WorkspaceRepoDiscovery {
+                    repo_path: repo.repo_path,
+                    relative_path: repo.relative_path,
+                    suggested_name: repo.suggested_name,
+                    github_url: github.as_ref().map(|remote| remote.github_url.clone()),
+                    github_owner: github.as_ref().map(|remote| remote.owner.clone()),
+                    github_repo: github.as_ref().map(|remote| remote.repo.clone()),
+                    github_account_id: None,
+                    github_account_username: None,
+                    github_binding_status: github
+                        .as_ref()
+                        .map(|_| "detected_repo".to_string())
+                        .or_else(|| Some("unbound".to_string())),
+                    status: "new".to_string(),
+                    project_id: None,
+                    project_name: None,
+                }
             })
             .collect();
 
@@ -145,6 +158,45 @@ impl WorkspaceService {
             .await
             .map_err(WorkspaceServiceError::Database)
     }
+}
+
+#[derive(Debug)]
+struct DetectedGitHubRemote {
+    owner: String,
+    repo: String,
+    github_url: String,
+}
+
+fn detect_github_remote(repo_path: &str) -> Option<DetectedGitHubRemote> {
+    git_stdout(repo_path, &["remote", "get-url", "--push", "origin"])
+        .or_else(|| git_stdout(repo_path, &["remote", "get-url", "origin"]))
+        .and_then(|url| parse_github_remote(&url))
+}
+
+fn git_stdout(repo_path: &str, args: &[&str]) -> Option<String> {
+    let output = runner::run_git(repo_path, args).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+fn parse_github_remote(value: &str) -> Option<DetectedGitHubRemote> {
+    let trimmed = value.trim().trim_end_matches(".git");
+    let path = trimmed
+        .strip_prefix("https://github.com/")
+        .or_else(|| trimmed.strip_prefix("http://github.com/"))
+        .or_else(|| trimmed.strip_prefix("git@github.com:"))?;
+    let parts = path.split('/').collect::<Vec<_>>();
+    if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
+        return None;
+    }
+    Some(DetectedGitHubRemote {
+        owner: parts[0].to_string(),
+        repo: parts[1].to_string(),
+        github_url: format!("https://github.com/{}/{}", parts[0], parts[1]),
+    })
 }
 
 #[derive(Debug)]

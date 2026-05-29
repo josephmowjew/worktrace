@@ -30,6 +30,12 @@ export type WorkspaceRepoDiscovery = {
   repoPath: string;
   relativePath: string;
   suggestedName: string;
+  githubUrl?: string | null;
+  githubOwner?: string | null;
+  githubRepo?: string | null;
+  githubAccountId?: string | null;
+  githubAccountUsername?: string | null;
+  githubBindingStatus?: string | null;
   status: WorkspaceRepoDiscoveryStatus;
   projectId?: string | null;
   projectName?: string | null;
@@ -41,6 +47,8 @@ export type ImportWorkspaceRepositoriesInput = {
     repoPath: string;
     name?: string | null;
     projectType?: string | null;
+    githubUrl?: string | null;
+    githubAccountId?: string | null;
   }>;
 };
 

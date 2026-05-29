@@ -343,6 +343,8 @@ export function ProjectsPage() {
           repoPath: repo.repoPath,
           name: repo.suggestedName,
           projectType: "Workspace",
+          githubUrl: repo.githubUrl,
+          githubAccountId: repo.githubAccountId,
         }));
 
       return importWorkspaceRepositories({
@@ -1794,6 +1796,12 @@ function WorkspaceDiscoveryList({
                 <p className="mt-1 truncate text-[11px] text-slate-500">
                   {repo.relativePath}
                 </p>
+                {repo.githubUrl ? (
+                  <p className="mt-1 truncate text-[11px] text-blue-200/80">
+                    {repo.githubUrl.replace(/^https?:\/\//, "")}
+                    {repo.githubAccountUsername ? ` via ${repo.githubAccountUsername}` : ""}
+                  </p>
+                ) : null}
                 {repo.projectName ? (
                   <p className={`mt-1 text-[11px] ${repo.status === "archived" ? "text-orange-200" : "text-emerald-300/80"}`}>
                     {repo.status === "archived"

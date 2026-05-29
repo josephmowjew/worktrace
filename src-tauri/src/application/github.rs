@@ -11,8 +11,9 @@ use tempfile::Builder;
 
 use crate::domain::github::{
     CompleteGitHubDeviceAuthInput, CompleteGitHubDeviceAuthOutput, ConnectGitHubPatInput,
-    CreateGitHubPullRequestInput, CreateGitHubPullRequestOutput, GitHubAccountRecord,
-    GitHubIntegrationStatus, GitHubIssueRecord, GitHubPullRequestRecord,
+    CreateGitHubPullRequestInput, CreateGitHubPullRequestOutput, DetectProjectGitHubBindingInput,
+    DetectProjectGitHubBindingOutput, GitHubAccount, GitHubAccountActionInput, GitHubAccountRecord,
+    GitHubAccountsStatus, GitHubIntegrationStatus, GitHubIssueRecord, GitHubPullRequestRecord,
     StartGitHubDeviceAuthOutput, SyncGitHubProjectActivityInput, SyncGitHubProjectActivityOutput,
 };
 use crate::domain::settings::UpdateSettingsInput;
@@ -24,6 +25,7 @@ use crate::infrastructure::git::runner;
 const KEYRING_SERVICE: &str = "WorkTrace";
 const PAT_KEYRING_USER: &str = "github_pat";
 const OAUTH_KEYRING_USER: &str = "github_oauth_access_token";
+const GITHUB_HOST: &str = "github.com";
 const GITHUB_DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
 const GITHUB_ACCESS_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
 const GITHUB_SCOPE: &str = "repo read:user";
@@ -52,6 +54,7 @@ impl GitHubService {
         Ok(GitHubIntegrationStatus {
             connected: settings.github_connected,
             username: empty_to_none(settings.github_username),
+            account_id: None,
             connected_at: empty_to_none(settings.github_connected_at),
             last_validated_at: empty_to_none(settings.github_last_validated_at),
             has_token: pat_token().is_ok(),
@@ -68,6 +71,23 @@ impl GitHubService {
             },
             last_synced_at: None,
             last_error: None,
+        })
+    }
+
+    pub async fn list_accounts(
+        github_repository: &GitHubRepository<'_>,
+    ) -> Result<GitHubAccountsStatus, GitHubServiceError> {
+        let records = github_repository
+            .list_accounts()
+            .await
+            .map_err(GitHubServiceError::Database)?;
+        let accounts = records
+            .into_iter()
+            .map(|record| account_from_record(record, true))
+            .collect::<Vec<_>>();
+        Ok(GitHubAccountsStatus {
+            connected: accounts.iter().any(|account| account.status == "connected"),
+            accounts,
         })
     }
 
@@ -160,6 +180,7 @@ impl GitHubService {
                 message: message.to_string(),
                 retry_after_seconds,
                 integration: None,
+                account: None,
             });
         }
 
@@ -169,16 +190,20 @@ impl GitHubService {
                 message: "Waiting for GitHub authorization.".to_string(),
                 retry_after_seconds: Some(5),
                 integration: None,
+                account: None,
             });
         };
 
         let user = fetch_user(access_token).await?;
-        set_secret(OAUTH_KEYRING_USER, access_token)?;
+        let token_ref = github_token_ref(GITHUB_HOST, user.id, &user.login);
+        set_secret(&token_ref, access_token)?;
         let scopes = token.scope.or_else(|| Some(GITHUB_SCOPE.to_string()));
         let account = github_repository
             .upsert_account(
+                GITHUB_HOST,
+                Some(user.id),
                 Some(user.login.clone()),
-                OAUTH_KEYRING_USER.to_string(),
+                token_ref,
                 "oauth_device",
                 scopes,
                 "connected",
@@ -193,11 +218,17 @@ impl GitHubService {
             message: "GitHub connected.".to_string(),
             retry_after_seconds: None,
             integration: Some(status_from_account(account, true)),
+            account: github_repository
+                .active_account()
+                .await
+                .map_err(GitHubServiceError::Database)?
+                .map(|record| account_from_record(record, true)),
         })
     }
 
     pub async fn connect_pat(
         settings_repository: &SettingsRepository<'_>,
+        github_repository: &GitHubRepository<'_>,
         input: ConnectGitHubPatInput,
     ) -> Result<GitHubIntegrationStatus, GitHubServiceError> {
         let token = input.token.trim();
@@ -208,21 +239,53 @@ impl GitHubService {
         }
 
         let user = fetch_user(token).await?;
-        set_secret(PAT_KEYRING_USER, token)?;
+        let token_ref = github_token_ref(GITHUB_HOST, user.id, &user.login);
+        set_secret(&token_ref, token)?;
+        let account = github_repository
+            .upsert_account(
+                GITHUB_HOST,
+                Some(user.id),
+                Some(user.login.clone()),
+                token_ref,
+                "pat",
+                None,
+                "connected",
+                None,
+            )
+            .await
+            .map_err(GitHubServiceError::Database)?;
         persist_legacy_settings_connection(settings_repository, &user.login).await?;
 
-        Ok(GitHubIntegrationStatus {
-            connected: true,
-            username: Some(user.login),
-            connected_at: Some(Utc::now().to_rfc3339()),
-            last_validated_at: Some(Utc::now().to_rfc3339()),
-            has_token: true,
-            auth_method: Some("pat".to_string()),
-            scopes: None,
-            status: Some("connected".to_string()),
-            last_synced_at: None,
-            last_error: None,
-        })
+        Ok(status_from_account(account, true))
+    }
+
+    pub async fn test_account(
+        github_repository: &GitHubRepository<'_>,
+        input: GitHubAccountActionInput,
+    ) -> Result<GitHubAccount, GitHubServiceError> {
+        let account = account_by_id(github_repository, &input.account_id).await?;
+        let token = token_for_account(&account)?;
+        let user = fetch_user(&token).await?;
+        let auth_method = account.auth_method.clone();
+        let scopes = account.scopes.clone();
+        let token_ref = account
+            .token_ref
+            .clone()
+            .unwrap_or_else(|| github_token_ref(GITHUB_HOST, user.id, &user.login));
+        let account = github_repository
+            .upsert_account(
+                GITHUB_HOST,
+                Some(user.id),
+                Some(user.login),
+                token_ref,
+                &auth_method,
+                scopes,
+                "connected",
+                None,
+            )
+            .await
+            .map_err(GitHubServiceError::Database)?;
+        Ok(account_from_record(account, true))
     }
 
     pub async fn test_connection(
@@ -260,13 +323,150 @@ impl GitHubService {
         Self::status(settings_repository, github_repository).await
     }
 
+    pub async fn disconnect_account(
+        github_repository: &GitHubRepository<'_>,
+        input: GitHubAccountActionInput,
+    ) -> Result<GitHubAccountsStatus, GitHubServiceError> {
+        if let Some(account) = github_repository
+            .find_account(&input.account_id)
+            .await
+            .map_err(GitHubServiceError::Database)?
+        {
+            if let Some(token_ref) = account.token_ref.as_deref() {
+                delete_secret(token_ref);
+            }
+        }
+        github_repository
+            .disconnect_account(&input.account_id)
+            .await
+            .map_err(GitHubServiceError::Database)?;
+        Self::list_accounts(github_repository).await
+    }
+
+    pub async fn detect_project_binding(
+        project_repository: &ProjectRepository<'_>,
+        github_repository: &GitHubRepository<'_>,
+        input: DetectProjectGitHubBindingInput,
+    ) -> Result<DetectProjectGitHubBindingOutput, GitHubServiceError> {
+        let project = if let Some(project_id) = input.project_id.as_deref() {
+            project_repository
+                .find(project_id)
+                .await
+                .map_err(GitHubServiceError::Database)?
+        } else {
+            None
+        };
+        let repo_path = input
+            .repo_path
+            .as_deref()
+            .filter(|path| !path.trim().is_empty())
+            .map(|path| path.trim().to_string())
+            .or_else(|| {
+                project
+                    .as_ref()
+                    .and_then(|project| project.repo_path.clone())
+            });
+        let remote_url = input
+            .github_url
+            .as_deref()
+            .filter(|url| !url.trim().is_empty())
+            .map(|url| url.trim().to_string())
+            .or_else(|| {
+                project
+                    .as_ref()
+                    .and_then(|project| project.github_url.clone())
+            })
+            .or_else(|| repo_path.as_deref().and_then(detect_remote_url));
+        let Some(remote_url) = remote_url else {
+            return Ok(DetectProjectGitHubBindingOutput {
+                github_url: None,
+                owner: None,
+                repo: None,
+                account_id: None,
+                account_username: None,
+                status: "unbound".to_string(),
+                message: "No GitHub remote was detected.".to_string(),
+            });
+        };
+        let repo = parse_github_repo(&remote_url)?;
+        let github_url = Some(format!("https://github.com/{}/{}", repo.owner, repo.repo));
+
+        if let Some(account_id) = project
+            .as_ref()
+            .and_then(|project| project.github_account_id.clone())
+        {
+            if let Some(account) = github_repository
+                .find_account(&account_id)
+                .await
+                .map_err(GitHubServiceError::Database)?
+            {
+                return Ok(DetectProjectGitHubBindingOutput {
+                    github_url,
+                    owner: Some(repo.owner),
+                    repo: Some(repo.repo),
+                    account_id: Some(account.id),
+                    account_username: account.username,
+                    status: "bound".to_string(),
+                    message: "Project already has a GitHub account selected.".to_string(),
+                });
+            }
+        }
+
+        let accounts = github_repository
+            .list_accounts()
+            .await
+            .map_err(GitHubServiceError::Database)?
+            .into_iter()
+            .filter(|account| account.status == "connected")
+            .collect::<Vec<_>>();
+        let mut matches = Vec::new();
+        for account in accounts {
+            let Ok(token) = token_for_account(&account) else {
+                continue;
+            };
+            if fetch_repo(&token, &repo).await.is_ok() {
+                matches.push(account);
+            }
+        }
+
+        let (account_id, account_username, status, message) = match matches.as_slice() {
+            [account] => (
+                Some(account.id.clone()),
+                account.username.clone(),
+                "detected".to_string(),
+                "GitHub account detected from repository access.".to_string(),
+            ),
+            [] => (
+                None,
+                None,
+                "unbound".to_string(),
+                "No connected GitHub account could access this repository.".to_string(),
+            ),
+            _ => (
+                None,
+                None,
+                "ambiguous".to_string(),
+                "Multiple connected GitHub accounts can access this repository.".to_string(),
+            ),
+        };
+
+        Ok(DetectProjectGitHubBindingOutput {
+            github_url,
+            owner: Some(repo.owner),
+            repo: Some(repo.repo),
+            account_id,
+            account_username,
+            status,
+            message,
+        })
+    }
+
     pub async fn sync_project_activity(
         project_repository: &ProjectRepository<'_>,
         github_repository: &GitHubRepository<'_>,
         input: SyncGitHubProjectActivityInput,
     ) -> Result<SyncGitHubProjectActivityOutput, GitHubServiceError> {
-        let token = preferred_token(github_repository).await?;
-        let projects = if let Some(project_id) = input.project_id.as_deref() {
+        let mut projects = if let Some(project_id) = input.project_id.as_deref() {
             project_repository
                 .find(project_id)
                 .await
@@ -279,6 +479,11 @@ impl GitHubService {
                 .await
                 .map_err(GitHubServiceError::Database)?
         };
+        if input.project_id.is_none() {
+            if let Some(account_id) = input.account_id.as_deref() {
+                projects.retain(|project| project.github_account_id.as_deref() == Some(account_id));
+            }
+        }
 
         let mut synced_projects = 0;
         let mut imported_pull_requests = 0;
@@ -286,8 +491,19 @@ impl GitHubService {
         let mut updated_pull_requests = 0;
         let mut updated_issues = 0;
         let mut last_error = None;
+        let mut synced_account_ids = Vec::<String>::new();
 
         for project in projects {
+            let account_id = input
+                .account_id
+                .clone()
+                .or_else(|| project.github_account_id.clone());
+            let Some(account_id) = account_id else {
+                last_error = Some("A GitHub account must be selected for this project before syncing PRs and issues.".to_string());
+                continue;
+            };
+            let account = account_by_id(github_repository, &account_id).await?;
+            let token = token_for_account(&account)?;
             let Some(remote_url) = project
                 .github_url
                 .clone()
@@ -308,8 +524,13 @@ impl GitHubService {
                 }
             };
 
-            match sync_single_project(&token, github_repository, &project.id, &repo).await {
+            match sync_single_project(&token, github_repository, &account_id, &project.id, &repo)
+                .await
+            {
                 Ok(result) => {
+                    if !synced_account_ids.contains(&account_id) {
+                        synced_account_ids.push(account_id.clone());
+                    }
                     synced_projects += 1;
                     imported_pull_requests += result.imported_pull_requests;
                     updated_pull_requests += result.updated_pull_requests;
@@ -320,6 +541,7 @@ impl GitHubService {
                     let message = error.to_string();
                     github_repository
                         .update_sync_state(
+                            &account_id,
                             &project.id,
                             &repo.owner,
                             &repo.repo,
@@ -334,10 +556,12 @@ impl GitHubService {
             }
         }
 
-        github_repository
-            .mark_account_synced(last_error.clone())
-            .await
-            .map_err(GitHubServiceError::Database)?;
+        for account_id in synced_account_ids {
+            github_repository
+                .mark_account_synced(&account_id, last_error.clone())
+                .await
+                .map_err(GitHubServiceError::Database)?;
+        }
 
         Ok(SyncGitHubProjectActivityOutput {
             synced_projects,
@@ -360,7 +584,6 @@ impl GitHubService {
         github_repository: &GitHubRepository<'_>,
         input: CreateGitHubPullRequestInput,
     ) -> Result<CreateGitHubPullRequestOutput, GitHubServiceError> {
-        let token = preferred_token(github_repository).await?;
         validate_pull_request_input(&input)?;
 
         let Some(project) = project_repository
@@ -372,6 +595,17 @@ impl GitHubService {
                 "Project was not found".to_string(),
             ));
         };
+        let account_id = input
+            .account_id
+            .clone()
+            .or_else(|| project.github_account_id.clone())
+            .ok_or_else(|| {
+                GitHubServiceError::Validation(
+                    "Select a GitHub account for this project before creating a PR.".to_string(),
+                )
+            })?;
+        let account = account_by_id(github_repository, &account_id).await?;
+        let token = token_for_account(&account)?;
         let Some(repo_path) = project.repo_path.filter(|path| !path.trim().is_empty()) else {
             return Err(GitHubServiceError::Validation(
                 "This project has no local repository path configured.".to_string(),
@@ -440,11 +674,12 @@ impl GitHubService {
 async fn sync_single_project(
     token: &str,
     github_repository: &GitHubRepository<'_>,
+    account_id: &str,
     project_id: &str,
     repo: &GitHubRepo,
 ) -> Result<ProjectSyncCounts, GitHubServiceError> {
     let state = github_repository
-        .sync_state(project_id)
+        .sync_state(account_id, project_id)
         .await
         .map_err(GitHubServiceError::Database)?;
     let since_prs = state
@@ -459,6 +694,7 @@ async fn sync_single_project(
     let repo_meta = fetch_repo(token, repo).await.ok();
     github_repository
         .upsert_project_repository(
+            account_id,
             project_id,
             &repo.owner,
             &repo.repo,
@@ -475,12 +711,12 @@ async fn sync_single_project(
     let issues = fetch_issues(token, repo, since_issues).await?;
     let pr_records = prs
         .into_iter()
-        .map(|item| map_pull_request(project_id, repo, item))
+        .map(|item| map_pull_request(account_id, project_id, repo, item))
         .collect::<Vec<_>>();
     let issue_records = issues
         .into_iter()
         .filter(|item| item.pull_request.is_none())
-        .map(|item| map_issue(project_id, repo, item))
+        .map(|item| map_issue(account_id, project_id, repo, item))
         .collect::<Vec<_>>();
     let pull_requests_cursor = pr_records
         .iter()
@@ -501,6 +737,7 @@ async fn sync_single_project(
 
     github_repository
         .update_sync_state(
+            account_id,
             project_id,
             &repo.owner,
             &repo.repo,
@@ -709,6 +946,7 @@ async fn github_http_error(response: reqwest::Response, prefix: &str) -> GitHubS
 }
 
 fn map_pull_request(
+    account_id: &str,
     project_id: &str,
     repo: &GitHubRepo,
     item: GitHubPullRequestApiItem,
@@ -716,6 +954,7 @@ fn map_pull_request(
     let now = Utc::now().to_rfc3339();
     GitHubPullRequestRecord {
         id: crate::infrastructure::database::repositories::public_generate_id("github_pr"),
+        account_id: account_id.to_string(),
         project_id: project_id.to_string(),
         owner: repo.owner.clone(),
         repo: repo.repo.clone(),
@@ -742,10 +981,16 @@ fn map_pull_request(
     }
 }
 
-fn map_issue(project_id: &str, repo: &GitHubRepo, item: GitHubIssueApiItem) -> GitHubIssueRecord {
+fn map_issue(
+    account_id: &str,
+    project_id: &str,
+    repo: &GitHubRepo,
+    item: GitHubIssueApiItem,
+) -> GitHubIssueRecord {
     let now = Utc::now().to_rfc3339();
     GitHubIssueRecord {
         id: crate::infrastructure::database::repositories::public_generate_id("github_issue"),
+        account_id: account_id.to_string(),
         project_id: project_id.to_string(),
         owner: repo.owner.clone(),
         repo: repo.repo.clone(),
@@ -808,6 +1053,51 @@ fn pat_token() -> Result<String, GitHubServiceError> {
         .map_err(|_| GitHubServiceError::Validation("GitHub is not connected.".to_string()))
 }
 
+async fn account_by_id(
+    github_repository: &GitHubRepository<'_>,
+    account_id: &str,
+) -> Result<GitHubAccountRecord, GitHubServiceError> {
+    github_repository
+        .find_account(account_id)
+        .await
+        .map_err(GitHubServiceError::Database)?
+        .ok_or_else(|| GitHubServiceError::Validation("GitHub account was not found.".to_string()))
+}
+
+fn token_for_account(account: &GitHubAccountRecord) -> Result<String, GitHubServiceError> {
+    let Some(token_ref) = account.token_ref.as_deref() else {
+        return Err(GitHubServiceError::Validation(
+            "GitHub account is disconnected.".to_string(),
+        ));
+    };
+    get_secret(token_ref)
+}
+
+fn github_token_ref(host: &str, github_user_id: i64, username: &str) -> String {
+    let login = username.trim().to_lowercase();
+    format!("github:{host}:{github_user_id}:{login}:access_token")
+}
+
+fn account_from_record(account: GitHubAccountRecord, has_token: bool) -> GitHubAccount {
+    GitHubAccount {
+        id: account.id,
+        host: account.host,
+        github_user_id: account.github_user_id,
+        username: account.username,
+        token_ref: account.token_ref,
+        auth_method: account.auth_method,
+        scopes: account.scopes,
+        status: account.status,
+        connected_at: account.connected_at,
+        last_validated_at: account.last_validated_at,
+        last_synced_at: account.last_synced_at,
+        last_error: account.last_error,
+        has_token,
+        created_at: account.created_at,
+        updated_at: account.updated_at,
+    }
+}
+
 fn get_secret(user: &str) -> Result<String, GitHubServiceError> {
     Entry::new(KEYRING_SERVICE, user)
         .map_err(|error| GitHubServiceError::SecretStorage(error.to_string()))?
@@ -857,6 +1147,17 @@ fn run_git(repo_path: &str, args: &[&str]) -> Result<String, GitHubServiceError>
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+fn detect_remote_url(repo_path: &str) -> Option<String> {
+    run_git(repo_path, &["remote", "get-url", "--push", "origin"])
+        .ok()
+        .filter(|url| !url.trim().is_empty())
+        .or_else(|| {
+            run_git(repo_path, &["remote", "get-url", "origin"])
+                .ok()
+                .filter(|url| !url.trim().is_empty())
+        })
+}
+
 fn parse_github_repo(value: &str) -> Result<GitHubRepo, GitHubServiceError> {
     let trimmed = value.trim().trim_end_matches(".git");
     let path = if let Some(rest) = trimmed.strip_prefix("https://github.com/") {
@@ -902,6 +1203,7 @@ fn empty_to_none(value: String) -> Option<String> {
 fn status_from_account(account: GitHubAccountRecord, has_token: bool) -> GitHubIntegrationStatus {
     GitHubIntegrationStatus {
         connected: account.status == "connected",
+        account_id: Some(account.id),
         username: account.username,
         connected_at: account.connected_at,
         last_validated_at: account.last_validated_at,
@@ -968,6 +1270,7 @@ struct GitHubDeviceTokenResponse {
 
 #[derive(Debug, Deserialize)]
 struct GitHubUserResponse {
+    id: i64,
     login: String,
 }
 

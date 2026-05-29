@@ -149,6 +149,95 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::raw_sql(SPARC_FORCE_SQL).execute(pool).await?;
     run_sparc_force_dedup_migration(pool).await?;
     sqlx::raw_sql(GITHUB_INTEGRATION_SQL).execute(pool).await?;
+    run_github_multi_account_migration(pool).await?;
+
+    Ok(())
+}
+
+async fn run_github_multi_account_migration(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    for statement in [
+        "ALTER TABLE projects ADD COLUMN github_account_id TEXT;",
+        "ALTER TABLE github_accounts ADD COLUMN host TEXT NOT NULL DEFAULT 'github.com';",
+        "ALTER TABLE github_accounts ADD COLUMN github_user_id INTEGER;",
+        "ALTER TABLE github_project_repositories ADD COLUMN account_id TEXT NOT NULL DEFAULT 'legacy';",
+        "ALTER TABLE github_pull_requests ADD COLUMN account_id TEXT NOT NULL DEFAULT 'legacy';",
+        "ALTER TABLE github_issues ADD COLUMN account_id TEXT NOT NULL DEFAULT 'legacy';",
+        "ALTER TABLE github_pr_commits ADD COLUMN account_id TEXT NOT NULL DEFAULT 'legacy';",
+    ] {
+        sqlx::query(statement).execute(pool).await.ok();
+    }
+
+    sqlx::query("DROP INDEX IF EXISTS idx_github_project_repositories_project;")
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("DROP INDEX IF EXISTS idx_github_pull_requests_project_number;")
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("DROP INDEX IF EXISTS idx_github_issues_project_number;")
+        .execute(pool)
+        .await
+        .ok();
+
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_github_accounts_host_user ON github_accounts(host, github_user_id) WHERE github_user_id IS NOT NULL;",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_projects_github_account ON projects(github_account_id);",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_github_project_repositories_account_project ON github_project_repositories(account_id, project_id);",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_github_project_repositories_account_repo ON github_project_repositories(account_id, owner, repo);",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_github_pull_requests_account_project_number ON github_pull_requests(account_id, project_id, number);",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_github_issues_account_project_number ON github_issues(account_id, project_id, number);",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::raw_sql(
+        r#"
+        CREATE TABLE IF NOT EXISTS github_sync_state_v2 (
+          account_id TEXT NOT NULL,
+          project_id TEXT NOT NULL,
+          owner TEXT NOT NULL,
+          repo TEXT NOT NULL,
+          pull_requests_cursor TEXT,
+          issues_cursor TEXT,
+          last_synced_at TEXT,
+          last_error TEXT,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (account_id, project_id),
+          FOREIGN KEY (project_id) REFERENCES projects(id)
+        );
+
+        INSERT OR IGNORE INTO github_sync_state_v2 (
+          account_id, project_id, owner, repo, pull_requests_cursor, issues_cursor,
+          last_synced_at, last_error, updated_at
+        )
+        SELECT 'legacy', project_id, owner, repo, pull_requests_cursor, issues_cursor,
+               last_synced_at, last_error, updated_at
+        FROM github_sync_state;
+        "#,
+    )
+    .execute(pool)
+    .await?;
 
     Ok(())
 }
@@ -858,6 +947,8 @@ CREATE INDEX IF NOT EXISTS idx_background_jobs_kind_status
 const GITHUB_INTEGRATION_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS github_accounts (
   id TEXT PRIMARY KEY,
+  host TEXT NOT NULL DEFAULT 'github.com',
+  github_user_id INTEGER,
   username TEXT,
   token_ref TEXT,
   auth_method TEXT NOT NULL,
@@ -875,6 +966,7 @@ CREATE INDEX IF NOT EXISTS idx_github_accounts_status ON github_accounts(status)
 
 CREATE TABLE IF NOT EXISTS github_project_repositories (
   id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
   project_id TEXT NOT NULL,
   owner TEXT NOT NULL,
   repo TEXT NOT NULL,
@@ -887,13 +979,12 @@ CREATE TABLE IF NOT EXISTS github_project_repositories (
   FOREIGN KEY (project_id) REFERENCES projects(id)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_github_project_repositories_project
-  ON github_project_repositories(project_id);
 CREATE INDEX IF NOT EXISTS idx_github_project_repositories_repo
   ON github_project_repositories(owner, repo);
 
 CREATE TABLE IF NOT EXISTS github_pull_requests (
   id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
   project_id TEXT NOT NULL,
   owner TEXT NOT NULL,
   repo TEXT NOT NULL,
@@ -918,13 +1009,12 @@ CREATE TABLE IF NOT EXISTS github_pull_requests (
   FOREIGN KEY (project_id) REFERENCES projects(id)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_github_pull_requests_project_number
-  ON github_pull_requests(project_id, number);
 CREATE INDEX IF NOT EXISTS idx_github_pull_requests_updated
   ON github_pull_requests(updated_at_remote);
 
 CREATE TABLE IF NOT EXISTS github_issues (
   id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
   project_id TEXT NOT NULL,
   owner TEXT NOT NULL,
   repo TEXT NOT NULL,
@@ -945,12 +1035,11 @@ CREATE TABLE IF NOT EXISTS github_issues (
   FOREIGN KEY (project_id) REFERENCES projects(id)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_github_issues_project_number
-  ON github_issues(project_id, number);
 CREATE INDEX IF NOT EXISTS idx_github_issues_updated
   ON github_issues(updated_at_remote);
 
 CREATE TABLE IF NOT EXISTS github_sync_state (
+  account_id TEXT NOT NULL DEFAULT 'legacy',
   project_id TEXT PRIMARY KEY,
   owner TEXT NOT NULL,
   repo TEXT NOT NULL,
@@ -962,7 +1051,22 @@ CREATE TABLE IF NOT EXISTS github_sync_state (
   FOREIGN KEY (project_id) REFERENCES projects(id)
 );
 
+CREATE TABLE IF NOT EXISTS github_sync_state_v2 (
+  account_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  owner TEXT NOT NULL,
+  repo TEXT NOT NULL,
+  pull_requests_cursor TEXT,
+  issues_cursor TEXT,
+  last_synced_at TEXT,
+  last_error TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (account_id, project_id),
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
 CREATE TABLE IF NOT EXISTS github_pr_commits (
+  account_id TEXT NOT NULL DEFAULT 'legacy',
   project_id TEXT NOT NULL,
   pull_request_number INTEGER NOT NULL,
   commit_hash TEXT NOT NULL,
@@ -979,6 +1083,7 @@ CREATE TABLE IF NOT EXISTS projects (
   description TEXT,
   repo_path TEXT,
   github_url TEXT,
+  github_account_id TEXT,
   type TEXT,
   workspace_id TEXT,
   workspace_relative_path TEXT,

@@ -2,6 +2,7 @@ use crate::domain::git_metadata::{GitRef, GitWorktree, ProjectGitFocus, SaveProj
 use crate::domain::project::{CreateProjectInput, Project, UpdateProjectInput};
 use crate::infrastructure::database::repositories::{GitMetadataRepository, ProjectRepository};
 use crate::infrastructure::git::branches::{list_branches, GitBranch};
+use crate::infrastructure::git::runner;
 
 pub struct ProjectService;
 
@@ -109,7 +110,7 @@ impl ProjectService {
         }
 
         repository
-            .create(input)
+            .create(apply_github_remote_defaults(input))
             .await
             .map_err(ProjectServiceError::Database)
     }
@@ -117,8 +118,19 @@ impl ProjectService {
     pub async fn update(
         repository: &ProjectRepository<'_>,
         id: &str,
-        input: UpdateProjectInput,
+        mut input: UpdateProjectInput,
     ) -> Result<Option<Project>, sqlx::Error> {
+        if input
+            .github_url
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .is_empty()
+        {
+            if let Some(repo_path) = input.repo_path.as_deref() {
+                input.github_url = detect_github_remote(repo_path);
+            }
+        }
         repository.update(id, input).await
     }
 
@@ -132,6 +144,49 @@ impl ProjectService {
     pub fn validate_repo_path(path: &str) -> bool {
         crate::infrastructure::filesystem::repo_paths::looks_like_git_repository(path)
     }
+}
+
+fn apply_github_remote_defaults(mut input: CreateProjectInput) -> CreateProjectInput {
+    if input
+        .github_url
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .is_empty()
+    {
+        if let Some(repo_path) = input.repo_path.as_deref() {
+            input.github_url = detect_github_remote(repo_path);
+        }
+    }
+    input
+}
+
+fn detect_github_remote(repo_path: &str) -> Option<String> {
+    git_stdout(repo_path, &["remote", "get-url", "--push", "origin"])
+        .or_else(|| git_stdout(repo_path, &["remote", "get-url", "origin"]))
+        .and_then(|url| normalize_github_url(&url))
+}
+
+fn git_stdout(repo_path: &str, args: &[&str]) -> Option<String> {
+    let output = runner::run_git(repo_path, args).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+fn normalize_github_url(value: &str) -> Option<String> {
+    let trimmed = value.trim().trim_end_matches(".git");
+    let path = trimmed
+        .strip_prefix("https://github.com/")
+        .or_else(|| trimmed.strip_prefix("http://github.com/"))
+        .or_else(|| trimmed.strip_prefix("git@github.com:"))?;
+    let parts = path.split('/').collect::<Vec<_>>();
+    if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
+        return None;
+    }
+    Some(format!("https://github.com/{}/{}", parts[0], parts[1]))
 }
 
 pub enum ProjectServiceError {

@@ -1,10 +1,12 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useQuery } from "@tanstack/react-query";
 import { FolderKanban, FolderOpen, GitBranch, X } from "lucide-react";
 import type { InputHTMLAttributes } from "react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
+import { listGitHubAccounts } from "../../lib/api/github";
 import { validateRepoPath } from "../../lib/api/projects";
 import type { CreateProjectInput, Project } from "../../types/project";
 import { Button } from "./Button";
@@ -23,6 +25,7 @@ const projectSchema = z.object({
     .refine((value) => !value || /^https?:\/\/.+/.test(value), {
       message: "Use a valid http or https URL",
     }),
+  githubAccountId: z.string().trim().optional(),
   projectType: z.string().trim().optional(),
   classification: z.enum(["work", "personal", "unclassified"]),
 });
@@ -34,6 +37,7 @@ const emptyValues: ProjectFormValues = {
   description: "",
   repoPath: "",
   githubUrl: "",
+  githubAccountId: "",
   projectType: "Backend",
   classification: "unclassified",
 };
@@ -56,6 +60,20 @@ export function ProjectFormPanel({
   const toast = useToast();
   const [repoValidation, setRepoValidation] = useState<ValidationState | null>(null);
   const isEditing = mode === "edit";
+  const githubAccountsQuery = useQuery({
+    queryKey: ["githubAccounts"],
+    queryFn: listGitHubAccounts,
+  });
+  const githubAccountOptions = [
+    { value: "", label: "No GitHub account", icon: GitBranch },
+    ...(githubAccountsQuery.data?.accounts ?? [])
+      .filter((account) => account.status === "connected")
+      .map((account) => ({
+        value: account.id,
+        label: account.username ? `${account.username} (${account.authMethod === "oauth_device" ? "OAuth" : "PAT"})` : "Connected account",
+        icon: GitBranch,
+      })),
+  ];
 
   const form = useForm<ProjectFormValues>({
     resolver: zodResolver(projectSchema),
@@ -129,6 +147,7 @@ export function ProjectFormPanel({
       description: normalizeOptional(values.description),
       repoPath: normalizeOptional(values.repoPath),
       githubUrl: normalizeOptional(values.githubUrl),
+      githubAccountId: normalizeOptional(values.githubAccountId),
       projectType: normalizeOptional(values.projectType),
       classification: values.classification,
     };
@@ -222,6 +241,16 @@ export function ProjectFormPanel({
             />
 
             <label className="grid gap-2 text-xs font-semibold text-slate-300">
+              GitHub Account
+              <SelectField
+                control={form.control}
+                name="githubAccountId"
+                options={githubAccountOptions}
+                size="sm"
+              />
+            </label>
+
+            <label className="grid gap-2 text-xs font-semibold text-slate-300">
               Repository Type
               <SelectField
                 control={form.control}
@@ -284,6 +313,7 @@ function projectToValues(project?: Project): ProjectFormValues {
     description: project.description ?? "",
     repoPath: project.repoPath ?? "",
     githubUrl: project.githubUrl ?? "",
+    githubAccountId: project.githubAccountId ?? "",
     projectType: project.projectType ?? "Backend",
     classification: project.classification ?? "unclassified",
   };

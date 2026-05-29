@@ -465,6 +465,7 @@ mod tests {
                 description: None,
                 repo_path: Some(repo_path.to_string_lossy().to_string()),
                 github_url: None,
+                github_account_id: None,
                 project_type: Some("Company".to_string()),
                 classification: None,
             })

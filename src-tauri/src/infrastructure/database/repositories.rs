@@ -81,7 +81,7 @@ impl<'a> ProjectRepository<'a> {
     pub async fn list(&self) -> Result<Vec<Project>, sqlx::Error> {
         let rows = sqlx::query(
             r#"
-            SELECT id, name, description, repo_path, github_url, type, workspace_id, workspace_relative_path, classification, status, created_at, updated_at
+            SELECT id, name, description, repo_path, github_url, github_account_id, type, workspace_id, workspace_relative_path, classification, status, created_at, updated_at
             FROM projects
             ORDER BY status ASC, updated_at DESC, name ASC
             "#,
@@ -95,7 +95,7 @@ impl<'a> ProjectRepository<'a> {
     pub async fn list_active(&self) -> Result<Vec<Project>, sqlx::Error> {
         let rows = sqlx::query(
             r#"
-            SELECT id, name, description, repo_path, github_url, type, workspace_id, workspace_relative_path, classification, status, created_at, updated_at
+            SELECT id, name, description, repo_path, github_url, github_account_id, type, workspace_id, workspace_relative_path, classification, status, created_at, updated_at
             FROM projects
             WHERE status = 'active'
             ORDER BY updated_at DESC, name ASC
@@ -115,6 +115,7 @@ impl<'a> ProjectRepository<'a> {
             description: normalize_optional(input.description),
             repo_path: normalize_optional(input.repo_path),
             github_url: normalize_optional(input.github_url),
+            github_account_id: normalize_optional(input.github_account_id),
             project_type: normalize_optional(input.project_type),
             workspace_id: None,
             workspace_relative_path: None,
@@ -126,8 +127,8 @@ impl<'a> ProjectRepository<'a> {
 
         sqlx::query(
             r#"
-            INSERT INTO projects (id, name, description, repo_path, github_url, type, workspace_id, workspace_relative_path, classification, status, created_at, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            INSERT INTO projects (id, name, description, repo_path, github_url, github_account_id, type, workspace_id, workspace_relative_path, classification, status, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
             "#,
         )
         .bind(&project.id)
@@ -135,6 +136,7 @@ impl<'a> ProjectRepository<'a> {
         .bind(&project.description)
         .bind(&project.repo_path)
         .bind(&project.github_url)
+        .bind(&project.github_account_id)
         .bind(&project.project_type)
         .bind(&project.workspace_id)
         .bind(&project.workspace_relative_path)
@@ -173,6 +175,10 @@ impl<'a> ProjectRepository<'a> {
             project.github_url = normalize_optional(input.github_url);
         }
 
+        if input.github_account_id.is_some() {
+            project.github_account_id = normalize_optional(input.github_account_id);
+        }
+
         if input.project_type.is_some() {
             project.project_type = normalize_optional(input.project_type);
         }
@@ -202,12 +208,13 @@ impl<'a> ProjectRepository<'a> {
                 description = ?3,
                 repo_path = ?4,
                 github_url = ?5,
-                type = ?6,
-                workspace_id = ?7,
-                workspace_relative_path = ?8,
-                classification = ?9,
-                status = ?10,
-                updated_at = ?11
+                github_account_id = ?6,
+                type = ?7,
+                workspace_id = ?8,
+                workspace_relative_path = ?9,
+                classification = ?10,
+                status = ?11,
+                updated_at = ?12
             WHERE id = ?1
             "#,
         )
@@ -216,6 +223,7 @@ impl<'a> ProjectRepository<'a> {
         .bind(&project.description)
         .bind(&project.repo_path)
         .bind(&project.github_url)
+        .bind(&project.github_account_id)
         .bind(&project.project_type)
         .bind(&project.workspace_id)
         .bind(&project.workspace_relative_path)
@@ -236,6 +244,7 @@ impl<'a> ProjectRepository<'a> {
                 description: None,
                 repo_path: None,
                 github_url: None,
+                github_account_id: None,
                 project_type: None,
                 workspace_id: None,
                 workspace_relative_path: None,
@@ -249,7 +258,7 @@ impl<'a> ProjectRepository<'a> {
     pub async fn find(&self, id: &str) -> Result<Option<Project>, sqlx::Error> {
         let row = sqlx::query(
             r#"
-            SELECT id, name, description, repo_path, github_url, type, workspace_id, workspace_relative_path, classification, status, created_at, updated_at
+            SELECT id, name, description, repo_path, github_url, github_account_id, type, workspace_id, workspace_relative_path, classification, status, created_at, updated_at
             FROM projects
             WHERE id = ?1
             "#,
@@ -274,7 +283,7 @@ impl<'a> GitHubRepository<'a> {
     pub async fn active_account(&self) -> Result<Option<GitHubAccountRecord>, sqlx::Error> {
         let row = sqlx::query(
             r#"
-            SELECT id, username, token_ref, auth_method, scopes, status, connected_at,
+            SELECT id, host, github_user_id, username, token_ref, auth_method, scopes, status, connected_at,
                    last_validated_at, last_synced_at, last_error, created_at, updated_at
             FROM github_accounts
             WHERE status = 'connected'
@@ -288,8 +297,44 @@ impl<'a> GitHubRepository<'a> {
         Ok(row.map(github_account_from_row))
     }
 
+    pub async fn list_accounts(&self) -> Result<Vec<GitHubAccountRecord>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, host, github_user_id, username, token_ref, auth_method, scopes, status, connected_at,
+                   last_validated_at, last_synced_at, last_error, created_at, updated_at
+            FROM github_accounts
+            ORDER BY status ASC, updated_at DESC, username ASC
+            "#,
+        )
+        .fetch_all(self.pool)
+        .await?;
+
+        Ok(rows.into_iter().map(github_account_from_row).collect())
+    }
+
+    pub async fn find_account(
+        &self,
+        account_id: &str,
+    ) -> Result<Option<GitHubAccountRecord>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, host, github_user_id, username, token_ref, auth_method, scopes, status, connected_at,
+                   last_validated_at, last_synced_at, last_error, created_at, updated_at
+            FROM github_accounts
+            WHERE id = ?1
+            "#,
+        )
+        .bind(account_id)
+        .fetch_optional(self.pool)
+        .await?;
+
+        Ok(row.map(github_account_from_row))
+    }
+
     pub async fn upsert_account(
         &self,
+        host: &str,
+        github_user_id: Option<i64>,
         username: Option<String>,
         token_ref: String,
         auth_method: &str,
@@ -300,20 +345,23 @@ impl<'a> GitHubRepository<'a> {
         let now = current_timestamp();
         let existing = sqlx::query(
             r#"
-            SELECT id, username, token_ref, auth_method, scopes, status, connected_at,
+            SELECT id, host, github_user_id, username, token_ref, auth_method, scopes, status, connected_at,
                    last_validated_at, last_synced_at, last_error, created_at, updated_at
             FROM github_accounts
-            WHERE auth_method = ?1
+            WHERE host = ?1 AND github_user_id = ?2
             ORDER BY updated_at DESC
             LIMIT 1
             "#,
         )
-        .bind(auth_method)
+        .bind(host)
+        .bind(github_user_id)
         .fetch_optional(self.pool)
         .await?;
 
         if let Some(row) = existing {
             let mut account = github_account_from_row(row);
+            account.host = host.to_string();
+            account.github_user_id = github_user_id;
             account.username = username;
             account.token_ref = Some(token_ref);
             account.auth_method = auth_method.to_string();
@@ -327,19 +375,23 @@ impl<'a> GitHubRepository<'a> {
             sqlx::query(
                 r#"
                 UPDATE github_accounts
-                SET username = ?2,
-                    token_ref = ?3,
-                    auth_method = ?4,
-                    scopes = ?5,
-                    status = ?6,
-                    connected_at = ?7,
-                    last_validated_at = ?8,
-                    last_error = ?9,
-                    updated_at = ?10
+                SET host = ?2,
+                    github_user_id = ?3,
+                    username = ?4,
+                    token_ref = ?5,
+                    auth_method = ?6,
+                    scopes = ?7,
+                    status = ?8,
+                    connected_at = ?9,
+                    last_validated_at = ?10,
+                    last_error = ?11,
+                    updated_at = ?12
                 WHERE id = ?1
                 "#,
             )
             .bind(&account.id)
+            .bind(&account.host)
+            .bind(account.github_user_id)
             .bind(&account.username)
             .bind(&account.token_ref)
             .bind(&account.auth_method)
@@ -357,6 +409,8 @@ impl<'a> GitHubRepository<'a> {
 
         let account = GitHubAccountRecord {
             id: generate_id("github_account"),
+            host: host.to_string(),
+            github_user_id,
             username,
             token_ref: Some(token_ref),
             auth_method: auth_method.to_string(),
@@ -373,13 +427,15 @@ impl<'a> GitHubRepository<'a> {
         sqlx::query(
             r#"
             INSERT INTO github_accounts (
-              id, username, token_ref, auth_method, scopes, status, connected_at,
+              id, host, github_user_id, username, token_ref, auth_method, scopes, status, connected_at,
               last_validated_at, last_synced_at, last_error, created_at, updated_at
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
             "#,
         )
         .bind(&account.id)
+        .bind(&account.host)
+        .bind(account.github_user_id)
         .bind(&account.username)
         .bind(&account.token_ref)
         .bind(&account.auth_method)
@@ -395,6 +451,48 @@ impl<'a> GitHubRepository<'a> {
         .await?;
 
         Ok(account)
+    }
+
+    pub async fn set_account_token_ref(
+        &self,
+        account_id: &str,
+        token_ref: &str,
+    ) -> Result<Option<GitHubAccountRecord>, sqlx::Error> {
+        let now = current_timestamp();
+        sqlx::query(
+            r#"
+            UPDATE github_accounts
+            SET token_ref = ?2,
+                status = 'connected',
+                last_validated_at = ?3,
+                updated_at = ?3
+            WHERE id = ?1
+            "#,
+        )
+        .bind(account_id)
+        .bind(token_ref)
+        .bind(&now)
+        .execute(self.pool)
+        .await?;
+        self.find_account(account_id).await
+    }
+
+    pub async fn disconnect_account(&self, account_id: &str) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            UPDATE github_accounts
+            SET status = 'disconnected',
+                token_ref = NULL,
+                last_error = NULL,
+                updated_at = ?2
+            WHERE id = ?1
+            "#,
+        )
+        .bind(account_id)
+        .bind(current_timestamp())
+        .execute(self.pool)
+        .await?;
+        Ok(())
     }
 
     pub async fn disconnect_accounts(&self) -> Result<(), sqlx::Error> {
@@ -413,18 +511,23 @@ impl<'a> GitHubRepository<'a> {
         Ok(())
     }
 
-    pub async fn mark_account_synced(&self, last_error: Option<String>) -> Result<(), sqlx::Error> {
+    pub async fn mark_account_synced(
+        &self,
+        account_id: &str,
+        last_error: Option<String>,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
             UPDATE github_accounts
             SET last_synced_at = ?1,
                 last_error = ?2,
                 updated_at = ?1
-            WHERE status = 'connected'
+            WHERE id = ?3
             "#,
         )
         .bind(current_timestamp())
         .bind(last_error)
+        .bind(account_id)
         .execute(self.pool)
         .await?;
         Ok(())
@@ -432,6 +535,7 @@ impl<'a> GitHubRepository<'a> {
 
     pub async fn upsert_project_repository(
         &self,
+        account_id: &str,
         project_id: &str,
         owner: &str,
         repo: &str,
@@ -442,18 +546,20 @@ impl<'a> GitHubRepository<'a> {
         let now = current_timestamp();
         let existing = sqlx::query(
             r#"
-            SELECT id, project_id, owner, repo, default_branch, html_url, last_synced_at,
+            SELECT id, account_id, project_id, owner, repo, default_branch, html_url, last_synced_at,
                    last_error, created_at, updated_at
             FROM github_project_repositories
-            WHERE project_id = ?1
+            WHERE account_id = ?1 AND project_id = ?2
             "#,
         )
+        .bind(account_id)
         .bind(project_id)
         .fetch_optional(self.pool)
         .await?;
 
         if let Some(row) = existing {
             let mut record = github_project_repository_from_row(row);
+            record.account_id = account_id.to_string();
             record.owner = owner.to_string();
             record.repo = repo.to_string();
             record.default_branch = default_branch;
@@ -465,17 +571,19 @@ impl<'a> GitHubRepository<'a> {
             sqlx::query(
                 r#"
                 UPDATE github_project_repositories
-                SET owner = ?2,
-                    repo = ?3,
-                    default_branch = ?4,
-                    html_url = ?5,
-                    last_synced_at = ?6,
-                    last_error = ?7,
-                    updated_at = ?8
+                SET account_id = ?2,
+                    owner = ?3,
+                    repo = ?4,
+                    default_branch = ?5,
+                    html_url = ?6,
+                    last_synced_at = ?7,
+                    last_error = ?8,
+                    updated_at = ?9
                 WHERE id = ?1
                 "#,
             )
             .bind(&record.id)
+            .bind(&record.account_id)
             .bind(&record.owner)
             .bind(&record.repo)
             .bind(&record.default_branch)
@@ -491,6 +599,7 @@ impl<'a> GitHubRepository<'a> {
 
         let record = GitHubProjectRepositoryRecord {
             id: generate_id("github_repo"),
+            account_id: account_id.to_string(),
             project_id: project_id.to_string(),
             owner: owner.to_string(),
             repo: repo.to_string(),
@@ -505,13 +614,14 @@ impl<'a> GitHubRepository<'a> {
         sqlx::query(
             r#"
             INSERT INTO github_project_repositories (
-              id, project_id, owner, repo, default_branch, html_url, last_synced_at,
+              id, account_id, project_id, owner, repo, default_branch, html_url, last_synced_at,
               last_error, created_at, updated_at
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
             "#,
         )
         .bind(&record.id)
+        .bind(&record.account_id)
         .bind(&record.project_id)
         .bind(&record.owner)
         .bind(&record.repo)
@@ -529,16 +639,18 @@ impl<'a> GitHubRepository<'a> {
 
     pub async fn sync_state(
         &self,
+        account_id: &str,
         project_id: &str,
     ) -> Result<Option<GitHubSyncStateRecord>, sqlx::Error> {
         let row = sqlx::query(
             r#"
-            SELECT project_id, owner, repo, pull_requests_cursor, issues_cursor,
+            SELECT account_id, project_id, owner, repo, pull_requests_cursor, issues_cursor,
                    last_synced_at, last_error, updated_at
-            FROM github_sync_state
-            WHERE project_id = ?1
+            FROM github_sync_state_v2
+            WHERE account_id = ?1 AND project_id = ?2
             "#,
         )
+        .bind(account_id)
         .bind(project_id)
         .fetch_optional(self.pool)
         .await?;
@@ -548,6 +660,7 @@ impl<'a> GitHubRepository<'a> {
 
     pub async fn update_sync_state(
         &self,
+        account_id: &str,
         project_id: &str,
         owner: &str,
         repo: &str,
@@ -558,21 +671,22 @@ impl<'a> GitHubRepository<'a> {
         let now = current_timestamp();
         sqlx::query(
             r#"
-            INSERT INTO github_sync_state (
-              project_id, owner, repo, pull_requests_cursor, issues_cursor,
+            INSERT INTO github_sync_state_v2 (
+              account_id, project_id, owner, repo, pull_requests_cursor, issues_cursor,
               last_synced_at, last_error, updated_at
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-            ON CONFLICT(project_id) DO UPDATE SET
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            ON CONFLICT(account_id, project_id) DO UPDATE SET
               owner = excluded.owner,
               repo = excluded.repo,
-              pull_requests_cursor = COALESCE(excluded.pull_requests_cursor, github_sync_state.pull_requests_cursor),
-              issues_cursor = COALESCE(excluded.issues_cursor, github_sync_state.issues_cursor),
+              pull_requests_cursor = COALESCE(excluded.pull_requests_cursor, github_sync_state_v2.pull_requests_cursor),
+              issues_cursor = COALESCE(excluded.issues_cursor, github_sync_state_v2.issues_cursor),
               last_synced_at = excluded.last_synced_at,
               last_error = excluded.last_error,
               updated_at = excluded.updated_at
             "#,
         )
+        .bind(account_id)
         .bind(project_id)
         .bind(owner)
         .bind(repo)
@@ -594,8 +708,9 @@ impl<'a> GitHubRepository<'a> {
         let mut updated = 0;
         for record in records {
             let exists: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM github_pull_requests WHERE project_id = ?1 AND number = ?2",
+                "SELECT COUNT(*) FROM github_pull_requests WHERE account_id = ?1 AND project_id = ?2 AND number = ?3",
             )
+            .bind(&record.account_id)
             .bind(&record.project_id)
             .bind(record.number)
             .fetch_one(self.pool)
@@ -608,13 +723,13 @@ impl<'a> GitHubRepository<'a> {
             sqlx::query(
                 r#"
                 INSERT INTO github_pull_requests (
-                  id, project_id, owner, repo, number, title, body, state, html_url,
+                  id, account_id, project_id, owner, repo, number, title, body, state, html_url,
                   author, head_ref, base_ref, draft, merged_at, created_at_remote,
                   updated_at_remote, closed_at, labels_json, assignees_json,
                   included_in_report, created_at, updated_at
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
-                ON CONFLICT(project_id, number) DO UPDATE SET
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)
+                ON CONFLICT(account_id, project_id, number) DO UPDATE SET
                   owner = excluded.owner,
                   repo = excluded.repo,
                   title = excluded.title,
@@ -635,6 +750,7 @@ impl<'a> GitHubRepository<'a> {
                 "#,
             )
             .bind(&record.id)
+            .bind(&record.account_id)
             .bind(&record.project_id)
             .bind(&record.owner)
             .bind(&record.repo)
@@ -670,8 +786,9 @@ impl<'a> GitHubRepository<'a> {
         let mut updated = 0;
         for record in records {
             let exists: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM github_issues WHERE project_id = ?1 AND number = ?2",
+                "SELECT COUNT(*) FROM github_issues WHERE account_id = ?1 AND project_id = ?2 AND number = ?3",
             )
+            .bind(&record.account_id)
             .bind(&record.project_id)
             .bind(record.number)
             .fetch_one(self.pool)
@@ -684,12 +801,12 @@ impl<'a> GitHubRepository<'a> {
             sqlx::query(
                 r#"
                 INSERT INTO github_issues (
-                  id, project_id, owner, repo, number, title, body, state, html_url,
+                  id, account_id, project_id, owner, repo, number, title, body, state, html_url,
                   author, created_at_remote, updated_at_remote, closed_at, labels_json,
                   assignees_json, included_in_report, created_at, updated_at
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
-                ON CONFLICT(project_id, number) DO UPDATE SET
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+                ON CONFLICT(account_id, project_id, number) DO UPDATE SET
                   owner = excluded.owner,
                   repo = excluded.repo,
                   title = excluded.title,
@@ -706,6 +823,7 @@ impl<'a> GitHubRepository<'a> {
                 "#,
             )
             .bind(&record.id)
+            .bind(&record.account_id)
             .bind(&record.project_id)
             .bind(&record.owner)
             .bind(&record.repo)
@@ -968,7 +1086,8 @@ impl<'a> WorkspaceRepository<'a> {
                     .unwrap_or_else(|| suggested_name_from_path(&repo_path)),
                 description: None,
                 repo_path: Some(repo_path),
-                github_url: None,
+                github_url: normalize_optional(repo.github_url),
+                github_account_id: normalize_optional(repo.github_account_id),
                 project_type: normalize_optional(repo.project_type),
                 workspace_id: Some(workspace.id.clone()),
                 workspace_relative_path: Some(relative),
@@ -980,8 +1099,8 @@ impl<'a> WorkspaceRepository<'a> {
 
             sqlx::query(
                 r#"
-                INSERT INTO projects (id, name, description, repo_path, github_url, type, workspace_id, workspace_relative_path, classification, status, created_at, updated_at)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                INSERT INTO projects (id, name, description, repo_path, github_url, github_account_id, type, workspace_id, workspace_relative_path, classification, status, created_at, updated_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                 "#,
             )
             .bind(&project.id)
@@ -989,6 +1108,7 @@ impl<'a> WorkspaceRepository<'a> {
             .bind(&project.description)
             .bind(&project.repo_path)
             .bind(&project.github_url)
+            .bind(&project.github_account_id)
             .bind(&project.project_type)
             .bind(&project.workspace_id)
             .bind(&project.workspace_relative_path)
@@ -1086,7 +1206,7 @@ impl<'a> WorkspaceRepository<'a> {
     ) -> Result<Option<Project>, sqlx::Error> {
         let rows = sqlx::query(
             r#"
-            SELECT id, name, description, repo_path, github_url, type, workspace_id, workspace_relative_path, classification, status, created_at, updated_at
+            SELECT id, name, description, repo_path, github_url, github_account_id, type, workspace_id, workspace_relative_path, classification, status, created_at, updated_at
             FROM projects
             "#,
         )
@@ -1105,7 +1225,7 @@ impl<'a> WorkspaceRepository<'a> {
     async fn find_project_by_id(&self, project_id: &str) -> Result<Option<Project>, sqlx::Error> {
         let row = sqlx::query(
             r#"
-            SELECT id, name, description, repo_path, github_url, type, workspace_id, workspace_relative_path, classification, status, created_at, updated_at
+            SELECT id, name, description, repo_path, github_url, github_account_id, type, workspace_id, workspace_relative_path, classification, status, created_at, updated_at
             FROM projects
             WHERE id = ?1
             "#,
@@ -1149,7 +1269,7 @@ impl<'a> WorkspaceRepository<'a> {
 
         let row = sqlx::query(
             r#"
-            SELECT id, name, description, repo_path, github_url, type, workspace_id, workspace_relative_path, classification, status, created_at, updated_at
+            SELECT id, name, description, repo_path, github_url, github_account_id, type, workspace_id, workspace_relative_path, classification, status, created_at, updated_at
             FROM projects
             WHERE id = ?1
             "#,
@@ -7904,6 +8024,8 @@ fn report_summary_from_row(row: sqlx::sqlite::SqliteRow) -> ReportSummary {
 fn github_account_from_row(row: sqlx::sqlite::SqliteRow) -> GitHubAccountRecord {
     GitHubAccountRecord {
         id: row.get("id"),
+        host: row.get("host"),
+        github_user_id: row.get("github_user_id"),
         username: row.get("username"),
         token_ref: row.get("token_ref"),
         auth_method: row.get("auth_method"),
@@ -7923,6 +8045,7 @@ fn github_project_repository_from_row(
 ) -> GitHubProjectRepositoryRecord {
     GitHubProjectRepositoryRecord {
         id: row.get("id"),
+        account_id: row.get("account_id"),
         project_id: row.get("project_id"),
         owner: row.get("owner"),
         repo: row.get("repo"),
@@ -7937,6 +8060,7 @@ fn github_project_repository_from_row(
 
 fn github_sync_state_from_row(row: sqlx::sqlite::SqliteRow) -> GitHubSyncStateRecord {
     GitHubSyncStateRecord {
+        account_id: row.get("account_id"),
         project_id: row.get("project_id"),
         owner: row.get("owner"),
         repo: row.get("repo"),
@@ -8992,6 +9116,7 @@ fn project_from_row(row: sqlx::sqlite::SqliteRow) -> Project {
         description: row.get("description"),
         repo_path: row.get("repo_path"),
         github_url: row.get("github_url"),
+        github_account_id: row.get("github_account_id"),
         project_type: row.get("type"),
         workspace_id: row.get("workspace_id"),
         workspace_relative_path: row.get("workspace_relative_path"),
@@ -9753,6 +9878,7 @@ mod tests {
                 description: None,
                 repo_path: Some("C:\\repo\\sparc-force-api".to_string()),
                 github_url: Some("https://github.com/company/api".to_string()),
+                github_account_id: None,
                 project_type: Some("Company".to_string()),
                 classification: None,
             })
@@ -9965,6 +10091,7 @@ mod tests {
                 description: None,
                 repo_path: Some("C:\\repo\\website".to_string()),
                 github_url: None,
+                github_account_id: None,
                 project_type: Some("Client".to_string()),
                 classification: None,
             })
@@ -9981,6 +10108,7 @@ mod tests {
                     description: None,
                     repo_path: None,
                     github_url: None,
+                    github_account_id: None,
                     project_type: None,
                     workspace_id: None,
                     workspace_relative_path: None,
@@ -10357,6 +10485,12 @@ mod tests {
                         repo_path: "C:\\Users\\Sparc\\Documents\\projects\\API".to_string(),
                         relative_path: "API".to_string(),
                         suggested_name: "API".to_string(),
+                        github_url: None,
+                        github_owner: None,
+                        github_repo: None,
+                        github_account_id: None,
+                        github_account_username: None,
+                        github_binding_status: None,
                         status: "new".to_string(),
                         project_id: None,
                         project_name: None,
@@ -10365,6 +10499,12 @@ mod tests {
                         repo_path: ignored_repo.to_string(),
                         relative_path: "Ignored".to_string(),
                         suggested_name: "Ignored".to_string(),
+                        github_url: None,
+                        github_owner: None,
+                        github_repo: None,
+                        github_account_id: None,
+                        github_account_username: None,
+                        github_binding_status: None,
                         status: "new".to_string(),
                         project_id: None,
                         project_name: None,
@@ -10384,6 +10524,8 @@ mod tests {
                     repo_path: "C:\\Users\\Sparc\\Documents\\projects\\API".to_string(),
                     name: Some("API".to_string()),
                     project_type: Some("Workspace".to_string()),
+                    github_url: None,
+                    github_account_id: None,
                 }],
             })
             .await
@@ -10402,6 +10544,12 @@ mod tests {
                     repo_path: "C:\\Users\\Sparc\\Documents\\projects\\API".to_string(),
                     relative_path: "API".to_string(),
                     suggested_name: "API".to_string(),
+                    github_url: None,
+                    github_owner: None,
+                    github_repo: None,
+                    github_account_id: None,
+                    github_account_username: None,
+                    github_binding_status: None,
                     status: "new".to_string(),
                     project_id: None,
                     project_name: None,
@@ -10426,6 +10574,7 @@ mod tests {
                 description: None,
                 repo_path: Some("C:\\repo\\existing-api".to_string()),
                 github_url: None,
+                github_account_id: None,
                 project_type: Some("Backend".to_string()),
                 classification: None,
             })
@@ -10448,6 +10597,8 @@ mod tests {
                     repo_path: "C:\\repo\\existing-api".to_string(),
                     name: Some("Existing API".to_string()),
                     project_type: Some("Workspace".to_string()),
+                    github_url: None,
+                    github_account_id: None,
                 }],
             })
             .await

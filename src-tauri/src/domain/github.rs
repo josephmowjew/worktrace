@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub struct GitHubIntegrationStatus {
     pub connected: bool,
     pub username: Option<String>,
+    pub account_id: Option<String>,
     pub connected_at: Option<String>,
     pub last_validated_at: Option<String>,
     pub has_token: bool,
@@ -13,6 +14,33 @@ pub struct GitHubIntegrationStatus {
     pub status: Option<String>,
     pub last_synced_at: Option<String>,
     pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubAccount {
+    pub id: String,
+    pub host: String,
+    pub github_user_id: Option<i64>,
+    pub username: Option<String>,
+    pub token_ref: Option<String>,
+    pub auth_method: String,
+    pub scopes: Option<String>,
+    pub status: String,
+    pub connected_at: Option<String>,
+    pub last_validated_at: Option<String>,
+    pub last_synced_at: Option<String>,
+    pub last_error: Option<String>,
+    pub has_token: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubAccountsStatus {
+    pub connected: bool,
+    pub accounts: Vec<GitHubAccount>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -46,12 +74,14 @@ pub struct CompleteGitHubDeviceAuthOutput {
     pub message: String,
     pub retry_after_seconds: Option<i64>,
     pub integration: Option<GitHubIntegrationStatus>,
+    pub account: Option<GitHubAccount>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncGitHubProjectActivityInput {
     pub project_id: Option<String>,
+    pub account_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -68,6 +98,8 @@ pub struct SyncGitHubProjectActivityOutput {
 #[derive(Debug, Clone)]
 pub struct GitHubAccountRecord {
     pub id: String,
+    pub host: String,
+    pub github_user_id: Option<i64>,
     pub username: Option<String>,
     pub token_ref: Option<String>,
     pub auth_method: String,
@@ -84,6 +116,7 @@ pub struct GitHubAccountRecord {
 #[derive(Debug, Clone)]
 pub struct GitHubProjectRepositoryRecord {
     pub id: String,
+    pub account_id: String,
     pub project_id: String,
     pub owner: String,
     pub repo: String,
@@ -98,6 +131,7 @@ pub struct GitHubProjectRepositoryRecord {
 #[derive(Debug, Clone)]
 pub struct GitHubPullRequestRecord {
     pub id: String,
+    pub account_id: String,
     pub project_id: String,
     pub owner: String,
     pub repo: String,
@@ -124,6 +158,7 @@ pub struct GitHubPullRequestRecord {
 #[derive(Debug, Clone)]
 pub struct GitHubIssueRecord {
     pub id: String,
+    pub account_id: String,
     pub project_id: String,
     pub owner: String,
     pub repo: String,
@@ -145,6 +180,7 @@ pub struct GitHubIssueRecord {
 
 #[derive(Debug, Clone)]
 pub struct GitHubSyncStateRecord {
+    pub account_id: String,
     pub project_id: String,
     pub owner: String,
     pub repo: String,
@@ -158,6 +194,7 @@ pub struct GitHubSyncStateRecord {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateGitHubPullRequestInput {
+    pub account_id: Option<String>,
     pub project_id: String,
     pub base_branch: String,
     pub new_branch: String,
@@ -165,6 +202,32 @@ pub struct CreateGitHubPullRequestInput {
     pub body: String,
     pub commit_hashes: Vec<String>,
     pub draft: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubAccountActionInput {
+    pub account_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetectProjectGitHubBindingInput {
+    pub project_id: Option<String>,
+    pub repo_path: Option<String>,
+    pub github_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetectProjectGitHubBindingOutput {
+    pub github_url: Option<String>,
+    pub owner: Option<String>,
+    pub repo: Option<String>,
+    pub account_id: Option<String>,
+    pub account_username: Option<String>,
+    pub status: String,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
