@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.3] - 2026-05-29
+- Fixed What's New release notes loading from packaged app resources.
+- Improved the What's New modal so available update notes from the updater manifest can appear before local fallback notes.
+
 ## [0.1.2] - 2026-05-29
 - Added optional setup flow for onboarding, with progress tracking and a way to revisit setup from the app.
 - Added OAuth calendar and GitHub sync so configured integrations can bring calendar events, pull requests, issues, and related activity into WorkTrace.

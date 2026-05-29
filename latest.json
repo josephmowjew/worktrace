@@ -1,11 +1,11 @@
 {
-  "version": "0.1.2",
-  "notes": "Added optional setup flow for onboarding, with progress tracking and a way to revisit setup from the app.\nAdded OAuth calendar and GitHub sync so configured integrations can bring calendar events, pull requests, issues, and related activity into WorkTrace.\nAdded quick manual log capture in a dedicated window with global shortcut support.\nAdded story mode for the activity timeline, turning grouped evidence into chronological daily summaries.\nAdded priority reminders on Today, including notification and autostart support.\nImproved project detail workflows with activity groups, project-filtered commits, and PR builder support.\nAdded project and workspace classification for work/personal filtering and report context.\nAdded a polished light appearance theme and tightened UI layout behavior, including viewport-safe select menus.\nHardened AI report polish fallback behavior so report drafts are preserved when streaming output cannot be parsed.\nAdded Vitest test scripts and initial frontend runtime, story timeline, and theme provider coverage.",
-  "pub_date": "2026-05-29T12:00:00Z",
-  "platforms": {
-    "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUbndnaUhWc2ZhVUlMc3Q1ejlRRldyOFVWSWJISmh1eGhuTUJvWlFyQVVJRlM4TFFYTnpwVDR6SVp5SEM2OGVZQTNicFZDTEZkZ2tmdVRDc2FLR0k5R0FRYmxwVTdBYndJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwMDU5MDg4CWZpbGU6V29ya1RyYWNlXzAuMS4yX3g2NF9lbi1VUy5tc2kuemlwCjNoVTVXU016eDQ1OUhjSlA4SU00TlcybG9aQjBsZ1Njd3ZYY010MForTVZibnVLczVDQnpoVDRYL0ovMVF1ajdScGFHK2ZZSEU4RUhPVTJUUTF5b0JnPT0K",
-      "url": "https://github.com/josephmowjew/worktrace/releases/download/v0.1.2/WorkTrace_0.1.2_x64_en-US.msi.zip"
-    }
-  }
+    "version":  "0.1.3",
+    "notes":  "Fixed What\u0027s New release notes loading from packaged app resources.\nImproved the What\u0027s New modal so available update notes from the updater manifest can appear before local fallback notes.",
+    "pub_date":  "2026-05-29T12:00:00Z",
+    "platforms":  {
+                      "windows-x86_64":  {
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUbndnaUhWc2ZhVU5YZ2lzUUhxUktFWlYxZDVIbUQ3WWJWMUYxcFBLLzdKR0pDckVGaGpQSUNiUVBJRVNveHJIanl2bk4vcjdyY3NxWjhPamcrUnQvZ0NsRDRXM3FKRFE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwMDY1MjIyCWZpbGU6V29ya1RyYWNlXzAuMS4zX3g2NF9lbi1VUy5tc2kuemlwClBWcHU1QU51MFg0VExzRy9NbkxqTlN2eER4WVdQVjREbDlYTk90QitTM2ExZU5CQzA3bW41MEw2TzNtQ0dqdVlPN2xlY3pQNWhIQUxOZjh2MHZGOEJRPT0K",
+                                             "url":  "https://github.com/josephmowjew/worktrace/releases/download/v0.1.3/WorkTrace_0.1.3_x64_en-US.msi.zip"
+                                         }
+                  }
 }

@@ -249,6 +249,23 @@ export function AppLayout({ children }: PropsWithChildren) {
     projectsQuery.data?.some(
       (project) => project.status === "active" && Boolean(project.repoPath),
     ) ?? false;
+  const releaseNotes = useMemo(() => {
+    const localReleases = releaseNotesQuery.data?.releases ?? [];
+    const update = checkForUpdateMutation.data;
+    if (update?.status !== "available" || !update.latestVersion || !update.body) {
+      return localReleases;
+    }
+
+    const updateRelease = {
+      version: update.latestVersion,
+      publishedAt: update.pubDate,
+      notes: update.body,
+    };
+    return [
+      updateRelease,
+      ...localReleases.filter((release) => release.version !== update.latestVersion),
+    ];
+  }, [checkForUpdateMutation.data, releaseNotesQuery.data?.releases]);
 
   function openProjectsWorkspaceScan() {
     navigate("/projects", { state: { openWorkspaceScan: true } });
@@ -494,6 +511,14 @@ export function AppLayout({ children }: PropsWithChildren) {
 
     return () => window.clearInterval(syncInterval);
   }, [commandSparcForceSyncMutation, sparcForceAvailable, sparcForceStatusQuery.data?.connected]);
+
+  useEffect(() => {
+    if (!isWhatsNewOpen || checkForUpdateMutation.isPending || checkForUpdateMutation.data) {
+      return;
+    }
+
+    checkForUpdateMutation.mutate();
+  }, [checkForUpdateMutation, isWhatsNewOpen]);
 
   return (
     <div className="h-screen overflow-hidden bg-[var(--wt-bg)] text-[var(--wt-text)]">
@@ -770,7 +795,7 @@ export function AppLayout({ children }: PropsWithChildren) {
             </div>
             <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
               {releaseNotesQuery.isLoading ? <p className="text-xs text-[var(--wt-text-muted)]">Loading release notes...</p> : null}
-              {(releaseNotesQuery.data?.releases ?? []).map((release) => (
+              {releaseNotes.map((release) => (
                 <article key={`${release.version}-${release.publishedAt ?? "na"}`} className="rounded-lg border border-[var(--wt-border)] bg-[var(--wt-surface-muted)] p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <p className="text-xs font-semibold text-[var(--wt-accent-text)]">{release.version}</p>
