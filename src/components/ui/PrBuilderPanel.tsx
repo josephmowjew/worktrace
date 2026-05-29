@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ClipboardCopy, ExternalLink, GitPullRequest, Rocket, X } from "lucide-react";
+import { AlertTriangle, ClipboardCopy, ExternalLink, GitPullRequest, Rocket } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { ActivityItem } from "../../types/activity";
@@ -17,6 +17,7 @@ import {
 } from "../../lib/prBuilder";
 import { Badge } from "./Badge";
 import { Button } from "./Button";
+import { CloseButton } from "./CloseButton";
 import { Panel } from "./Panel";
 
 export function PrBuilderPanel({
@@ -153,14 +154,7 @@ export function PrBuilderPanel({
             Generates copy-ready Git commands and can create a GitHub PR when connected.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-lg p-1.5 text-slate-500 transition hover:bg-white/10 hover:text-slate-200"
-          aria-label="Close PR builder"
-        >
-          <X className="h-4 w-4" />
-        </button>
+        <CloseButton label="Close PR builder" variant="panel" onClick={onClose} />
       </div>
 
       <div className="grid gap-3 md:grid-cols-2">

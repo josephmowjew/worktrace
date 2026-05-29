@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, Info, X, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Info, XCircle } from "lucide-react";
 import {
   createContext,
   useCallback,
@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 import type { PropsWithChildren } from "react";
+import { CloseButton } from "./CloseButton";
 
 type ToastTone = "success" | "error" | "info" | "warning";
 
@@ -97,14 +98,7 @@ export function ToastProvider({ children }: PropsWithChildren) {
                     <p className="mt-1 text-xs leading-5 text-slate-300">{toast.message}</p>
                   ) : null}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => remove(toast.id)}
-                  className="rounded-lg p-1 opacity-70 transition hover:bg-white/10 hover:opacity-100"
-                  aria-label="Dismiss notification"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
+                <CloseButton label="Dismiss notification" variant="transient" onClick={() => remove(toast.id)} />
               </div>
             </div>
           );

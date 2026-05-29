@@ -1,8 +1,9 @@
-import { AlertTriangle, CheckCircle2, FileText, ListChecks, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileText, ListChecks, RefreshCw } from "lucide-react";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import type { ActivityItem } from "../../types/activity";
 import type { WeeklyTask } from "../../types/weeklyTask";
 import { Button } from "./Button";
+import { CloseButton } from "./CloseButton";
 import { Panel } from "./Panel";
 
 export function PrepareReportModal({
@@ -50,9 +51,7 @@ export function PrepareReportModal({
             <h2 className="text-xl font-semibold tracking-tight text-white">Friday Report Flow</h2>
             <p className="mt-1 text-xs text-slate-400">Review, tidy, and then open Reports.</p>
           </div>
-          <Button variant="ghost" onClick={onClose} className="h-9 w-9 px-0">
-            <X className="h-4 w-4" />
-          </Button>
+          <CloseButton label="Close Friday Report Flow" onClick={onClose} />
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-5">

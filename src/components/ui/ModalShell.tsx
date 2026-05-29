@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
-import { X } from "lucide-react";
-import { Button } from "./Button";
+import { CloseButton } from "./CloseButton";
 import { Panel } from "./Panel";
 
 const sizeClasses = {
@@ -33,9 +32,7 @@ export function ModalShell({
             <h2 className="text-base font-semibold text-[var(--wt-text-strong)] [text-wrap:balance]">{title}</h2>
             {description ? <p className="mt-0.5 text-xs leading-5 text-[var(--wt-text-muted)] [text-wrap:pretty]">{description}</p> : null}
           </div>
-          <Button variant="ghost" size="icon" onClick={onClose} aria-label={`Close ${title}`}>
-            <X className="h-4 w-4" />
-          </Button>
+          <CloseButton label={`Close ${title}`} onClick={onClose} />
         </div>
         <div className="min-h-0 overflow-y-auto">{children}</div>
       </Panel>

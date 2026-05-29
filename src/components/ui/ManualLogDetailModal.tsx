@@ -1,8 +1,9 @@
-import { CalendarDays, ClipboardEdit, Clock3, FileText, FolderKanban, X } from "lucide-react";
+import { CalendarDays, ClipboardEdit, Clock3, FileText, FolderKanban } from "lucide-react";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import type { ManualLog } from "../../types/manualLog";
 import { Badge } from "./Badge";
 import { Button } from "./Button";
+import { CloseButton } from "./CloseButton";
 import { Panel } from "./Panel";
 
 export function ManualLogDetailModal({
@@ -30,9 +31,7 @@ export function ManualLogDetailModal({
             <h2 className="text-lg font-semibold leading-7 text-white [text-wrap:balance]">{log.summary}</h2>
             <p className="mt-1 text-xs text-slate-500">{log.projectId ? "Project activity" : "General activity"}</p>
           </div>
-          <Button variant="ghost" onClick={onClose} className="h-9 w-9 px-0" aria-label="Close activity details">
-            <X className="h-4 w-4" />
-          </Button>
+          <CloseButton label="Close activity details" onClick={onClose} />
         </div>
 
         <div className="space-y-4 p-5">
@@ -66,7 +65,7 @@ export function ManualLogDetailModal({
           </div>
 
           <div className="flex justify-end border-t border-white/8 pt-4">
-            <Button variant="secondary" onClick={onClose}>
+            <Button type="button" variant="secondary" onClick={onClose}>
               Close
             </Button>
           </div>

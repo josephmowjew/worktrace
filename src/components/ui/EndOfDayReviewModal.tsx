@@ -7,7 +7,6 @@ import {
   ListChecks,
   RefreshCw,
   Timer,
-  X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
@@ -16,6 +15,7 @@ import type { FocusSession } from "../../types/focusSession";
 import type { ReportNote } from "../../types/report";
 import type { WeeklyTask } from "../../types/weeklyTask";
 import { Button } from "./Button";
+import { CloseButton } from "./CloseButton";
 import { Panel } from "./Panel";
 
 type ReviewFields = {
@@ -99,9 +99,7 @@ export function EndOfDayReviewModal({
             <h2 className="text-xl font-semibold tracking-tight text-white">End-of-Day Review</h2>
             <p className="mt-1 text-xs text-slate-400">{dateLabel}</p>
           </div>
-          <Button variant="ghost" onClick={onClose} className="h-9 w-9 px-0">
-            <X className="h-4 w-4" />
-          </Button>
+          <CloseButton label="Close End-of-Day Review" onClick={onClose} />
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-5">

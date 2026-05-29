@@ -18,6 +18,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { z } from "zod";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
+import { CloseButton } from "../components/ui/CloseButton";
 import { Panel } from "../components/ui/Panel";
 import { PageHeader } from "../components/ui/PageHeader";
 import { SegmentedTabs } from "../components/ui/SegmentedTabs";
@@ -2427,14 +2428,7 @@ function IntegrationSetupPanel({
             Configure this integration without leaving the Integrations section.
           </p>
         </div>
-        <button
-          type="button"
-          className="inline-flex min-h-11 items-center gap-3 rounded-xl border border-white/10 bg-slate-950/35 px-4 py-2 text-sm font-semibold text-slate-200 shadow-lg shadow-black/10 transition hover:border-blue-300/30 hover:bg-white/8 active:scale-[0.96]"
-          onClick={onClose}
-        >
-          Close
-          <X className="h-4 w-4 text-slate-400" />
-        </button>
+        <CloseButton label={`Close ${integrationPanelTitle(activePanel)}`} variant="panel" onClick={onClose} />
       </div>
 
       {activePanel === "github" ? (
@@ -3734,15 +3728,7 @@ function SparcForceTaskImportReview({
               Adjust the task fields, then create it in WorkTrace.
             </p>
           </div>
-          <button
-            type="button"
-            className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-slate-950/35 text-slate-300 transition hover:border-blue-300/30 hover:text-white active:scale-[0.96]"
-            onClick={onCancel}
-            disabled={isPending}
-            aria-label="Close review"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <CloseButton label="Close review" variant="panel" onClick={onCancel} disabled={isPending} />
         </div>
 
         <div className="mt-4 grid gap-4 md:grid-cols-2">

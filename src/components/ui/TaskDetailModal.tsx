@@ -8,13 +8,13 @@ import {
   FolderKanban,
   ListTodo,
   Target,
-  X,
 } from "lucide-react";
 import type { ElementType } from "react";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import type { WeeklyTask } from "../../types/weeklyTask";
 import { Badge } from "./Badge";
 import { Button } from "./Button";
+import { CloseButton } from "./CloseButton";
 import { Panel } from "./Panel";
 
 const typeLabels: Record<WeeklyTask["taskType"], string> = {
@@ -69,9 +69,7 @@ export function TaskDetailModal({
               {task.projectName ?? "General"} / {typeLabels[task.taskType]}
             </p>
           </div>
-          <Button variant="ghost" onClick={onClose} className="h-9 w-9 px-0" aria-label="Close task details">
-            <X className="h-4 w-4" />
-          </Button>
+          <CloseButton label="Close task details" onClick={onClose} />
         </div>
 
         <div className="space-y-4 p-5">
@@ -119,11 +117,11 @@ export function TaskDetailModal({
           </div>
 
           <div className="flex flex-wrap gap-2 border-t border-white/8 pt-4">
-            <Button variant="secondary" onClick={onClose} className="flex-1">
+            <Button type="button" variant="secondary" onClick={onClose} className="flex-1">
               Close
             </Button>
             {onEdit ? (
-              <Button variant="primary" onClick={() => onEdit(task)} className="flex-1">
+              <Button type="button" variant="primary" onClick={() => onEdit(task)} className="flex-1">
                 <Edit3 className="h-4 w-4" />
                 Edit Task
               </Button>

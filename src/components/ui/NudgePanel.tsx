@@ -1,5 +1,6 @@
-import { Bell, CheckCircle2, X } from "lucide-react";
+import { Bell, CheckCircle2 } from "lucide-react";
 import { Button } from "./Button";
+import { CloseButton } from "./CloseButton";
 import { Panel } from "./Panel";
 
 export type TodayNudge = {
@@ -44,15 +45,12 @@ export function NudgePanel({
                     {nudge.actionLabel}
                   </Button>
                 </div>
-                <button
-                  type="button"
+                <CloseButton
+                  label={`Dismiss ${nudge.title}`}
+                  variant="transient"
                   disabled={isDismissing}
                   onClick={() => onDismiss(nudge.key)}
-                  className="rounded-lg p-1 text-slate-500 transition hover:bg-white/8 hover:text-white disabled:opacity-50"
-                  aria-label={`Dismiss ${nudge.title}`}
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
+                />
               </div>
             </div>
           ))

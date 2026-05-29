@@ -1,7 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
-import { FolderKanban, FolderOpen, GitBranch, X } from "lucide-react";
+import { FolderKanban, FolderOpen, GitBranch } from "lucide-react";
 import type { InputHTMLAttributes } from "react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -10,6 +10,7 @@ import { listGitHubAccounts } from "../../lib/api/github";
 import { validateRepoPath } from "../../lib/api/projects";
 import type { CreateProjectInput, Project } from "../../types/project";
 import { Button } from "./Button";
+import { CloseButton } from "./CloseButton";
 import { Panel } from "./Panel";
 import { SelectField } from "./SelectField";
 import { useToast } from "./ToastProvider";
@@ -190,9 +191,7 @@ export function ProjectFormPanel({
                 : "Use the native picker or paste a local repository path. Git-backed repositories auto-sync on save."}
             </p>
           </div>
-          <Button variant="ghost" onClick={onCancel} aria-label="Close form" className="shrink-0">
-            <X className="h-4 w-4" />
-          </Button>
+          <CloseButton label="Close form" variant="panel" onClick={onCancel} />
         </div>
 
         <form className="space-y-4 p-5" onSubmit={form.handleSubmit(submit)}>

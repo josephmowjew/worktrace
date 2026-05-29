@@ -1,7 +1,8 @@
-import { Activity, BarChart3, BookOpen, ClipboardEdit, DatabaseBackup, FileText, Focus, FolderKanban, Gauge, HelpCircle, Home, ListChecks, ListTodo, Mic, RefreshCw, Search, Settings, Square, X } from "lucide-react";
+import { Activity, BarChart3, BookOpen, ClipboardEdit, DatabaseBackup, FileText, Focus, FolderKanban, Gauge, HelpCircle, Home, ListChecks, ListTodo, Mic, RefreshCw, Search, Settings, Square } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
+import { CloseButton } from "./CloseButton";
 import type { Project } from "../../types/project";
 
 type PaletteGroup = "Navigation" | "Capture" | "Focus" | "Review" | "Reporting" | "Sync" | "Repositories" | "Settings";
@@ -131,13 +132,7 @@ export function CommandPalette({
               }
             }}
           />
-          <button
-            type="button"
-            onClick={onClose}
-            className="grid h-8 w-8 place-items-center rounded-lg text-[var(--wt-text-muted)] transition hover:bg-[var(--wt-surface-hover)] hover:text-[var(--wt-text-strong)]"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <CloseButton label="Close command palette" variant="subtle" onClick={onClose} />
         </div>
         {onVoiceCommand ? (
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--wt-border)] px-4 py-3">

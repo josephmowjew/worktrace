@@ -285,7 +285,7 @@ export function AddTaskModal({
           ) : null}
 
           <div className="flex gap-2">
-            <Button variant="secondary" onClick={onClose} className="flex-1">
+            <Button type="button" variant="secondary" onClick={onClose} className="flex-1">
               Cancel
             </Button>
             <Button
