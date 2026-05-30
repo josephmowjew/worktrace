@@ -41,6 +41,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "publisher": "Joseph Mojoo",
     "copyright": "Copyright (c) 2026 Joseph Mojoo. All rights reserved.",
