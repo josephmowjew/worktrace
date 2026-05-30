@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.4] - 2026-05-30
+- Added secure local task and manual log attachments for images and PDFs, including previews, open/delete actions, and WorkTrace-controlled storage.
+- Added configurable work week boundaries so timelines, reports, dashboards, tasks, and widgets can include weekend work.
+- Added manual log category tones and task type/priority emphasis for clearer scanning.
+- Improved Today, repository sync, multiple GitHub account handling, close-button consistency, and friction insight detection.
+
 ## [0.1.3] - 2026-05-29
 - Fixed What's New release notes loading from packaged app resources.
 - Improved the What's New modal so available update notes from the updater manifest can appear before local fallback notes.
