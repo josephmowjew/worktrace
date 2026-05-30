@@ -4,8 +4,8 @@
   "pub_date": "2026-05-30T19:00:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUbndnaUhWc2ZhVUxVNEppcG50UXhBL2E4NXdXNWgwUDAzeVp0RGQwYUlPUG13Q0p6UG05RmlEVStVZ216VzEwQjAzN3VHdG54N0pKdXdCNXI3SkxPSCtxaENHeFgwS0FzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwMTcwMTIxCWZpbGU6V29ya1RyYWNlXzAuMS40X3g2NF9lbi1VUy5tc2kuemlwClhpY3VRR1RLMS9qT2wwdlZZanRhKytveTNJUE5xTWpZR2paMXFiSXNHOHcxQk82QzNIVDExN3l6UGcwQ2F5ZGtWUHY4N3FZczdIaTdhcC9HWHNWS0FnPT0K",
-      "url": "https://github.com/josephmowjew/worktrace/releases/download/v0.1.4/WorkTrace_0.1.4_x64_en-US.msi.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUbndnaUhWc2ZhVUQxR25mSGx1RjhlTzJGWHQ5cCt6QS9BTFB0QjlMd0lQNHdVRXRrcVZoRG9NaXE3NlBLNzltWlY4V0s4UURhUmxEcGNSemtvTGphL29GcHJ6L2Q4eGcwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwMTcxMTc4CWZpbGU6V29ya1RyYWNlXzAuMS40X3g2NC1zZXR1cC5leGUuemlwCllLM1RnMUFuQ1NmZUkvMXJYNmVGUmtTWkl3cFEwOWhTNlNQLzBVaktldEMvck1YTWdDZG5EWEgvTFZONGJhQUpyOFhIb2RvY20xM0FVWmVheU40Q0F3PT0K",
+      "url": "https://github.com/josephmowjew/worktrace/releases/download/v0.1.4/WorkTrace_0.1.4_x64-setup.exe.zip"
     }
   }
 }
