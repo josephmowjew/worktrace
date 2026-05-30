@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { CheckCircle2, Clock3, FolderKanban, Loader2, Move, Sparkles, X } from "lucide-react";
+import { CheckCircle2, Clock3, FolderKanban, Loader2, Move, Paperclip, Sparkles, Trash2, X } from "lucide-react";
 import { listActivity } from "../lib/api/activity";
 import { getActiveFocusSession } from "../lib/api/focusSessions";
+import { addManualLogAttachment } from "../lib/api/manualLogAttachments";
 import { quickCaptureLog } from "../lib/api/manualLogs";
 import { listProjects } from "../lib/api/projects";
 import { getSettings } from "../lib/api/settings";
@@ -35,6 +37,7 @@ export function QuickCaptureWindow() {
   const [projectId, setProjectId] = useState("");
   const [durationMinutes, setDurationMinutes] = useState<number | null>(null);
   const [customDuration, setCustomDuration] = useState("");
+  const [attachmentPaths, setAttachmentPaths] = useState<string[]>([]);
   const [captured, setCaptured] = useState(false);
 
   const projectsQuery = useQuery({ queryKey: ["projects"], queryFn: listProjects });
@@ -88,17 +91,23 @@ export function QuickCaptureWindow() {
   }, []);
 
   const captureMutation = useMutation({
-    mutationFn: () =>
-      quickCaptureLog({
+    mutationFn: async () => {
+      const log = await quickCaptureLog({
         summary: summary.trim(),
         activityType,
         projectId: projectId || null,
         durationMinutes,
         includedInReport: settingsQuery.data?.quickCaptureIncludeInReport ?? true,
-      }),
+      });
+      for (const path of attachmentPaths) {
+        await addManualLogAttachment(log.id, path);
+      }
+      return log;
+    },
     onSuccess: () => {
       setCaptured(true);
       setSummary("");
+      setAttachmentPaths([]);
       window.setTimeout(() => {
         setCaptured(false);
         hideQuickCapture().catch(() => getCurrentWindow().hide());
@@ -109,6 +118,30 @@ export function QuickCaptureWindow() {
   function save() {
     if (!summary.trim() || captureMutation.isPending) return;
     captureMutation.mutate();
+  }
+
+  async function pickAttachments() {
+    const selected = await open({
+      multiple: true,
+      directory: false,
+      filters: [
+        {
+          name: "Images and PDFs",
+          extensions: ["png", "jpg", "jpeg", "webp", "gif", "pdf"],
+        },
+      ],
+    });
+    const selectedPaths = Array.isArray(selected) ? selected : typeof selected === "string" ? [selected] : [];
+    if (!selectedPaths.length) return;
+    setAttachmentPaths((current) => {
+      const next = [...current];
+      for (const path of selectedPaths) {
+        if (!next.includes(path) && next.length < 20) {
+          next.push(path);
+        }
+      }
+      return next;
+    });
   }
 
   function handleDuration(value: number | "custom") {
@@ -250,6 +283,48 @@ export function QuickCaptureWindow() {
                 </button>
               ) : null}
             </div>
+          </div>
+
+          <div className="rounded-xl border border-white/10 bg-slate-950/55 p-2.5">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-300">
+                <Paperclip className="h-3.5 w-3.5 text-cyan-200" />
+                Attachments
+                {attachmentPaths.length ? (
+                  <span className="tabular-nums text-slate-500">{attachmentPaths.length}</span>
+                ) : null}
+              </span>
+              <button
+                type="button"
+                onClick={() => void pickAttachments()}
+                disabled={attachmentPaths.length >= 20}
+                className="rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs font-semibold text-slate-300 transition hover:bg-white/[0.06] hover:text-slate-100 disabled:opacity-50"
+              >
+                Add
+              </button>
+            </div>
+            {attachmentPaths.length ? (
+              <div className="space-y-1.5">
+                {attachmentPaths.map((path) => {
+                  const name = path.split(/[\\/]/).pop() || "Attachment";
+                  return (
+                    <div key={path} className="flex items-center gap-2 rounded-lg bg-white/[0.03] px-2 py-1.5">
+                      <span className="min-w-0 flex-1 truncate text-xs text-slate-400">{name}</span>
+                      <button
+                        type="button"
+                        onClick={() => setAttachmentPaths((current) => current.filter((item) => item !== path))}
+                        className="grid h-7 w-7 place-items-center rounded-md text-slate-500 transition hover:bg-red-500/10 hover:text-red-200"
+                        aria-label={`Remove ${name}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-600">Add screenshots or PDFs if this capture needs evidence.</p>
+            )}
           </div>
 
           {captureMutation.error ? (

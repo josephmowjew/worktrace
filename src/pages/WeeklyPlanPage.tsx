@@ -20,7 +20,7 @@ import { ProgressDonut } from "../components/ui/ProgressDonut";
 import { QuickAddBar } from "../components/ui/QuickAddBar";
 import { RecentlyCompletedList } from "../components/ui/RecentlyCompletedList";
 import { AddItemBar } from "../components/ui/AddItemBar";
-import { AddTaskModal } from "../components/ui/AddTaskModal";
+import { AddTaskModal, type TaskSubmitValues } from "../components/ui/AddTaskModal";
 import { Select } from "../components/ui/Select";
 import { TaskDetailModal } from "../components/ui/TaskDetailModal";
 import { useSpeech } from "../components/ui/SpeechProvider";
@@ -28,6 +28,7 @@ import { useToast } from "../components/ui/ToastProvider";
 import { getWeekCapacity } from "../lib/api/calendar";
 import { getFrictionInsights } from "../lib/api/friction";
 import { listProjects } from "../lib/api/projects";
+import { addTaskAttachment } from "../lib/api/taskAttachments";
 import {
   createWeeklyTask,
   deleteWeeklyTask,
@@ -319,22 +320,10 @@ export function WeeklyPlanPage() {
   }, [planned, inProgress, done, carryForward]);
 
   const saveMutation = useMutation({
-    mutationFn: (values: {
-      title: string;
-      taskType?: WeeklyTaskType;
-      status?: WeeklyTaskStatus;
-      projectId?: string;
-      priority: WeeklyTaskPriority;
-      details?: string;
-      weekStartDate: string;
-      targetDate?: string;
-      completedAt?: string;
-      includedInReport?: boolean;
-      progressPercent?: number;
-      estimatedMinutes?: number;
-    }) => {
+    mutationFn: async (values: TaskSubmitValues) => {
+      let task: WeeklyTask;
       if (editingTask) {
-        return updateWeeklyTask(editingTask.id, {
+        task = await updateWeeklyTask(editingTask.id, {
           title: values.title,
           taskType: values.taskType,
           status: values.status,
@@ -348,24 +337,32 @@ export function WeeklyPlanPage() {
           progressPercent: values.progressPercent,
           estimatedMinutes: values.estimatedMinutes,
         });
+      } else {
+        task = await createWeeklyTask({
+          title: values.title,
+          taskType: values.taskType || "planned_work",
+          status: values.status || "todo",
+          projectId: values.projectId || null,
+          priority: values.priority,
+          details: values.details || null,
+          weekStartDate: values.weekStartDate,
+          targetDate: values.targetDate || null,
+          completedAt: values.completedAt || null,
+          includedInReport: values.includedInReport ?? false,
+          progressPercent: values.progressPercent,
+          estimatedMinutes: values.estimatedMinutes,
+        });
       }
-      return createWeeklyTask({
-        title: values.title,
-        taskType: values.taskType || "planned_work",
-        status: values.status || "todo",
-        projectId: values.projectId || null,
-        priority: values.priority,
-        details: values.details || null,
-        weekStartDate: values.weekStartDate,
-        targetDate: values.targetDate || null,
-        completedAt: values.completedAt || null,
-        includedInReport: values.includedInReport ?? false,
-        progressPercent: values.progressPercent,
-        estimatedMinutes: values.estimatedMinutes,
-      });
+
+      for (const path of values.attachmentPaths ?? []) {
+        await addTaskAttachment(task.id, path);
+      }
+
+      return task;
     },
     onSuccess: async (task) => {
       await invalidateWeeklyTaskViews();
+      await queryClient.invalidateQueries({ queryKey: ["taskAttachments", task.id] });
       toast.success(editingTask ? "Task updated" : "Task added");
       speech.announce(
         taskAnnouncement(editingTask ? "Task updated" : "Task added", task, {
@@ -831,6 +828,7 @@ export function WeeklyPlanPage() {
         onSubmit={(values) => {
           const data = prefillData;
           saveMutation.mutate({
+            ...values,
             title: data?.title || values.title,
             taskType: values.taskType,
             status: values.status,

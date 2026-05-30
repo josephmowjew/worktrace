@@ -1,18 +1,16 @@
 import { CalendarDays, Check, Clock3, Edit3, GripVertical, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import {
+  priorityToneByPriority,
+  taskStatusMuted,
+  taskToneByType,
+  toneBadgeClass,
+  toneCardClass,
+} from "../../lib/workItemStyles";
 import type { WeeklyTask } from "../../types/weeklyTask";
 
 function getPriorityColor(priority: string): string {
-  switch (priority) {
-    case "high":
-      return "border-red-500/20 bg-red-500/10 text-red-600 dark:text-red-300";
-    case "normal":
-      return "border-orange-500/20 bg-orange-500/10 text-orange-600 dark:text-orange-300";
-    case "low":
-      return "border-blue-500/20 bg-blue-500/10 text-blue-600 dark:text-blue-300";
-    default:
-      return "border-[var(--wt-border)] bg-[var(--wt-surface-muted)] text-[var(--wt-text-muted)]";
-  }
+  return toneBadgeClass(priorityToneByPriority[priority as WeeklyTask["priority"]] ?? "slate");
 }
 
 function getPriorityLabel(priority: string): string {
@@ -55,6 +53,9 @@ export function TaskCard({
   const isInProgress = task.status === "in_progress";
   const priorityColor = getPriorityColor(task.priority);
   const priorityLabel = getPriorityLabel(task.priority);
+  const typeTone = taskToneByType[task.taskType] ?? "slate";
+  const cardTone = task.priority === "high" || task.taskType === "blocker" ? "rose" : typeTone;
+  const cardToneClass = toneCardClass(cardTone, taskStatusMuted[task.status]);
   const cardRef = useRef<HTMLDivElement>(null);
   const placeholderRef = useRef<HTMLDivElement | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -172,10 +173,10 @@ export function TaskCard({
           onView();
         }
       }}
-      className={`group rounded-xl border p-3 shadow-[0_1px_2px_rgb(var(--wt-shadow)/0.06)] transition-colors hover:bg-[var(--wt-surface-muted)] ${
+      className={`group rounded-xl border p-3 shadow-[0_1px_2px_rgb(var(--wt-shadow)/0.06)] transition-colors ${
         isHighlighted
           ? "border-orange-300/45 bg-orange-500/10 shadow-orange-950/20"
-          : "border-[var(--wt-border)] bg-[var(--wt-surface)]"
+          : cardToneClass
       } ${
         isDragging ? "cursor-grabbing" : "cursor-pointer"
       }`}
@@ -223,6 +224,9 @@ export function TaskCard({
               className={`rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${priorityColor}`}
             >
               {priorityLabel}
+            </span>
+            <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${toneBadgeClass(typeTone)}`}>
+              {task.taskType.replace("_", " ")}
             </span>
             {task.projectName && (
               <span className="rounded-md bg-[var(--wt-surface-muted)] px-1.5 py-0.5 text-[10px] text-[var(--wt-text-muted)]">

@@ -1,10 +1,13 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { CalendarDays, ClipboardEdit, Clock3, FileText, FolderKanban } from "lucide-react";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import type { ManualLog } from "../../types/manualLog";
 import { Badge } from "./Badge";
 import { Button } from "./Button";
 import { CloseButton } from "./CloseButton";
+import { ManualLogAttachmentsSection } from "./ManualLogAttachmentsSection";
 import { Panel } from "./Panel";
+import { useToast } from "./ToastProvider";
 
 export function ManualLogDetailModal({
   log,
@@ -15,6 +18,8 @@ export function ManualLogDetailModal({
   isOpen: boolean;
   onClose: () => void;
 }) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
   useEscapeKey(onClose, isOpen);
 
   if (!isOpen || !log) return null;
@@ -63,6 +68,14 @@ export function ManualLogDetailModal({
             <DetailItem icon={CalendarDays} label="Date" value={formatTimestamp(log.date)} />
             <DetailItem icon={Clock3} label="Duration" value={formatMinutes(log.durationMinutes)} />
           </div>
+
+          <ManualLogAttachmentsSection
+            manualLogId={log.id}
+            queryKey={["manualLogAttachments", log.id]}
+            onChanged={() => queryClient.invalidateQueries({ queryKey: ["manualLogAttachments", log.id] })}
+            onError={(title, message) => toast.error(title, message)}
+            onSuccess={(title, message) => toast.success(title, message)}
+          />
 
           <div className="flex justify-end border-t border-white/8 pt-4">
             <Button type="button" variant="secondary" onClick={onClose}>

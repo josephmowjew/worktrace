@@ -47,6 +47,9 @@ use crate::domain::github::{
 use crate::domain::manual_log::{
     ActivityType, CreateManualLogInput, ManualLog, UpdateManualLogInput,
 };
+use crate::domain::manual_log_attachment::{
+    CreateManualLogAttachmentRecord, ManualLogAttachmentRecord,
+};
 use crate::domain::nudge::{DismissNudgeInput, ListNudgeDismissalsInput, NudgeDismissal};
 use crate::domain::priority_reminder::PriorityReminder;
 use crate::domain::project::{CreateProjectInput, Project, UpdateProjectInput};
@@ -60,6 +63,7 @@ use crate::domain::sparc_force::{
     SparcForceImportCounts, SparcForceImportedData, SparcForceImportedItem, SparcForceRecordBucket,
     SparcForceRecordCounts, SparcForceRecordQueryResult,
 };
+use crate::domain::task_attachment::{CreateTaskAttachmentRecord, TaskAttachmentRecord};
 use crate::domain::weekly_task::{
     CreateWeeklyTaskInput, ListWeeklyTasksInput, UpdateWeeklyTaskInput, WeeklyTask,
     WeeklyTaskPriority, WeeklyTaskStatus, WeeklyTaskType,
@@ -4307,7 +4311,7 @@ impl<'a> ManualLogRepository<'a> {
         Ok(rows.into_iter().map(manual_log_from_row).collect())
     }
 
-    async fn find(&self, id: &str) -> Result<Option<ManualLog>, sqlx::Error> {
+    pub async fn find(&self, id: &str) -> Result<Option<ManualLog>, sqlx::Error> {
         let row = sqlx::query(
             r#"
             SELECT id, project_id, date, activity_type, summary, outcome, duration_minutes,
@@ -4348,6 +4352,120 @@ impl ManualLogStore for ManualLogRepository<'_> {
         to: &str,
     ) -> Result<Vec<ManualLog>, sqlx::Error> {
         ManualLogRepository::list_by_date_range(self, from, to).await
+    }
+}
+
+pub struct ManualLogAttachmentRepository<'a> {
+    pool: &'a SqlitePool,
+}
+
+impl<'a> ManualLogAttachmentRepository<'a> {
+    pub fn new(pool: &'a SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn list_by_manual_log(
+        &self,
+        manual_log_id: &str,
+    ) -> Result<Vec<ManualLogAttachmentRecord>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, manual_log_id, original_name, stored_name, storage_relative_path, mime_type,
+                   extension, size_bytes, sha256, image_width, image_height, created_at, updated_at
+            FROM manual_log_attachments
+            WHERE manual_log_id = ?1
+            ORDER BY created_at DESC, original_name ASC
+            "#,
+        )
+        .bind(manual_log_id)
+        .fetch_all(self.pool)
+        .await?;
+
+        Ok(rows.into_iter().map(manual_log_attachment_from_row).collect())
+    }
+
+    pub async fn count_by_manual_log(&self, manual_log_id: &str) -> Result<usize, sqlx::Error> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM manual_log_attachments WHERE manual_log_id = ?1",
+        )
+        .bind(manual_log_id)
+        .fetch_one(self.pool)
+        .await?;
+
+        Ok(count.max(0) as usize)
+    }
+
+    pub async fn find(&self, id: &str) -> Result<Option<ManualLogAttachmentRecord>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, manual_log_id, original_name, stored_name, storage_relative_path, mime_type,
+                   extension, size_bytes, sha256, image_width, image_height, created_at, updated_at
+            FROM manual_log_attachments
+            WHERE id = ?1
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(self.pool)
+        .await?;
+
+        Ok(row.map(manual_log_attachment_from_row))
+    }
+
+    pub async fn create(
+        &self,
+        input: CreateManualLogAttachmentRecord,
+    ) -> Result<ManualLogAttachmentRecord, sqlx::Error> {
+        let now = current_timestamp();
+
+        sqlx::query(
+            r#"
+            INSERT INTO manual_log_attachments (
+              id, manual_log_id, original_name, stored_name, storage_relative_path, mime_type,
+              extension, size_bytes, sha256, image_width, image_height, created_at, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            "#,
+        )
+        .bind(&input.id)
+        .bind(&input.manual_log_id)
+        .bind(&input.original_name)
+        .bind(&input.stored_name)
+        .bind(&input.storage_relative_path)
+        .bind(&input.mime_type)
+        .bind(&input.extension)
+        .bind(input.size_bytes)
+        .bind(&input.sha256)
+        .bind(input.image_width)
+        .bind(input.image_height)
+        .bind(&now)
+        .bind(&now)
+        .execute(self.pool)
+        .await?;
+
+        Ok(ManualLogAttachmentRecord {
+            id: input.id,
+            manual_log_id: input.manual_log_id,
+            original_name: input.original_name,
+            stored_name: input.stored_name,
+            storage_relative_path: input.storage_relative_path,
+            mime_type: input.mime_type,
+            extension: input.extension,
+            size_bytes: input.size_bytes,
+            sha256: input.sha256,
+            image_width: input.image_width,
+            image_height: input.image_height,
+            created_at: now.clone(),
+            updated_at: now,
+        })
+    }
+
+    pub async fn delete(&self, id: &str) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query("DELETE FROM manual_log_attachments WHERE id = ?1")
+            .bind(id)
+            .execute(self.pool)
+            .await?;
+
+        Ok(result.rows_affected() > 0)
     }
 }
 
@@ -6019,6 +6137,117 @@ impl WeeklyTaskStore for WeeklyTaskRepository<'_> {
 
     async fn delete(&self, id: &str) -> Result<bool, sqlx::Error> {
         WeeklyTaskRepository::delete(self, id).await
+    }
+}
+
+pub struct TaskAttachmentRepository<'a> {
+    pool: &'a SqlitePool,
+}
+
+impl<'a> TaskAttachmentRepository<'a> {
+    pub fn new(pool: &'a SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn list_by_task(&self, task_id: &str) -> Result<Vec<TaskAttachmentRecord>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, task_id, original_name, stored_name, storage_relative_path, mime_type,
+                   extension, size_bytes, sha256, image_width, image_height, created_at, updated_at
+            FROM task_attachments
+            WHERE task_id = ?1
+            ORDER BY created_at DESC, original_name ASC
+            "#,
+        )
+        .bind(task_id)
+        .fetch_all(self.pool)
+        .await?;
+
+        Ok(rows.into_iter().map(task_attachment_from_row).collect())
+    }
+
+    pub async fn count_by_task(&self, task_id: &str) -> Result<usize, sqlx::Error> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM task_attachments WHERE task_id = ?1",
+        )
+        .bind(task_id)
+        .fetch_one(self.pool)
+        .await?;
+
+        Ok(count.max(0) as usize)
+    }
+
+    pub async fn find(&self, id: &str) -> Result<Option<TaskAttachmentRecord>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, task_id, original_name, stored_name, storage_relative_path, mime_type,
+                   extension, size_bytes, sha256, image_width, image_height, created_at, updated_at
+            FROM task_attachments
+            WHERE id = ?1
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(self.pool)
+        .await?;
+
+        Ok(row.map(task_attachment_from_row))
+    }
+
+    pub async fn create(
+        &self,
+        input: CreateTaskAttachmentRecord,
+    ) -> Result<TaskAttachmentRecord, sqlx::Error> {
+        let now = current_timestamp();
+
+        sqlx::query(
+            r#"
+            INSERT INTO task_attachments (
+              id, task_id, original_name, stored_name, storage_relative_path, mime_type,
+              extension, size_bytes, sha256, image_width, image_height, created_at, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            "#,
+        )
+        .bind(&input.id)
+        .bind(&input.task_id)
+        .bind(&input.original_name)
+        .bind(&input.stored_name)
+        .bind(&input.storage_relative_path)
+        .bind(&input.mime_type)
+        .bind(&input.extension)
+        .bind(input.size_bytes)
+        .bind(&input.sha256)
+        .bind(input.image_width)
+        .bind(input.image_height)
+        .bind(&now)
+        .bind(&now)
+        .execute(self.pool)
+        .await?;
+
+        Ok(TaskAttachmentRecord {
+            id: input.id,
+            task_id: input.task_id,
+            original_name: input.original_name,
+            stored_name: input.stored_name,
+            storage_relative_path: input.storage_relative_path,
+            mime_type: input.mime_type,
+            extension: input.extension,
+            size_bytes: input.size_bytes,
+            sha256: input.sha256,
+            image_width: input.image_width,
+            image_height: input.image_height,
+            created_at: now.clone(),
+            updated_at: now,
+        })
+    }
+
+    pub async fn delete(&self, id: &str) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query("DELETE FROM task_attachments WHERE id = ?1")
+            .bind(id)
+            .execute(self.pool)
+            .await?;
+
+        Ok(result.rows_affected() > 0)
     }
 }
 
@@ -9571,6 +9800,42 @@ fn canonical_or_original(path: &str) -> String {
         .unwrap_or_else(|_| path.trim().replace('/', "\\"))
 }
 
+fn task_attachment_from_row(row: sqlx::sqlite::SqliteRow) -> TaskAttachmentRecord {
+    TaskAttachmentRecord {
+        id: row.get("id"),
+        task_id: row.get("task_id"),
+        original_name: row.get("original_name"),
+        stored_name: row.get("stored_name"),
+        storage_relative_path: row.get("storage_relative_path"),
+        mime_type: row.get("mime_type"),
+        extension: row.get("extension"),
+        size_bytes: row.get("size_bytes"),
+        sha256: row.get("sha256"),
+        image_width: row.get("image_width"),
+        image_height: row.get("image_height"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    }
+}
+
+fn manual_log_attachment_from_row(row: sqlx::sqlite::SqliteRow) -> ManualLogAttachmentRecord {
+    ManualLogAttachmentRecord {
+        id: row.get("id"),
+        manual_log_id: row.get("manual_log_id"),
+        original_name: row.get("original_name"),
+        stored_name: row.get("stored_name"),
+        storage_relative_path: row.get("storage_relative_path"),
+        mime_type: row.get("mime_type"),
+        extension: row.get("extension"),
+        size_bytes: row.get("size_bytes"),
+        sha256: row.get("sha256"),
+        image_width: row.get("image_width"),
+        image_height: row.get("image_height"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    }
+}
+
 fn normalize_optional(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
@@ -11018,6 +11283,71 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn manual_log_attachment_repository_create_list_find_and_delete_work() {
+        let pool = test_pool().await;
+        let manual_logs = ManualLogRepository::new(&pool);
+        let attachments = ManualLogAttachmentRepository::new(&pool);
+
+        let log = manual_logs
+            .create(CreateManualLogInput {
+                project_id: None,
+                date: "2026-05-19".to_string(),
+                activity_type: ActivityType::Support,
+                summary: "Resolved support request".to_string(),
+                outcome: None,
+                duration_minutes: Some(45),
+                follow_up: None,
+                included_in_report: Some(true),
+            })
+            .await
+            .expect("create manual log");
+
+        let attachment = attachments
+            .create(CreateManualLogAttachmentRecord {
+                id: "manual_log_attachment_test_1".to_string(),
+                manual_log_id: log.id.clone(),
+                original_name: "support.pdf".to_string(),
+                stored_name: "manual_log_attachment_test_1.pdf".to_string(),
+                storage_relative_path: "manual-logs/log/manual_log_attachment_test_1.pdf"
+                    .to_string(),
+                mime_type: "application/pdf".to_string(),
+                extension: "pdf".to_string(),
+                size_bytes: 512,
+                sha256: "def456".to_string(),
+                image_width: None,
+                image_height: None,
+            })
+            .await
+            .expect("create manual log attachment");
+
+        assert_eq!(attachment.manual_log_id, log.id);
+        assert_eq!(
+            attachments
+                .count_by_manual_log(&log.id)
+                .await
+                .expect("count attachments"),
+            1
+        );
+        assert_eq!(
+            attachments
+                .list_by_manual_log(&log.id)
+                .await
+                .expect("list attachments")
+                .len(),
+            1
+        );
+        assert!(attachments
+            .find(&attachment.id)
+            .await
+            .expect("find attachment")
+            .is_some());
+        assert!(attachments
+            .delete(&attachment.id)
+            .await
+            .expect("delete attachment"));
+    }
+
+    #[tokio::test]
     async fn report_save_list_get_and_items_work() {
         let pool = test_pool().await;
         let report_repository = ReportRepository::new(&pool);
@@ -11217,6 +11547,81 @@ mod tests {
             .delete(&current_blocker.id)
             .await
             .expect("delete task"));
+    }
+
+    #[tokio::test]
+    async fn task_attachment_repository_create_list_find_and_delete_work() {
+        let pool = test_pool().await;
+        let weekly_tasks = WeeklyTaskRepository::new(&pool);
+        let attachments = TaskAttachmentRepository::new(&pool);
+
+        let task = weekly_tasks
+            .create(CreateWeeklyTaskInput {
+                project_id: None,
+                task_type: WeeklyTaskType::PlannedWork,
+                status: Some(WeeklyTaskStatus::Todo),
+                title: "Collect screenshots".to_string(),
+                details: None,
+                week_start_date: "2026-05-18".to_string(),
+                target_date: None,
+                completed_at: None,
+                priority: Some(WeeklyTaskPriority::Normal),
+                included_in_report: Some(false),
+                progress_percent: None,
+                estimated_minutes: None,
+            })
+            .await
+            .expect("create task");
+
+        let attachment = attachments
+            .create(CreateTaskAttachmentRecord {
+                id: "attachment_test_1".to_string(),
+                task_id: task.id.clone(),
+                original_name: "proof.png".to_string(),
+                stored_name: "attachment_test_1.png".to_string(),
+                storage_relative_path: "tasks/task/attachment_test_1.png".to_string(),
+                mime_type: "image/png".to_string(),
+                extension: "png".to_string(),
+                size_bytes: 128,
+                sha256: "abc123".to_string(),
+                image_width: None,
+                image_height: None,
+            })
+            .await
+            .expect("create attachment");
+
+        assert_eq!(attachment.task_id, task.id);
+        assert_eq!(
+            attachments
+                .count_by_task(&task.id)
+                .await
+                .expect("count attachments"),
+            1
+        );
+        assert_eq!(
+            attachments
+                .list_by_task(&task.id)
+                .await
+                .expect("list attachments")
+                .len(),
+            1
+        );
+        assert!(attachments
+            .find(&attachment.id)
+            .await
+            .expect("find attachment")
+            .is_some());
+        assert!(attachments
+            .delete(&attachment.id)
+            .await
+            .expect("delete attachment"));
+        assert_eq!(
+            attachments
+                .count_by_task(&task.id)
+                .await
+                .expect("count after delete"),
+            0
+        );
     }
 
     #[tokio::test]

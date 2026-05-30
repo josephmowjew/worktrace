@@ -150,6 +150,10 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     run_sparc_force_dedup_migration(pool).await?;
     sqlx::raw_sql(GITHUB_INTEGRATION_SQL).execute(pool).await?;
     run_github_multi_account_migration(pool).await?;
+    sqlx::raw_sql(TASK_ATTACHMENTS_SQL).execute(pool).await?;
+    sqlx::raw_sql(MANUAL_LOG_ATTACHMENTS_SQL)
+        .execute(pool)
+        .await?;
 
     Ok(())
 }
@@ -1074,6 +1078,54 @@ CREATE TABLE IF NOT EXISTS github_pr_commits (
   PRIMARY KEY (project_id, pull_request_number, commit_hash),
   FOREIGN KEY (project_id) REFERENCES projects(id)
 );
+"#;
+
+const TASK_ATTACHMENTS_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS task_attachments (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  original_name TEXT NOT NULL,
+  stored_name TEXT NOT NULL,
+  storage_relative_path TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  extension TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  sha256 TEXT NOT NULL,
+  image_width INTEGER,
+  image_height INTEGER,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES weekly_tasks(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_attachments_task
+  ON task_attachments(task_id);
+CREATE INDEX IF NOT EXISTS idx_task_attachments_sha256
+  ON task_attachments(sha256);
+"#;
+
+const MANUAL_LOG_ATTACHMENTS_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS manual_log_attachments (
+  id TEXT PRIMARY KEY,
+  manual_log_id TEXT NOT NULL,
+  original_name TEXT NOT NULL,
+  stored_name TEXT NOT NULL,
+  storage_relative_path TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  extension TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  sha256 TEXT NOT NULL,
+  image_width INTEGER,
+  image_height INTEGER,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (manual_log_id) REFERENCES manual_logs(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_manual_log_attachments_log
+  ON manual_log_attachments(manual_log_id);
+CREATE INDEX IF NOT EXISTS idx_manual_log_attachments_sha256
+  ON manual_log_attachments(sha256);
 "#;
 
 const SCHEMA_SQL: &str = r#"

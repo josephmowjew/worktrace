@@ -32,6 +32,10 @@ import { z } from "zod";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { DatePicker } from "../components/ui/DatePicker";
+import {
+  ManualLogAttachmentsSection,
+  PendingManualLogAttachmentsSection,
+} from "../components/ui/ManualLogAttachmentsSection";
 import { Panel } from "../components/ui/Panel";
 import { PageHeader } from "../components/ui/PageHeader";
 import { SelectField } from "../components/ui/SelectField";
@@ -43,9 +47,11 @@ import {
   listManualLogs,
   updateManualLog,
 } from "../lib/api/manualLogs";
+import { addManualLogAttachment } from "../lib/api/manualLogAttachments";
 import { listProjects } from "../lib/api/projects";
 import { manualLogAnnouncement } from "../lib/announcements";
 import { currentWeekRange } from "../lib/dates";
+import { manualLogToneByType, toneBadgeClass, toneCardClass } from "../lib/workItemStyles";
 import type { ActivityType, ManualLog } from "../types/manualLog";
 
 const activityTypes: Array<{
@@ -100,7 +106,10 @@ const manualLogSchema = z.object({
 });
 
 type ManualLogFormValues = z.infer<typeof manualLogSchema>;
-type IconTone = "blue" | "cyan" | "green" | "purple" | "orange" | "amber" | "slate";
+type ManualLogSubmitValues = ManualLogFormValues & {
+  attachmentPaths?: string[];
+};
+type IconTone = "blue" | "cyan" | "green" | "purple" | "orange" | "amber" | "rose" | "slate";
 
 export function ManualLogPage() {
   const queryClient = useQueryClient();
@@ -109,6 +118,7 @@ export function ManualLogPage() {
   const weekRange = currentWeekRange();
   const [editingLog, setEditingLog] = useState<ManualLog | null>(null);
   const [sortDirection, setSortDirection] = useState<"desc" | "asc">("desc");
+  const [pendingAttachmentPaths, setPendingAttachmentPaths] = useState<string[]>([]);
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -151,18 +161,26 @@ export function ManualLogPage() {
   );
 
   const saveMutation = useMutation({
-    mutationFn: (values: ManualLogFormValues) => {
+    mutationFn: async (values: ManualLogSubmitValues) => {
       const input = toManualLogInput(values);
+      let log: ManualLog;
 
       if (editingLog) {
-        return updateManualLog(editingLog.id, input);
+        log = await updateManualLog(editingLog.id, input);
+      } else {
+        log = await createManualLog(input);
       }
 
-      return createManualLog(input);
+      for (const path of values.attachmentPaths ?? []) {
+        await addManualLogAttachment(log.id, path);
+      }
+
+      return log;
     },
     onSuccess: async (log, values) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["manualLogs"] }),
+        queryClient.invalidateQueries({ queryKey: ["manualLogAttachments", log.id] }),
         queryClient.invalidateQueries({ queryKey: ["activity"] }),
         queryClient.invalidateQueries({ queryKey: ["reports"] }),
       ]);
@@ -210,6 +228,7 @@ export function ManualLogPage() {
 
   function editLog(log: ManualLog) {
     setEditingLog(log);
+    setPendingAttachmentPaths([]);
     form.reset({
       projectId: log.projectId ?? "",
       date: log.date,
@@ -224,6 +243,7 @@ export function ManualLogPage() {
 
   function clearForm() {
     setEditingLog(null);
+    setPendingAttachmentPaths([]);
     saveMutation.reset();
     form.reset(defaultValues(weekRange.from));
   }
@@ -337,7 +357,12 @@ export function ManualLogPage() {
 
           <form
             className="grid gap-5 p-5 lg:grid-cols-2"
-            onSubmit={form.handleSubmit((values) => saveMutation.mutate(values))}
+            onSubmit={form.handleSubmit((values) =>
+              saveMutation.mutate({
+                ...values,
+                attachmentPaths: editingLog ? [] : pendingAttachmentPaths,
+              }),
+            )}
           >
             <Field
               label="Date"
@@ -466,6 +491,26 @@ export function ManualLogPage() {
               </div>
             </div>
 
+            <div className="lg:col-span-2">
+              {editingLog ? (
+                <ManualLogAttachmentsSection
+                  manualLogId={editingLog.id}
+                  queryKey={["manualLogAttachments", editingLog.id]}
+                  onChanged={() =>
+                    queryClient.invalidateQueries({ queryKey: ["manualLogAttachments", editingLog.id] })
+                  }
+                  onError={(title, message) => toast.error(title, message)}
+                  onSuccess={(title, message) => toast.success(title, message)}
+                />
+              ) : (
+                <PendingManualLogAttachmentsSection
+                  paths={pendingAttachmentPaths}
+                  onChange={setPendingAttachmentPaths}
+                  onError={(message) => toast.error("Attachment failed", message)}
+                />
+              )}
+            </div>
+
             {saveMutation.isError ? (
               <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-600 dark:text-red-100 lg:col-span-2">
                 {saveMutation.error instanceof Error
@@ -572,11 +617,12 @@ function ManualLogRow({
 }) {
   const activity = activityTypes.find((item) => item.value === log.activityType);
   const Icon = activity?.icon ?? NotebookText;
+  const tone = manualLogToneByType[log.activityType] ?? "slate";
 
   return (
-    <article className="group rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface)] p-4 shadow-[var(--wt-panel-shadow)] transition hover:border-blue-500/18 hover:bg-[var(--wt-surface-muted)]">
+    <article className={`group rounded-2xl border p-4 shadow-[var(--wt-panel-shadow)] transition ${toneCardClass(tone)}`}>
       <div className="flex items-center gap-4">
-        <IconBubble tone={activity?.tone ?? "slate"}>
+        <IconBubble tone={tone}>
           <Icon className="h-4 w-4" />
         </IconBubble>
 
@@ -604,6 +650,9 @@ function ManualLogRow({
         <div className="hidden shrink-0 text-sm font-semibold text-[var(--wt-text-strong)] sm:block">
           {log.durationMinutes ? formatMinutes(log.durationMinutes) : "0m"}
         </div>
+        <span className={`hidden rounded-md border px-2 py-1 text-[10px] font-semibold sm:inline-flex ${toneBadgeClass(tone)}`}>
+          {activity?.label ?? log.activityType}
+        </span>
         <Badge tone={log.includedInReport ? "green" : "slate"}>
           {log.includedInReport ? "Included" : "Not included"}
         </Badge>
@@ -696,6 +745,7 @@ function IconBubble({
     purple: "border-violet-500/20 bg-violet-500/10 text-violet-600 dark:text-purple-200",
     orange: "border-orange-500/20 bg-orange-500/10 text-orange-600 dark:text-orange-200",
     amber: "border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-200",
+    rose: "border-rose-500/25 bg-rose-500/10 text-rose-600 dark:text-rose-200",
     slate: "border-[var(--wt-border)] bg-[var(--wt-surface-muted)] text-[var(--wt-text-muted)]",
   };
 

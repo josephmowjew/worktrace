@@ -10,6 +10,7 @@ pub mod friction;
 pub mod git_sync;
 pub mod github;
 pub mod manual_logs;
+pub mod manual_log_attachments;
 pub mod nudges;
 pub mod priority_reminders;
 pub mod project_stats;
@@ -17,6 +18,7 @@ pub mod projects;
 pub mod reports;
 pub mod settings;
 pub mod sparc_force;
+pub mod task_attachments;
 pub mod voice;
 pub mod weekly_tasks;
 pub mod windows;
@@ -112,6 +114,11 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         manual_logs::quick_capture_log,
         manual_logs::update_manual_log,
         manual_logs::delete_manual_log,
+        manual_log_attachments::list_manual_log_attachments,
+        manual_log_attachments::add_manual_log_attachment,
+        manual_log_attachments::delete_manual_log_attachment,
+        manual_log_attachments::open_manual_log_attachment,
+        manual_log_attachments::get_manual_log_attachment_preview,
         nudges::list_nudge_dismissals,
         nudges::dismiss_nudge,
         priority_reminders::list_priority_reminders,
@@ -149,6 +156,11 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         sparc_force::get_sparc_force_case_detail,
         sparc_force::import_sparc_force_task_to_weekly_task,
         sparc_force::disconnect_sparc_force,
+        task_attachments::list_task_attachments,
+        task_attachments::add_task_attachment,
+        task_attachments::delete_task_attachment,
+        task_attachments::open_task_attachment,
+        task_attachments::get_task_attachment_preview,
         voice::transcribe_voice_command,
         weekly_tasks::list_weekly_tasks,
         weekly_tasks::create_weekly_task,

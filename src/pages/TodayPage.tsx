@@ -35,7 +35,7 @@ import { CloseButton } from "../components/ui/CloseButton";
 import { EndOfDayReviewModal } from "../components/ui/EndOfDayReviewModal";
 import { Panel } from "../components/ui/Panel";
 import { PrepareReportModal } from "../components/ui/PrepareReportModal";
-import { QuickManualLogModal } from "../components/ui/QuickManualLogModal";
+import { QuickManualLogModal, type QuickManualLogSubmitInput } from "../components/ui/QuickManualLogModal";
 import { StopFocusModal } from "../components/ui/StopFocusModal";
 import { TodayQuickAddBar } from "../components/ui/TodayQuickAddBar";
 import { useSpeech } from "../components/ui/SpeechProvider";
@@ -50,6 +50,7 @@ import {
   stopFocusSession,
 } from "../lib/api/focusSessions";
 import { getFrictionInsights } from "../lib/api/friction";
+import { addManualLogAttachment } from "../lib/api/manualLogAttachments";
 import { createManualLog } from "../lib/api/manualLogs";
 import { dismissNudge, listNudgeDismissals } from "../lib/api/nudges";
 import {
@@ -78,7 +79,6 @@ import {
 } from "../lib/announcements";
 import { createWeeklyTask, listWeeklyTasks, updateWeeklyTask } from "../lib/api/weeklyTasks";
 import { currentWeekRange, todayRange } from "../lib/dates";
-import type { CreateManualLogInput } from "../types/manualLog";
 import type { FocusSession, StopFocusSessionInput } from "../types/focusSession";
 import type { Project } from "../types/project";
 import type { WeeklyTask, WeeklyTaskPriority, WeeklyTaskStatus, WeeklyTaskType } from "../types/weeklyTask";
@@ -371,7 +371,14 @@ export function TodayPage() {
   });
 
   const createLogMutation = useMutation({
-    mutationFn: (input: CreateManualLogInput) => createManualLog(input),
+    mutationFn: async (input: QuickManualLogSubmitInput) => {
+      const { attachmentPaths, ...logInput } = input;
+      const log = await createManualLog(logInput);
+      for (const path of attachmentPaths ?? []) {
+        await addManualLogAttachment(log.id, path);
+      }
+      return log;
+    },
     onSuccess: async (log, input) => {
       await invalidateDailyViews();
       setLogModalOpen(false);

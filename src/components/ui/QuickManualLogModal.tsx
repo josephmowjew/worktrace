@@ -1,6 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Save, FolderKanban, Users, Code, Bug, FlaskConical, Rocket, Eye, FileText, CalendarDays, Headphones, MessageSquare, Wrench, BriefcaseBusiness } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
@@ -8,8 +8,10 @@ import type { Project } from "../../types/project";
 import type { ActivityType, CreateManualLogInput } from "../../types/manualLog";
 import { Button } from "./Button";
 import { DatePicker } from "./DatePicker";
+import { PendingManualLogAttachmentsSection } from "./ManualLogAttachmentsSection";
 import { ModalShell } from "./ModalShell";
 import { SelectField } from "./SelectField";
+import { useToast } from "./ToastProvider";
 
 const activityTypes: Array<{ value: ActivityType; label: string; icon: React.ElementType }> = [
   { value: "Meeting", label: "Meeting", icon: Users },
@@ -54,6 +56,9 @@ const schema = z.object({
 });
 
 type FormValues = z.infer<typeof schema>;
+export type QuickManualLogSubmitInput = CreateManualLogInput & {
+  attachmentPaths?: string[];
+};
 
 export function QuickManualLogModal({
   isOpen,
@@ -66,12 +71,14 @@ export function QuickManualLogModal({
 }: {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (input: CreateManualLogInput) => void;
+  onSubmit: (input: QuickManualLogSubmitInput) => void;
   projects: Project[];
   date: string;
   isPending: boolean;
   error?: string;
 }) {
+  const toast = useToast();
+  const [pendingAttachmentPaths, setPendingAttachmentPaths] = useState<string[]>([]);
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: defaultValues(date),
@@ -80,6 +87,7 @@ export function QuickManualLogModal({
   useEffect(() => {
     if (isOpen) {
       form.reset(defaultValues(date));
+      setPendingAttachmentPaths([]);
     }
   }, [date, form, isOpen]);
 
@@ -91,7 +99,9 @@ export function QuickManualLogModal({
     <ModalShell title="Quick Log" description="Capture non-code work for today." onClose={onClose}>
         <form
           className="grid gap-4 p-5"
-          onSubmit={form.handleSubmit((values) => onSubmit(toInput(values)))}
+          onSubmit={form.handleSubmit((values) =>
+            onSubmit({ ...toInput(values), attachmentPaths: pendingAttachmentPaths }),
+          )}
         >
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Date" error={form.formState.errors.date?.message}>
@@ -169,6 +179,12 @@ export function QuickManualLogModal({
             <input type="checkbox" className="h-4 w-4 accent-blue-500" {...form.register("includedInReport")} />
             Include in weekly report
           </label>
+
+          <PendingManualLogAttachmentsSection
+            paths={pendingAttachmentPaths}
+            onChange={setPendingAttachmentPaths}
+            onError={(message) => toast.error("Attachment failed", message)}
+          />
 
           {error ? (
             <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-600 dark:text-red-100">

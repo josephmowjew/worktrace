@@ -1,6 +1,8 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Save, ListTodo, AlertCircle, CheckCircle2, Clock, FolderKanban, Flag } from "lucide-react";
-import { useEffect } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { useQueryClient } from "@tanstack/react-query";
+import { Save, ListTodo, AlertCircle, CheckCircle2, Clock, FolderKanban, Flag, Paperclip, Plus, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
@@ -15,6 +17,8 @@ import { Button } from "./Button";
 import { DatePicker } from "./DatePicker";
 import { ModalShell } from "./ModalShell";
 import { SelectField } from "./SelectField";
+import { TaskAttachmentsSection } from "./TaskDetailModal";
+import { useToast } from "./ToastProvider";
 
 const taskSchema = z.object({
   projectId: z.string().optional(),
@@ -38,6 +42,9 @@ const taskSchema = z.object({
 });
 
 type TaskFormValues = z.infer<typeof taskSchema>;
+export type TaskSubmitValues = TaskFormValues & {
+  attachmentPaths?: string[];
+};
 
 const taskTypes: Array<{ value: WeeklyTaskType; label: string }> = [
   { value: "planned_work", label: "Planned Work" },
@@ -93,13 +100,16 @@ export function AddTaskModal({
 }: {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (values: TaskFormValues) => void;
+  onSubmit: (values: TaskSubmitValues) => void;
   projects: Project[];
   weekStartDate: string;
   editingTask: WeeklyTask | null;
   isPending: boolean;
   error?: string;
 }) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const [pendingAttachmentPaths, setPendingAttachmentPaths] = useState<string[]>([]);
   const form = useForm<TaskFormValues>({
     resolver: zodResolver(taskSchema),
     defaultValues: defaultValues(weekStartDate),
@@ -129,8 +139,13 @@ export function AddTaskModal({
   useEffect(() => {
     if (!isOpen) {
       form.reset(defaultValues(weekStartDate));
+      setPendingAttachmentPaths([]);
     }
   }, [isOpen, weekStartDate, form]);
+
+  useEffect(() => {
+    setPendingAttachmentPaths([]);
+  }, [editingTask?.id]);
 
   useEscapeKey(onClose, isOpen);
 
@@ -144,7 +159,12 @@ export function AddTaskModal({
     >
         <form
           className="space-y-4 p-5"
-          onSubmit={form.handleSubmit((values) => onSubmit(values))}
+          onSubmit={form.handleSubmit((values) =>
+            onSubmit({
+              ...values,
+              attachmentPaths: editingTask ? [] : pendingAttachmentPaths,
+            }),
+          )}
         >
           <Field label="Title" error={form.formState.errors.title?.message}>
             <input
@@ -278,6 +298,22 @@ export function AddTaskModal({
             Include in weekly report
           </label>
 
+          {editingTask ? (
+            <TaskAttachmentsSection
+              taskId={editingTask.id}
+              queryKey={["taskAttachments", editingTask.id]}
+              onChanged={() => queryClient.invalidateQueries({ queryKey: ["taskAttachments", editingTask.id] })}
+              onError={(title, message) => toast.error(title, message)}
+              onSuccess={(title, message) => toast.success(title, message)}
+            />
+          ) : (
+            <PendingAttachmentsSection
+              paths={pendingAttachmentPaths}
+              onChange={setPendingAttachmentPaths}
+              onError={(message) => toast.error("Attachment failed", message)}
+            />
+          )}
+
           {error ? (
             <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-600 dark:text-red-100">
               {error}
@@ -300,6 +336,100 @@ export function AddTaskModal({
           </div>
         </form>
     </ModalShell>
+  );
+}
+
+function PendingAttachmentsSection({
+  paths,
+  onChange,
+  onError,
+}: {
+  paths: string[];
+  onChange: (paths: string[]) => void;
+  onError: (message: string) => void;
+}) {
+  const rows = useMemo(
+    () =>
+      paths.map((path) => ({
+        path,
+        name: path.split(/[\\/]/).pop() || "Attachment",
+      })),
+    [paths],
+  );
+
+  async function pickAttachment() {
+    const selected = await open({
+      multiple: true,
+      directory: false,
+      filters: [
+        {
+          name: "Images and PDFs",
+          extensions: ["png", "jpg", "jpeg", "webp", "gif", "pdf"],
+        },
+      ],
+    });
+    const selectedPaths = Array.isArray(selected) ? selected : typeof selected === "string" ? [selected] : [];
+    if (!selectedPaths.length) return;
+    const next = [...paths];
+    for (const path of selectedPaths) {
+      if (next.includes(path)) continue;
+      if (next.length >= 20) {
+        onError("A task can have up to 20 attachments.");
+        break;
+      }
+      next.push(path);
+    }
+    onChange(next);
+  }
+
+  return (
+    <div className="rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface-muted)] p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-xs font-semibold text-[var(--wt-text)]">
+            <Paperclip className="h-4 w-4 text-cyan-300" />
+            Attachments
+            {rows.length > 0 ? (
+              <span className="rounded-md bg-white/6 px-1.5 py-0.5 text-[10px] tabular-nums text-[var(--wt-text-muted)]">
+                {rows.length}
+              </span>
+            ) : null}
+          </div>
+          <p className="mt-1 text-xs text-[var(--wt-text-muted)]">Files are copied into WorkTrace after the task is saved.</p>
+        </div>
+        <Button type="button" variant="secondary" onClick={() => void pickAttachment()} disabled={rows.length >= 20}>
+          <Plus className="h-4 w-4" />
+          Add
+        </Button>
+      </div>
+
+      {rows.length === 0 ? (
+        <p className="rounded-xl bg-white/[0.03] px-3 py-3 text-sm text-[var(--wt-text-muted)]">
+          Add screenshots or PDFs before saving this task.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((row) => (
+            <div key={row.path} className="flex items-center gap-3 rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2">
+              <Paperclip className="h-4 w-4 shrink-0 text-cyan-200" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-[var(--wt-text)]">{row.name}</p>
+                <p className="truncate text-xs text-[var(--wt-text-muted)]">{row.path}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => onChange(paths.filter((path) => path !== row.path))}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[var(--wt-text-muted)] transition-[background-color,color,transform] hover:bg-red-500/10 hover:text-red-400 active:scale-[0.96]"
+                aria-label={`Remove ${row.name}`}
+                title="Remove attachment"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
