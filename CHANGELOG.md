@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.5] - 2026-05-30
+- Fixed updater signing configuration so future installed builds can verify and install signed WorkTrace updates.
+- Added clearer update install errors instead of hiding the Tauri updater failure behind a generic message.
+
 ## [0.1.4] - 2026-05-30
 - Added secure local task and manual log attachments for images and PDFs, including previews, open/delete actions, and WorkTrace-controlled storage.
 - Added configurable work week boundaries so timelines, reports, dashboards, tasks, and widgets can include weekend work.

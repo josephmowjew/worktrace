@@ -80,13 +80,24 @@ pub async fn install_app_update(app: tauri::AppHandle) -> Result<AppResult<bool>
         Err(error) => return Ok(AppResult::err("UPDATER_UNAVAILABLE", error.to_string())),
     };
 
-    let Some(update) = updater.check().await.map_err(|error| error.to_string())? else {
+    let Some(update) = (match updater.check().await {
+        Ok(update) => update,
+        Err(error) => {
+            return Ok(AppResult::err(
+                "UPDATE_CHECK_FAILED",
+                format!("Could not check for update before install: {error}"),
+            ))
+        }
+    }) else {
         return Ok(AppResult::ok(false));
     };
 
-    update
-        .download_and_install(|_, _| {}, || {})
-        .await
-        .map_err(|error| error.to_string())?;
+    if let Err(error) = update.download_and_install(|_, _| {}, || {}).await {
+        return Ok(AppResult::err(
+            "UPDATE_INSTALL_FAILED",
+            format!("Could not install update: {error}"),
+        ));
+    }
+
     app.restart();
 }

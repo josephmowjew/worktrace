@@ -1,11 +1,11 @@
 {
-  "version": "0.1.4",
-  "notes": "Added secure local task and manual log attachments for images and PDFs, including previews, open/delete actions, and WorkTrace-controlled storage.\nAdded configurable work week boundaries so timelines, reports, dashboards, tasks, and widgets can include weekend work.\nAdded manual log category tones and task type/priority emphasis for clearer scanning.\nImproved Today, repository sync, multiple GitHub account handling, close-button consistency, and friction insight detection.",
-  "pub_date": "2026-05-30T19:00:00Z",
+  "version": "0.1.5",
+  "notes": "Fixed updater signing configuration so future installed builds can verify and install signed WorkTrace updates.\nAdded clearer update install errors instead of hiding the Tauri updater failure behind a generic message.",
+  "pub_date": "2026-05-30T20:30:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUbndnaUhWc2ZhVUJtYkhLL2I5MkhKclcrUnVSTjFaZGJ4MzcrclVWQ0xQcHlmMVozbmJWSUdtYjBEQ1kvZ3hXQ0RlWlNsQzJyMUtMUFBjeFV2dllpRjhlQThiS3UwcHc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwMTcxOTMzCWZpbGU6V29ya1RyYWNlXzAuMS40X3g2NC1zZXR1cC5uc2lzLnppcApNbHJod0c4TjJrNkRWOFdQWEppMUUrNHNwbUdLb3JxRVdDYW55ZlIrdTlXMWF1NUdUOFFzTkZrOEptdWxZRlNiVkhZN0c2SkRFR24wbTA2bjdCVG1EUT09Cg==",
-      "url": "https://github.com/josephmowjew/worktrace/releases/download/v0.1.4/WorkTrace_0.1.4_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUbndnaUhWc2ZhVVBDdjg2MUVGM2o5dWM5VzRnMUFhZDZ3MzdSVkpJZnY2dWUrWll0WkpZODBYOXROUy9BcW5XZWwwY1IraFdQcXhkUUJFMXB4Q1dxOER5OTJSanVnV1FzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwMTcyNzg0CWZpbGU6V29ya1RyYWNlXzAuMS41X3g2NC1zZXR1cC5leGUuemlwClZrWkxjc1dycjMzaDRSNUJNQ1U5ZHdlZlg1N2FiTHBxME1ZNlU0YktoQkRoQUF5Y00xYjBzRkxvd0V4V2REdGRkeEpVL3NJa0UyTDVLTVlLem94bUJBPT0K",
+      "url": "https://github.com/josephmowjew/worktrace/releases/download/v0.1.5/WorkTrace_0.1.5_x64-setup.exe.zip"
     }
   }
 }
