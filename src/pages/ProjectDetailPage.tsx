@@ -39,7 +39,8 @@ import { listActivityGroups, recordActivityGroupTitleFeedback, updateActivityGro
 import { listWeeklyTasks } from "../lib/api/weeklyTasks";
 import { listManualLogs } from "../lib/api/manualLogs";
 import { syncAnnouncement, syncStartedAnnouncement } from "../lib/announcements";
-import { currentWeekRange, shiftWeek } from "../lib/dates";
+import { shiftWeek } from "../lib/dates";
+import { useWeekRange } from "../hooks/useWeekRange";
 import type { CreateProjectInput, GitRef, GitRefFilter, GitWorktree, ProjectGitFocus } from "../types/project";
 import type { ActivityItem } from "../types/activity";
 import type { ActivityGroup } from "../types/activityGroup";
@@ -68,7 +69,7 @@ export function ProjectDetailPage() {
   const [currentOrganizedGroupIds, setCurrentOrganizedGroupIds] = useState<Set<string>>(() => new Set());
   const editFormRef = useRef<HTMLDivElement>(null);
 
-  const weekRange = useMemo(() => currentWeekRange(weekAnchor), [weekAnchor]);
+  const weekRange = useWeekRange(weekAnchor);
 
   useEffect(() => {
     if (isEditFormOpen && editFormRef.current) {

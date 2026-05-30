@@ -50,7 +50,7 @@ import {
 import { addManualLogAttachment } from "../lib/api/manualLogAttachments";
 import { listProjects } from "../lib/api/projects";
 import { manualLogAnnouncement } from "../lib/announcements";
-import { currentWeekRange } from "../lib/dates";
+import { useWeekRange } from "../hooks/useWeekRange";
 import { manualLogToneByType, toneBadgeClass, toneCardClass } from "../lib/workItemStyles";
 import type { ActivityType, ManualLog } from "../types/manualLog";
 
@@ -115,7 +115,7 @@ export function ManualLogPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
   const speech = useSpeech();
-  const weekRange = currentWeekRange();
+  const weekRange = useWeekRange();
   const [editingLog, setEditingLog] = useState<ManualLog | null>(null);
   const [sortDirection, setSortDirection] = useState<"desc" | "asc">("desc");
   const [pendingAttachmentPaths, setPendingAttachmentPaths] = useState<string[]>([]);

@@ -39,7 +39,7 @@ import {
   getReleaseNotes,
   installAppUpdate,
 } from "../../lib/api/appUpdates";
-import { currentWeekRange } from "../../lib/dates";
+import { useWeekRange } from "../../hooks/useWeekRange";
 import { TitleBar } from "./TitleBar";
 import { useToast } from "../ui/ToastProvider";
 import { CommandPalette, createBaseCommandActions } from "../ui/CommandPalette";
@@ -76,7 +76,7 @@ export function AppLayout({ children }: PropsWithChildren) {
   const navigate = useNavigate();
   const repositorySync = useRepositorySync();
   const importInputRef = useRef<HTMLInputElement>(null);
-  const weekRange = currentWeekRange();
+  const weekRange = useWeekRange();
   const [isWidgetWindow, setIsWidgetWindow] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isHelpMenuOpen, setIsHelpMenuOpen] = useState(false);

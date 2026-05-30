@@ -38,7 +38,8 @@ import { listProjects } from "../lib/api/projects";
 import { listWeeklyTasks } from "../lib/api/weeklyTasks";
 import { getSettings } from "../lib/api/settings";
 import { syncAnnouncement, syncStartedAnnouncement } from "../lib/announcements";
-import { currentWeekRange, shiftWeek } from "../lib/dates";
+import { shiftWeek } from "../lib/dates";
+import { useWeekRange } from "../hooks/useWeekRange";
 import { isRepositorySyncInProgressError, useRepositorySync } from "../features/repositorySync/RepositorySyncProvider";
 
 type StatTone = "blue" | "purple" | "cyan" | "violet";
@@ -156,21 +157,21 @@ export function DashboardPage() {
   const repositorySync = useRepositorySync();
   const [anchorDate, setAnchorDate] = useState(new Date());
   const [searchQuery, setSearchQuery] = useState("");
-  const weekRange = currentWeekRange(anchorDate);
+  const weekRange = useWeekRange(anchorDate);
 
   const statsQuery = useQuery({
     queryKey: ["dashboard-stats", weekRange.from, weekRange.to],
-    queryFn: getDashboardStats,
+    queryFn: () => getDashboardStats({ from: weekRange.from, to: weekRange.to }),
   });
 
   const activityHoursQuery = useQuery({
     queryKey: ["dashboard-activity-hours", weekRange.from, weekRange.to],
-    queryFn: getWeeklyActivityHours,
+    queryFn: () => getWeeklyActivityHours({ from: weekRange.from, to: weekRange.to }),
   });
 
   const breakdownQuery = useQuery({
     queryKey: ["dashboard-breakdown", weekRange.from, weekRange.to],
-    queryFn: getProjectBreakdown,
+    queryFn: () => getProjectBreakdown({ from: weekRange.from, to: weekRange.to }),
   });
 
   const projectsQuery = useQuery({

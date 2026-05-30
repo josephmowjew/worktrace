@@ -7606,6 +7606,9 @@ impl<'a> SettingsRepository<'a> {
         if let Some(value) = input.working_days {
             settings.working_days = value;
         }
+        if let Some(value) = input.week_starts_on {
+            settings.week_starts_on = value;
+        }
         if let Some(value) = input.daily_work_minutes {
             settings.daily_work_minutes = value;
         }
@@ -7818,6 +7821,8 @@ impl<'a> SettingsRepository<'a> {
             &serde_json::to_string(&settings.working_days).unwrap_or_else(|_| "[]".to_string()),
         )
         .await?;
+        self.upsert("week.starts_on", &settings.week_starts_on)
+            .await?;
         self.upsert(
             "capacity.daily_work_minutes",
             &settings.daily_work_minutes.to_string(),
@@ -9120,6 +9125,13 @@ fn apply_setting(settings: &mut Settings, key: &str, value: String) {
             settings.working_days =
                 serde_json::from_str(&value).unwrap_or_else(|_| Settings::default().working_days);
         }
+        "week.starts_on" => {
+            settings.week_starts_on = if is_supported_day_name(&value) {
+                value
+            } else {
+                Settings::default().week_starts_on
+            };
+        }
         "capacity.daily_work_minutes" => {
             settings.daily_work_minutes = value
                 .parse()
@@ -9230,6 +9242,13 @@ fn dates_between(from: &str, to: &str) -> Vec<String> {
         }
     }
     dates
+}
+
+fn is_supported_day_name(value: &str) -> bool {
+    matches!(
+        value,
+        "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday"
+    )
 }
 
 fn day_name_for_date(date: &str) -> String {
@@ -11867,6 +11886,7 @@ mod tests {
                 git_author_email: Some("git@example.com".to_string()),
                 default_report_template: Some("project_based".to_string()),
                 working_days: Some(vec!["monday".to_string(), "tuesday".to_string()]),
+                week_starts_on: Some("sunday".to_string()),
                 daily_work_minutes: Some(450),
                 theme: Some("light".to_string()),
                 backup_enabled: Some(true),
@@ -11899,6 +11919,14 @@ mod tests {
                 .expect("get settings")
                 .backup_storage_location,
             "C:\\Backups"
+        );
+        assert_eq!(
+            repository
+                .get()
+                .await
+                .expect("get settings")
+                .week_starts_on,
+            "sunday"
         );
     }
 }

@@ -13,7 +13,8 @@ import { useToast } from "../components/ui/ToastProvider";
 import { getFrictionInsights } from "../lib/api/friction";
 import { getSettings } from "../lib/api/settings";
 import { syncAnnouncement, syncStartedAnnouncement } from "../lib/announcements";
-import { currentWeekRange, shiftWeek } from "../lib/dates";
+import { shiftWeek } from "../lib/dates";
+import { useWeekRange } from "../hooks/useWeekRange";
 import { isRepositorySyncInProgressError, useRepositorySync } from "../features/repositorySync/RepositorySyncProvider";
 
 export function FrictionPage() {
@@ -22,7 +23,7 @@ export function FrictionPage() {
   const speech = useSpeech();
   const repositorySync = useRepositorySync();
   const [anchorDate, setAnchorDate] = useState(new Date());
-  const weekRange = currentWeekRange(anchorDate);
+  const weekRange = useWeekRange(anchorDate);
   const settingsQuery = useQuery({
     queryKey: ["settings"],
     queryFn: getSettings,

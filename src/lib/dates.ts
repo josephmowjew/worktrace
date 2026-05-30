@@ -1,21 +1,43 @@
-export function currentWeekRange(date = new Date()) {
+export type WeekStartDay =
+  | "sunday"
+  | "monday"
+  | "tuesday"
+  | "wednesday"
+  | "thursday"
+  | "friday"
+  | "saturday";
+
+const weekStartIndexes: Record<WeekStartDay, number> = {
+  sunday: 0,
+  monday: 1,
+  tuesday: 2,
+  wednesday: 3,
+  thursday: 4,
+  friday: 5,
+  saturday: 6,
+};
+
+export function currentWeekRange(date = new Date(), weekStartsOn: WeekStartDay = "monday") {
   const current = new Date(date);
   const day = current.getDay();
-  const diffToMonday = day === 0 ? -6 : 1 - day;
-  const monday = new Date(current);
-  monday.setDate(current.getDate() + diffToMonday);
-  monday.setHours(0, 0, 0, 0);
+  const startIndex = weekStartIndexes[weekStartsOn] ?? weekStartIndexes.monday;
+  const diffToStart = (day - startIndex + 7) % 7;
+  const start = new Date(current);
+  start.setDate(current.getDate() - diffToStart);
+  start.setHours(0, 0, 0, 0);
 
-  const friday = new Date(monday);
-  friday.setDate(monday.getDate() + 4);
-  friday.setHours(23, 59, 59, 999);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  end.setHours(23, 59, 59, 999);
 
   return {
-    from: formatDateOnly(monday),
-    to: formatDateOnly(friday),
-    label: `${formatShortDate(monday)} - ${formatShortDate(friday)}`,
-    monday,
-    friday,
+    from: formatDateOnly(start),
+    to: formatDateOnly(end),
+    label: `${formatShortDate(start)} - ${formatShortDate(end)}`,
+    start,
+    end,
+    monday: start,
+    friday: end,
   };
 }
 

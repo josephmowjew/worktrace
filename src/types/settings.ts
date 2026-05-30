@@ -8,6 +8,7 @@ export type Settings = {
   gitAuthorEmail: string;
   defaultReportTemplate: string;
   workingDays: string[];
+  weekStartsOn: string;
   dailyWorkMinutes: number;
   theme: ThemePreference | string;
   backupEnabled: boolean;

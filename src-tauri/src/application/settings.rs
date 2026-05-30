@@ -224,17 +224,17 @@ fn validate_update(input: &UpdateSettingsInput) -> Result<(), SettingsServiceErr
         }
     }
 
-    if let Some(working_days) = &input.working_days {
-        let valid_days = [
-            "monday",
-            "tuesday",
-            "wednesday",
-            "thursday",
-            "friday",
-            "saturday",
-            "sunday",
-        ];
+    let valid_days = [
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+    ];
 
+    if let Some(working_days) = &input.working_days {
         if working_days.is_empty() {
             return Err(SettingsServiceError::Validation(
                 "Select at least one working day".to_string(),
@@ -247,6 +247,14 @@ fn validate_update(input: &UpdateSettingsInput) -> Result<(), SettingsServiceErr
         {
             return Err(SettingsServiceError::Validation(
                 "Working days contain an unsupported value".to_string(),
+            ));
+        }
+    }
+
+    if let Some(day) = &input.week_starts_on {
+        if !valid_days.contains(&day.as_str()) {
+            return Err(SettingsServiceError::Validation(
+                "Week start day is not supported".to_string(),
             ));
         }
     }
@@ -436,6 +444,9 @@ fn merge_settings(mut settings: Settings, input: &UpdateSettingsInput) -> Settin
     }
     if let Some(value) = &input.working_days {
         settings.working_days = value.clone();
+    }
+    if let Some(value) = &input.week_starts_on {
+        settings.week_starts_on = value.clone();
     }
     if let Some(value) = input.daily_work_minutes {
         settings.daily_work_minutes = value;
@@ -671,6 +682,7 @@ fn update_input_from_settings(settings: Settings) -> UpdateSettingsInput {
         git_author_email: Some(settings.git_author_email),
         default_report_template: Some(settings.default_report_template),
         working_days: Some(settings.working_days),
+        week_starts_on: Some(settings.week_starts_on),
         daily_work_minutes: Some(settings.daily_work_minutes),
         theme: Some(settings.theme),
         backup_enabled: Some(settings.backup_enabled),
@@ -770,6 +782,7 @@ mod tests {
             .await
             .expect("load defaults");
         assert_eq!(defaults.theme, "dark");
+        assert_eq!(defaults.week_starts_on, "monday");
 
         let updated = SettingsService::update(
             &repository,
@@ -780,6 +793,7 @@ mod tests {
                 git_author_email: Some("git@example.com".to_string()),
                 default_report_template: Some("project_based".to_string()),
                 working_days: Some(vec!["monday".to_string(), "friday".to_string()]),
+                week_starts_on: Some("sunday".to_string()),
                 daily_work_minutes: Some(420),
                 theme: Some("light".to_string()),
                 backup_enabled: Some(true),
@@ -813,6 +827,7 @@ mod tests {
             .expect("reload settings");
         assert_eq!(reloaded.default_manager_name, "Manager");
         assert_eq!(reloaded.working_days, vec!["monday", "friday"]);
+        assert_eq!(reloaded.week_starts_on, "sunday");
         assert_eq!(
             reloaded.backup_storage_location,
             std::env::temp_dir().to_string_lossy().to_string()
@@ -847,6 +862,18 @@ mod tests {
                     github_username: None,
                     github_connected_at: None,
                     github_last_validated_at: None,
+                    ..Default::default()
+                },
+            )
+            .await,
+            Err(SettingsServiceError::Validation(_))
+        ));
+
+        assert!(matches!(
+            SettingsService::update(
+                &repository,
+                UpdateSettingsInput {
+                    week_starts_on: Some("someday".to_string()),
                     ..Default::default()
                 },
             )

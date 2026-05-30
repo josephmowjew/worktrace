@@ -77,7 +77,7 @@ import type { Settings } from "../types/settings";
 import type { SparcForceImportedItem, SparcForceIntegrationStatus, SparcForceRecordCounts } from "../types/sparcForce";
 import type { WeeklyTaskPriority, WeeklyTaskStatus } from "../types/weeklyTask";
 import { sparcForceSyncAnnouncement, syncStartedAnnouncement, taskAnnouncement } from "../lib/announcements";
-import { currentWeekRange } from "../lib/dates";
+import { normalizeWeekStartsOn, useWeekRange } from "../hooks/useWeekRange";
 import { weeklyTaskQueryRoots } from "../lib/api/queryKeys";
 import { gravatarUrl } from "../lib/gravatar";
 import { appSignature } from "../lib/appSignature";
@@ -98,6 +98,8 @@ const workingDays = [
   { label: "Sat", value: "saturday" },
   { label: "Sun", value: "sunday" },
 ];
+
+const weekStartDays = workingDays;
 
 const settingsSchema = z.object({
   name: z.string().trim().min(1, "Full name is required"),
@@ -123,6 +125,7 @@ const settingsSchema = z.object({
     "concise_manager_update",
   ]),
   workingDays: z.array(z.string()).min(1, "Select at least one working day"),
+  weekStartsOn: z.enum(["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]),
   dailyWorkMinutes: z.number().min(60).max(960),
   theme: z.enum(["dark", "light", "system"]),
   announcementsEnabled: z.boolean(),
@@ -263,6 +266,7 @@ export function SettingsPage() {
       gitAuthorEmail: "",
       defaultReportTemplate: "professional_weekly_summary",
       workingDays: ["monday", "tuesday", "wednesday", "thursday", "friday"],
+      weekStartsOn: "monday",
       dailyWorkMinutes: 480,
       theme: "dark",
       announcementsEnabled: true,
@@ -369,6 +373,7 @@ export function SettingsPage() {
         gitAuthorEmail: values.gitAuthorEmail ?? "",
         defaultReportTemplate: values.defaultReportTemplate,
         workingDays: values.workingDays,
+        weekStartsOn: values.weekStartsOn,
         dailyWorkMinutes: values.dailyWorkMinutes,
         theme: values.theme,
         announcementsEnabled: values.announcementsEnabled,
@@ -833,6 +838,8 @@ export function SettingsPage() {
   });
 
   const selectedWorkingDays = form.watch("workingDays");
+  const selectedWeekStart = form.watch("weekStartsOn");
+  const weekRange = useWeekRange();
   const profileName = form.watch("name");
   const profileEmail = form.watch("email") ?? "";
   const useGravatarProfileImage = form.watch("useGravatarProfileImage");
@@ -2012,6 +2019,48 @@ export function SettingsPage() {
                 {form.formState.errors.workingDays.message}
               </p>
             ) : null}
+            <div className="mt-5 border-t border-white/8 pt-5">
+              <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-100">Week starts on</p>
+                  <p className="mt-1 text-xs leading-5 text-slate-400">
+                    Week start controls timeline, task, and report ranges. Working days control capacity.
+                  </p>
+                </div>
+                <span className="rounded-full border border-blue-300/15 bg-blue-500/10 px-3 py-1 text-xs font-medium text-blue-100">
+                  {weekRange.label}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-7">
+                {weekStartDays.map((day) => (
+                  <button
+                    key={day.value}
+                    type="button"
+                    disabled={settingsQuery.isLoading}
+                    aria-pressed={selectedWeekStart === day.value}
+                    onClick={() =>
+                      form.setValue("weekStartsOn", day.value as SettingsFormValues["weekStartsOn"], {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      })
+                    }
+                    className={[
+                      "rounded-xl border px-4 py-3 text-left text-sm font-semibold transition-[background-color,border-color,color,transform,box-shadow] duration-150 active:scale-[0.98]",
+                      selectedWeekStart === day.value
+                        ? "border-cyan-300/45 bg-cyan-500/16 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.1)]"
+                        : "border-white/12 bg-slate-950/45 text-slate-400 hover:border-white/20 hover:bg-white/8 hover:text-slate-200",
+                    ].join(" ")}
+                  >
+                    {day.label}
+                  </button>
+                ))}
+              </div>
+              {form.formState.errors.weekStartsOn?.message ? (
+                <p className="mt-2 text-xs text-red-300">
+                  {form.formState.errors.weekStartsOn.message}
+                </p>
+              ) : null}
+            </div>
           </Panel>
 
           <Panel className="border-blue-300/15 bg-gradient-to-r from-[#08162f] via-[#0a1a38] to-[#09162f] p-6">
@@ -3228,6 +3277,7 @@ function SparcForceImportedExplorer({
   const [sortDirection, setSortDirection] = useState("desc");
   const [reviewTask, setReviewTask] = useState<SparcForceImportedItem | null>(null);
   const [taskDraft, setTaskDraft] = useState<SparcForceTaskDraft | null>(null);
+  const weekRange = useWeekRange();
   const recordsQuery = useQuery({
     queryKey: [
       "sparcForceRecords",
@@ -3288,7 +3338,7 @@ function SparcForceImportedExplorer({
         source: item.source ?? "task",
         externalKind: item.externalKind ?? item.source ?? "task",
         externalId: item.externalId,
-        weekStartDate: currentWeekRange().from,
+        weekStartDate: weekRange.from,
         title: draft.title,
         details: draft.details || null,
         status: draft.status,
@@ -4581,6 +4631,7 @@ function toFormValues(settings: Settings): SettingsFormValues {
     workingDays: settings.workingDays.length
       ? settings.workingDays
       : ["monday", "tuesday", "wednesday", "thursday", "friday"],
+    weekStartsOn: normalizeWeekStartsOn(settings.weekStartsOn),
     dailyWorkMinutes: settings.dailyWorkMinutes || 480,
     theme: isThemePreference(settings.theme) ? settings.theme : "dark",
     announcementsEnabled: settings.announcementsEnabled,

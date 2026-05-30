@@ -78,7 +78,8 @@ import {
   taskUpdateAnnouncement,
 } from "../lib/announcements";
 import { createWeeklyTask, listWeeklyTasks, updateWeeklyTask } from "../lib/api/weeklyTasks";
-import { currentWeekRange, todayRange } from "../lib/dates";
+import { todayRange } from "../lib/dates";
+import { useWeekRange } from "../hooks/useWeekRange";
 import type { FocusSession, StopFocusSessionInput } from "../types/focusSession";
 import type { Project } from "../types/project";
 import type { WeeklyTask, WeeklyTaskPriority, WeeklyTaskStatus, WeeklyTaskType } from "../types/weeklyTask";
@@ -118,7 +119,7 @@ export function TodayPage() {
   const repositorySync = useRepositorySync();
   const navigate = useNavigate();
   const location = useLocation();
-  const weekRange = currentWeekRange();
+  const weekRange = useWeekRange();
   const today = todayRange();
   const [taskModalOpen, setTaskModalOpen] = useState(false);
   const [logModalOpen, setLogModalOpen] = useState(false);

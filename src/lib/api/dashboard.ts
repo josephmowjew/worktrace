@@ -5,14 +5,19 @@ import type {
   ProjectBreakdown,
 } from "../../types/dashboard";
 
-export function getDashboardStats() {
-  return callCommand<DashboardStats>("get_dashboard_stats");
+export type DashboardDateRangeInput = {
+  from: string;
+  to: string;
+};
+
+export function getDashboardStats(input: DashboardDateRangeInput) {
+  return callCommand<DashboardStats>("get_dashboard_stats", { input });
 }
 
-export function getWeeklyActivityHours() {
-  return callCommand<DailyActivityHours[]>("get_weekly_activity_hours");
+export function getWeeklyActivityHours(input: DashboardDateRangeInput) {
+  return callCommand<DailyActivityHours[]>("get_weekly_activity_hours", { input });
 }
 
-export function getProjectBreakdown() {
-  return callCommand<ProjectBreakdown[]>("get_project_breakdown");
+export function getProjectBreakdown(input: DashboardDateRangeInput) {
+  return callCommand<ProjectBreakdown[]>("get_project_breakdown", { input });
 }

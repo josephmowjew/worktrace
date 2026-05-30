@@ -37,7 +37,7 @@ import {
 } from "../lib/api/weeklyTasks";
 import { weeklyTaskQueryRoots } from "../lib/api/queryKeys";
 import { taskAnnouncement, taskUpdateAnnouncement } from "../lib/announcements";
-import { currentWeekRange } from "../lib/dates";
+import { useWeekRange } from "../hooks/useWeekRange";
 import type {
   WeeklyTask,
   WeeklyTaskPriority,
@@ -96,7 +96,7 @@ export function WeeklyPlanPage() {
   const speech = useSpeech();
   const location = useLocation();
   const navigate = useNavigate();
-  const weekRange = currentWeekRange();
+  const weekRange = useWeekRange();
   const [typeFilter, setTypeFilter] = useState<WeeklyTaskType | "all">("all");
   const [statusFilter, setStatusFilter] = useState<WeeklyTaskStatus | "all">("all");
   const [projectFilter, setProjectFilter] = useState("all");

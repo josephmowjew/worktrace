@@ -10,7 +10,8 @@ import { quickCaptureLog } from "../lib/api/manualLogs";
 import { listProjects } from "../lib/api/projects";
 import { getSettings } from "../lib/api/settings";
 import { hideQuickCapture } from "../lib/api/windows";
-import { currentWeekRange, todayRange } from "../lib/dates";
+import { todayRange } from "../lib/dates";
+import { useWeekRange } from "../hooks/useWeekRange";
 import { Select } from "../components/ui/Select";
 import type { ActivityDay, ActivityItem } from "../types/activity";
 import type { ActivityType } from "../types/manualLog";
@@ -31,7 +32,7 @@ const durationOptions = [15, 30, 60];
 export function QuickCaptureWindow() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const today = useMemo(() => todayRange(), []);
-  const week = useMemo(() => currentWeekRange(), []);
+  const week = useWeekRange();
   const [summary, setSummary] = useState("");
   const [activityType, setActivityType] = useState<ActivityType>("Meeting");
   const [projectId, setProjectId] = useState("");

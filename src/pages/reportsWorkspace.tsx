@@ -1,7 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { PropsWithChildren } from "react";
-import { currentWeekRange } from "../lib/dates";
+import { useWeekRange } from "../hooks/useWeekRange";
 import type {
   GeneratedReport,
   ReportAiProvider,
@@ -64,9 +64,10 @@ type ReportsWorkspaceState = {
 const ReportsWorkspaceContext = createContext<ReportsWorkspaceState | null>(null);
 
 export function ReportsWorkspaceProvider({ children }: PropsWithChildren) {
-  const weekRange = currentWeekRange();
+  const weekRange = useWeekRange();
   const [startDate, setStartDate] = useState(weekRange.from);
   const [endDate, setEndDate] = useState(weekRange.to);
+  const defaultRangeRef = useRef(weekRange);
   const [recipientName, setRecipientName] = useState("");
   const [selectedProjectId, setSelectedProjectId] = useState("all");
   const [selectedClassification, setSelectedClassification] =
@@ -92,6 +93,15 @@ export function ReportsWorkspaceProvider({ children }: PropsWithChildren) {
   const [polishCancelled, setPolishCancelled] = useState(false);
   const activePolishStreamIdRef = useRef<string | null>(null);
   const polishStreamReceivedContentRef = useRef(false);
+
+  useEffect(() => {
+    const previous = defaultRangeRef.current;
+    if (startDate === previous.from && endDate === previous.to && !report && !content.trim()) {
+      setStartDate(weekRange.from);
+      setEndDate(weekRange.to);
+    }
+    defaultRangeRef.current = weekRange;
+  }, [content, endDate, report, startDate, weekRange]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;

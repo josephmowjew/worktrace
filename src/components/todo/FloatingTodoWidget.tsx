@@ -26,7 +26,7 @@ import {
 } from "../../lib/api/weeklyTasks";
 import { weeklyTaskQueryRoots } from "../../lib/api/queryKeys";
 import { todoAnnouncement, taskUpdateAnnouncement } from "../../lib/announcements";
-import { currentWeekRange } from "../../lib/dates";
+import { useWeekRange } from "../../hooks/useWeekRange";
 import type { WeeklyTask, WeeklyTaskStatus } from "../../types/weeklyTask";
 import { useSpeech } from "../ui/SpeechProvider";
 import { useToast } from "../ui/ToastProvider";
@@ -37,7 +37,7 @@ export function FloatingTodoWidget() {
   const queryClient = useQueryClient();
   const toast = useToast();
   const speech = useSpeech();
-  const weekRange = currentWeekRange();
+  const weekRange = useWeekRange();
   const [title, setTitle] = useState("");
   const [isPinned, setIsPinned] = useState(true);
   const [isWidgetFocused, setIsWidgetFocused] = useState(false);

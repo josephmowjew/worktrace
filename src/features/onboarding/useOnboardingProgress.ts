@@ -6,11 +6,11 @@ import { listReports } from "../../lib/api/reports";
 import { getSettings } from "../../lib/api/settings";
 import { listWeeklyTasks } from "../../lib/api/weeklyTasks";
 import { listWorkspaces } from "../../lib/api/workspaces";
-import { currentWeekRange } from "../../lib/dates";
+import { useWeekRange } from "../../hooks/useWeekRange";
 import { buildOnboardingProgress } from "./onboardingSteps";
 
 export function useOnboardingProgress() {
-  const weekRange = currentWeekRange();
+  const weekRange = useWeekRange();
   const settingsQuery = useQuery({
     queryKey: ["settings"],
     queryFn: getSettings,

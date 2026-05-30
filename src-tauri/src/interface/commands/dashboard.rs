@@ -1,15 +1,29 @@
-use chrono::{Datelike, Duration, NaiveDate, Utc};
+use chrono::{Datelike, Duration, NaiveDate};
+use serde::Deserialize;
 use tauri::State;
 
 use crate::domain::dashboard::{DailyActivityHours, DashboardStats, ProjectBreakdown};
 use crate::interface::dto::app_result::AppResult;
 use crate::AppState;
 
-fn get_week_range(date: NaiveDate) -> (NaiveDate, NaiveDate) {
-    let day = date.weekday().num_days_from_monday();
-    let monday = date - Duration::days(day as i64);
-    let friday = monday + Duration::days(4);
-    (monday, friday)
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardDateRangeInput {
+    pub from: String,
+    pub to: String,
+}
+
+fn parse_date_range(input: &DashboardDateRangeInput) -> Result<(NaiveDate, NaiveDate), String> {
+    let from = NaiveDate::parse_from_str(input.from.trim(), "%Y-%m-%d")
+        .map_err(|_| "Dashboard date range must use YYYY-MM-DD dates.".to_string())?;
+    let to = NaiveDate::parse_from_str(input.to.trim(), "%Y-%m-%d")
+        .map_err(|_| "Dashboard date range must use YYYY-MM-DD dates.".to_string())?;
+
+    if from > to {
+        return Err("Dashboard date range start must be before the end date.".to_string());
+    }
+
+    Ok((from, to))
 }
 
 fn format_date(date: NaiveDate) -> String {
@@ -24,17 +38,20 @@ fn day_label(date: NaiveDate) -> String {
 #[tauri::command]
 pub async fn get_dashboard_stats(
     state: State<'_, AppState>,
+    input: DashboardDateRangeInput,
 ) -> Result<AppResult<DashboardStats>, String> {
     let pool = state.database.pool();
-    let now = Utc::now().naive_utc().date();
-    let (current_monday, current_friday) = get_week_range(now);
-    let prev_monday = current_monday - Duration::days(7);
-    let prev_friday = current_friday - Duration::days(7);
+    let (current_start, current_end) = match parse_date_range(&input) {
+        Ok(range) => range,
+        Err(message) => return Ok(AppResult::err("VALIDATION_ERROR", message)),
+    };
+    let prev_start = current_start - Duration::days(7);
+    let prev_end = current_end - Duration::days(7);
 
-    let current_from = format_date(current_monday);
-    let current_to = format_date(current_friday);
-    let prev_from = format_date(prev_monday);
-    let prev_to = format_date(prev_friday);
+    let current_from = format_date(current_start);
+    let current_to = format_date(current_end);
+    let prev_from = format_date(prev_start);
+    let prev_to = format_date(prev_end);
 
     // Projects worked on this week (projects with any activity)
     let projects_this_week: i64 = sqlx::query_scalar(
@@ -151,15 +168,18 @@ pub async fn get_dashboard_stats(
 #[tauri::command]
 pub async fn get_weekly_activity_hours(
     state: State<'_, AppState>,
+    input: DashboardDateRangeInput,
 ) -> Result<AppResult<Vec<DailyActivityHours>>, String> {
     let pool = state.database.pool();
-    let now = Utc::now().naive_utc().date();
-    let (monday, friday) = get_week_range(now);
+    let (start, end) = match parse_date_range(&input) {
+        Ok(range) => range,
+        Err(message) => return Ok(AppResult::err("VALIDATION_ERROR", message)),
+    };
 
     let mut result = Vec::new();
-    let mut current = monday;
+    let mut current = start;
 
-    while current <= friday {
+    while current <= end {
         let date_str = format_date(current);
         let label = day_label(current);
 
@@ -198,12 +218,15 @@ pub async fn get_weekly_activity_hours(
 #[tauri::command]
 pub async fn get_project_breakdown(
     state: State<'_, AppState>,
+    input: DashboardDateRangeInput,
 ) -> Result<AppResult<Vec<ProjectBreakdown>>, String> {
     let pool = state.database.pool();
-    let now = Utc::now().naive_utc().date();
-    let (monday, friday) = get_week_range(now);
-    let from = format_date(monday);
-    let to = format_date(friday);
+    let (start, end) = match parse_date_range(&input) {
+        Ok(range) => range,
+        Err(message) => return Ok(AppResult::err("VALIDATION_ERROR", message)),
+    };
+    let from = format_date(start);
+    let to = format_date(end);
 
     let rows = sqlx::query_as::<_, (String, String, f64)>(
         r#"

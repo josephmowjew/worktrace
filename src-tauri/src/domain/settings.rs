@@ -10,6 +10,8 @@ pub struct Settings {
     pub git_author_email: String,
     pub default_report_template: String,
     pub working_days: Vec<String>,
+    #[serde(default = "default_week_starts_on")]
+    pub week_starts_on: String,
     pub daily_work_minutes: i32,
     pub theme: String,
     pub backup_enabled: bool,
@@ -73,6 +75,10 @@ pub struct Settings {
     pub onboarding_completed_at: String,
 }
 
+fn default_week_starts_on() -> String {
+    "monday".to_string()
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BackupLocationValidation {
@@ -106,6 +112,7 @@ pub struct UpdateSettingsInput {
     pub git_author_email: Option<String>,
     pub default_report_template: Option<String>,
     pub working_days: Option<Vec<String>>,
+    pub week_starts_on: Option<String>,
     pub daily_work_minutes: Option<i32>,
     pub theme: Option<String>,
     pub backup_enabled: Option<bool>,
@@ -185,6 +192,7 @@ impl Default for Settings {
                 "thursday".to_string(),
                 "friday".to_string(),
             ],
+            week_starts_on: "monday".to_string(),
             daily_work_minutes: 480,
             theme: "dark".to_string(),
             backup_enabled: false,

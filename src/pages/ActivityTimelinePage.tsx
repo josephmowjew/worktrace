@@ -42,7 +42,8 @@ import { getBackgroundJobStatus, getEmbeddingStatus, queueActivityEmbeddingRefre
 import { listProjects } from "../lib/api/projects";
 import { listWeeklyTasks } from "../lib/api/weeklyTasks";
 import { syncAnnouncement, syncStartedAnnouncement } from "../lib/announcements";
-import { currentWeekRange, shiftWeek } from "../lib/dates";
+import { shiftWeek } from "../lib/dates";
+import { useWeekRange } from "../hooks/useWeekRange";
 import { isRepositorySyncInProgressError, useRepositorySync } from "../features/repositorySync/RepositorySyncProvider";
 import type { ActivityItem } from "../types/activity";
 import type { ActivityGroup, TitleCandidate } from "../types/activityGroup";
@@ -91,7 +92,7 @@ export function ActivityTimelinePage() {
     navigate(location.pathname, { replace: true, state: null });
   }, [location.pathname, location.state, navigate]);
 
-  const weekRange = useMemo(() => currentWeekRange(currentDate), [currentDate]);
+  const weekRange = useWeekRange(currentDate);
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
