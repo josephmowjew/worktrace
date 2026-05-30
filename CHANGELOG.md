@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.6] - 2026-05-30
+- Added an updater smoke-test release so installed 0.1.5 builds can verify signed in-app updates end to end.
+- Confirmed release packaging now embeds the updater public key and publishes a signed Windows updater bundle.
+
 ## [0.1.5] - 2026-05-30
 - Fixed updater signing configuration so future installed builds can verify and install signed WorkTrace updates.
 - Added clearer update install errors instead of hiding the Tauri updater failure behind a generic message.
