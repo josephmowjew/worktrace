@@ -1,14 +1,15 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowRight,
   Bug,
   CalendarDays,
   Check,
+  ChevronRight,
   ClipboardCheck,
   Clock3,
   Code,
   BriefcaseBusiness,
+  Copy,
   Edit3,
   Eraser,
   Eye,
@@ -18,6 +19,7 @@ import {
   Headphones,
   MessageSquare,
   NotebookText,
+  Plus,
   RefreshCw,
   Rocket,
   Save,
@@ -36,8 +38,8 @@ import {
   ManualLogAttachmentsSection,
   PendingManualLogAttachmentsSection,
 } from "../components/ui/ManualLogAttachmentsSection";
+import { ManualLogDetailModal } from "../components/ui/ManualLogDetailModal";
 import { Panel } from "../components/ui/Panel";
-import { PageHeader } from "../components/ui/PageHeader";
 import { SelectField } from "../components/ui/SelectField";
 import { useSpeech } from "../components/ui/SpeechProvider";
 import { useToast } from "../components/ui/ToastProvider";
@@ -51,7 +53,7 @@ import { addManualLogAttachment } from "../lib/api/manualLogAttachments";
 import { listProjects } from "../lib/api/projects";
 import { manualLogAnnouncement } from "../lib/announcements";
 import { useWeekRange } from "../hooks/useWeekRange";
-import { manualLogToneByType, toneBadgeClass, toneCardClass } from "../lib/workItemStyles";
+import { manualLogToneByType, toneBadgeClass } from "../lib/workItemStyles";
 import type { ActivityType, ManualLog } from "../types/manualLog";
 
 const activityTypes: Array<{
@@ -117,6 +119,7 @@ export function ManualLogPage() {
   const speech = useSpeech();
   const weekRange = useWeekRange();
   const [editingLog, setEditingLog] = useState<ManualLog | null>(null);
+  const [viewingLog, setViewingLog] = useState<ManualLog | null>(null);
   const [sortDirection, setSortDirection] = useState<"desc" | "asc">("desc");
   const [pendingAttachmentPaths, setPendingAttachmentPaths] = useState<string[]>([]);
 
@@ -159,6 +162,7 @@ export function ManualLogPage() {
     (total, log) => total + (log.durationMinutes ?? 0),
     0,
   );
+  const newestLogId = logs[0]?.id;
 
   const saveMutation = useMutation({
     mutationFn: async (values: ManualLogSubmitValues) => {
@@ -241,6 +245,21 @@ export function ManualLogPage() {
     });
   }
 
+  function duplicateLog(log: ManualLog) {
+    setEditingLog(null);
+    setPendingAttachmentPaths([]);
+    form.reset({
+      projectId: log.projectId ?? "",
+      date: log.date,
+      activityType: log.activityType,
+      summary: log.summary,
+      outcome: log.outcome ?? "",
+      durationMinutes: log.durationMinutes ?? "",
+      followUp: log.followUp ?? "",
+      includedInReport: log.includedInReport,
+    });
+  }
+
   function clearForm() {
     setEditingLog(null);
     setPendingAttachmentPaths([]);
@@ -257,38 +276,38 @@ export function ManualLogPage() {
         totalMinutes={totalMinutes}
       />
 
-      <div className="grid min-h-0 gap-4 2xl:grid-cols-[minmax(420px,0.84fr)_minmax(620px,1.16fr)]">
-        <Panel className="relative overflow-hidden p-0">
-          <div className="flex items-center justify-between gap-3 border-b border-[var(--wt-border)] px-5 py-4">
+      <div className="grid min-h-0 gap-4 xl:grid-cols-[minmax(380px,0.9fr)_minmax(600px,1.45fr)]">
+        <Panel className="relative overflow-hidden p-0 shadow-[0_18px_60px_rgb(2_8_23/0.20)]">
+          <div className="flex items-center justify-between gap-3 border-b border-[var(--wt-border)] px-5 py-5">
             <div className="flex items-center gap-2">
-              <Clock3 className="h-4 w-4 text-violet-600 dark:text-purple-300" />
-              <h2 className="text-sm font-semibold text-[var(--wt-text-strong)]">Recent Manual Logs</h2>
+              <NotebookText className="h-4 w-4 text-violet-600 dark:text-purple-300" />
+              <h2 className="text-base font-semibold text-[var(--wt-text-strong)]">Recent Manual Logs</h2>
             </div>
             <button
               type="button"
               onClick={() =>
                 setSortDirection((current) => (current === "desc" ? "asc" : "desc"))
               }
-              className="inline-flex h-9 min-w-[132px] items-center justify-center gap-2 rounded-xl border border-[var(--wt-border)] bg-[var(--wt-input)] px-3 text-xs font-semibold text-[var(--wt-text-strong)] shadow-[var(--wt-control-shadow)] transition-[background-color,border-color,color,transform] duration-150 hover:border-blue-500/25 hover:bg-[var(--wt-surface-hover)] hover:text-[var(--wt-accent-text)] active:scale-[0.96]"
+              className="inline-flex h-10 min-w-[136px] items-center justify-center gap-2 rounded-lg border border-[var(--wt-border)] bg-[var(--wt-input)] px-3 text-sm font-semibold text-[var(--wt-text-strong)] shadow-[var(--wt-control-shadow)] transition-[background-color,border-color,color,transform] duration-150 hover:border-blue-500/25 hover:bg-[var(--wt-surface-hover)] hover:text-[var(--wt-accent-text)] active:scale-[0.96]"
             >
               {sortDirection === "desc" ? "Most recent" : "Oldest first"}
-              <ArrowRight className="h-3.5 w-3.5" />
+              <ChevronRight className="h-4 w-4" />
             </button>
           </div>
 
-          <div className="max-h-[calc(100vh-350px)] min-h-[460px] space-y-3 overflow-y-auto p-5 pr-4">
+          <div className="max-h-[calc(100vh-280px)] min-h-[520px] space-y-4 overflow-y-auto p-5 pr-4">
             <button
               type="button"
               onClick={clearForm}
-              className={`group flex w-full items-center justify-between rounded-2xl border px-4 py-4 text-left transition ${
+              className={`group flex w-full items-center justify-between rounded-xl border px-4 py-4 text-left transition-[background-color,border-color,box-shadow,transform] duration-150 active:scale-[0.99] ${
                 editingLog
                   ? "border-[var(--wt-border)] bg-[var(--wt-surface)] hover:border-violet-500/25"
                   : "border-violet-500/30 bg-violet-500/10 shadow-[0_10px_24px_rgb(124_58_237/0.10)]"
               }`}
             >
               <span className="flex items-center gap-4">
-                <span className="grid h-12 w-12 place-items-center rounded-2xl border border-violet-500/20 bg-violet-500/12 text-violet-600 dark:text-purple-100">
-                  <NotebookText className="h-5 w-5" />
+                <span className="grid h-12 w-12 place-items-center rounded-lg border border-blue-500/25 bg-blue-500/10 text-blue-600 dark:text-blue-100">
+                  <Plus className="h-5 w-5" />
                 </span>
                 <span>
                   <span className="block text-sm font-semibold text-[var(--wt-text-strong)]">New Entry</span>
@@ -297,7 +316,7 @@ export function ManualLogPage() {
                   </span>
                 </span>
               </span>
-              <ArrowRight className="h-4 w-4 text-[var(--wt-text-muted)] transition group-hover:translate-x-0.5 group-hover:text-violet-600" />
+              <ChevronRight className="h-4 w-4 text-[var(--wt-text-muted)] transition-[color,transform] duration-150 group-hover:translate-x-0.5 group-hover:text-violet-600" />
             </button>
 
             {logsQuery.isLoading ? (
@@ -326,9 +345,12 @@ export function ManualLogPage() {
                     projectName={
                       log.projectId ? projectNameById.get(log.projectId) : undefined
                     }
+                    onView={() => setViewingLog(log)}
                     onEdit={() => editLog(log)}
+                    onDuplicate={() => duplicateLog(log)}
                     onDelete={() => deleteMutation.mutate(log.id)}
                     isDeleting={deleteMutation.isPending}
+                    isNewest={log.id === newestLogId}
                   />
                 ))}
               </div>
@@ -336,8 +358,8 @@ export function ManualLogPage() {
           </div>
         </Panel>
 
-        <Panel className="relative overflow-hidden p-0">
-          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--wt-border)] px-5 py-4">
+        <Panel className="relative overflow-hidden p-0 shadow-[0_18px_60px_rgb(2_8_23/0.20)]">
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--wt-border)] px-6 py-6">
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-xl font-semibold tracking-tight text-[var(--wt-text-strong)]">
@@ -356,7 +378,7 @@ export function ManualLogPage() {
           </div>
 
           <form
-            className="grid gap-5 p-5 lg:grid-cols-2"
+            className="grid gap-x-5 gap-y-4 p-6 lg:grid-cols-2"
             onSubmit={form.handleSubmit((values) =>
               saveMutation.mutate({
                 ...values,
@@ -437,7 +459,7 @@ export function ManualLogPage() {
               className="lg:col-span-2"
             >
               <textarea
-                className={`${inputClass} min-h-20 resize-y py-3`}
+                className={`${inputClass} min-h-[58px] resize-y py-3 leading-5`}
                 placeholder="Describe the work you performed in a few sentences."
                 {...form.register("summary")}
               />
@@ -449,7 +471,7 @@ export function ManualLogPage() {
               className="lg:col-span-2"
             >
               <textarea
-                className={`${inputClass} min-h-20 resize-y py-3`}
+                className={`${inputClass} min-h-[58px] resize-y py-3 leading-5`}
                 placeholder="What was the outcome or result of this work?"
                 {...form.register("outcome")}
               />
@@ -461,13 +483,13 @@ export function ManualLogPage() {
               className="lg:col-span-2"
             >
               <textarea
-                className={`${inputClass} min-h-20 resize-y py-3`}
+                className={`${inputClass} min-h-[58px] resize-y py-3 leading-5`}
                 placeholder="What are the next steps or who is responsible?"
                 {...form.register("followUp")}
               />
             </Field>
 
-            <div className="rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface-muted)] p-4 lg:col-span-2">
+            <div className="rounded-xl border border-[var(--wt-border)] bg-[var(--wt-surface-muted)] p-4 lg:col-span-2">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div>
                   <p className="text-sm font-semibold text-[var(--wt-text-strong)]">
@@ -519,28 +541,50 @@ export function ManualLogPage() {
               </div>
             ) : null}
 
-            <div className="flex flex-wrap justify-end gap-3 lg:col-span-2">
-              <Button type="button" variant="secondary" onClick={clearForm}>
-                <Eraser className="h-4 w-4" />
-                Clear Form
-              </Button>
-              <Button
-                type="submit"
-                variant="primary"
-                disabled={saveMutation.isPending}
-                className="min-w-40"
-              >
-                <Save className="h-4 w-4" />
-                {saveMutation.isPending
-                  ? "Saving..."
-                  : editingLog
-                    ? "Save Changes"
-                    : "Save Log"}
-              </Button>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--wt-border)] pt-4 lg:col-span-2">
+              {editingLog ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => deleteMutation.mutate(editingLog.id)}
+                  disabled={deleteMutation.isPending}
+                  className="wt-action-danger"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Delete
+                </Button>
+              ) : (
+                <span />
+              )}
+              <div className="flex flex-wrap justify-end gap-3">
+                <Button type="button" variant="secondary" onClick={clearForm}>
+                  <Eraser className="h-4 w-4" />
+                  {editingLog ? "Cancel" : "Clear Form"}
+                </Button>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  disabled={saveMutation.isPending}
+                  className="min-w-36"
+                >
+                  <Save className="h-4 w-4" />
+                  {saveMutation.isPending
+                    ? "Saving..."
+                    : editingLog
+                      ? "Save Entry"
+                      : "Save Log"}
+                </Button>
+              </div>
             </div>
           </form>
         </Panel>
       </div>
+
+      <ManualLogDetailModal
+        isOpen={Boolean(viewingLog)}
+        log={viewingLog}
+        onClose={() => setViewingLog(null)}
+      />
     </div>
   );
 }
@@ -557,47 +601,55 @@ function ManualLogHero({
   totalMinutes: number;
 }) {
   return (
-    <PageHeader
-      icon={NotebookText}
-      eyebrow="Explicit work capture"
-      title="Manual Log"
-      description={`Capture meetings, planning, testing, support, reviews, and other non-code work for ${weekLabel}.`}
-      meta={
-        <div className="grid min-w-[340px] gap-3 rounded-xl border border-[var(--wt-border)] bg-[var(--wt-surface-muted)] p-3 sm:grid-cols-3">
-          <HeroStat icon={FileText} label="Logs" value={totalLogs.toString()} detail="Total logs" tone="blue" />
-          <HeroStat icon={Check} label="Included" value={includedCount.toString()} detail="Included in report" tone="green" />
-          <HeroStat icon={Clock3} label="Logged Time" value={formatMinutes(totalMinutes)} detail="This week" tone="orange" />
+    <header className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <button
+          type="button"
+          className="inline-flex h-11 items-center gap-3 rounded-xl border border-[var(--wt-border)] bg-[var(--wt-input)] px-4 text-sm font-semibold text-[var(--wt-text-strong)] shadow-[var(--wt-control-shadow)] transition-[background-color,border-color,color,transform] duration-150 hover:border-blue-500/25 hover:bg-[var(--wt-surface-hover)] active:scale-[0.96]"
+        >
+          <CalendarDays className="h-4 w-4 text-[var(--wt-text-muted)]" />
+          <span>{weekLabel}</span>
+          <ChevronRight className="h-4 w-4 text-[var(--wt-text-muted)]" />
+        </button>
+
+        <div className="flex flex-wrap items-center gap-5">
+          <HeroStat label="Total logs" value={totalLogs.toString()} tone="blue" />
+          <HeroStat label="Included in report" value={includedCount.toString()} tone="green" />
+          <HeroStat label="This week" value={formatMinutes(totalMinutes)} tone="orange" />
         </div>
-      }
-    />
+      </div>
+      <p className="max-w-3xl text-sm leading-6 text-[var(--wt-text-muted)]">
+        Capture meetings, planning, testing, support, reviews, and other non-code work for {weekLabel}.
+      </p>
+    </header>
   );
 }
 
 function HeroStat({
-  icon: Icon,
   label,
   value,
-  detail,
   tone,
 }: {
-  icon: React.ElementType;
   label: string;
   value: string;
-  detail: string;
   tone: IconTone;
 }) {
+  const toneClass: Record<IconTone, string> = {
+    blue: "bg-blue-500 text-blue-200 shadow-[0_0_18px_rgb(59_130_246/0.38)]",
+    cyan: "bg-cyan-500 text-cyan-100 shadow-[0_0_18px_rgb(6_182_212/0.32)]",
+    green: "bg-emerald-500 text-emerald-100 shadow-[0_0_18px_rgb(16_185_129/0.32)]",
+    purple: "bg-violet-500 text-violet-100 shadow-[0_0_18px_rgb(139_92_246/0.32)]",
+    orange: "bg-orange-500 text-orange-100 shadow-[0_0_18px_rgb(249_115_22/0.32)]",
+    amber: "bg-amber-500 text-amber-100 shadow-[0_0_18px_rgb(245_158_11/0.32)]",
+    rose: "bg-rose-500 text-rose-100 shadow-[0_0_18px_rgb(244_63_94/0.32)]",
+    slate: "bg-slate-500 text-slate-100 shadow-[0_0_18px_rgb(100_116_139/0.24)]",
+  };
+
   return (
-    <div className="flex items-center gap-3 border-[var(--wt-border)] sm:border-r sm:last:border-r-0">
-      <IconBubble tone={tone} size="lg">
-        <Icon className="h-5 w-5" />
-      </IconBubble>
-      <div className="min-w-0">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--wt-text-muted)]">
-          {label}
-        </p>
-        <p className="mt-1 text-2xl font-semibold text-[var(--wt-text-strong)]">{value}</p>
-        <p className="text-xs text-[var(--wt-text-muted)]">{detail}</p>
-      </div>
+    <div className="flex items-center gap-2.5 border-r border-[var(--wt-border)] pr-5 last:border-r-0 last:pr-0">
+      <span className={`h-2.5 w-8 rounded-full ${toneClass[tone]}`} />
+      <span className="text-sm font-semibold tabular-nums text-[var(--wt-text-strong)]">{value}</span>
+      <span className="text-sm text-[var(--wt-text-muted)]">{label}</span>
     </div>
   );
 }
@@ -605,36 +657,38 @@ function HeroStat({
 function ManualLogRow({
   log,
   projectName,
+  onView,
   onEdit,
+  onDuplicate,
   onDelete,
   isDeleting,
+  isNewest,
 }: {
   log: ManualLog;
   projectName?: string;
+  onView: () => void;
   onEdit: () => void;
+  onDuplicate: () => void;
   onDelete: () => void;
   isDeleting: boolean;
+  isNewest: boolean;
 }) {
   const activity = activityTypes.find((item) => item.value === log.activityType);
-  const Icon = activity?.icon ?? NotebookText;
   const tone = manualLogToneByType[log.activityType] ?? "slate";
 
   return (
-    <article className={`group rounded-2xl border p-4 shadow-[var(--wt-panel-shadow)] transition ${toneCardClass(tone)}`}>
-      <div className="flex items-center gap-4">
-        <IconBubble tone={tone}>
-          <Icon className="h-4 w-4" />
-        </IconBubble>
-
-        <div className="min-w-0 flex-1">
+    <article className="group rounded-xl border border-[var(--wt-border)] bg-[var(--wt-surface)] p-5 shadow-[var(--wt-panel-shadow)] transition-[background-color,border-color,box-shadow] duration-150 hover:border-blue-500/25 hover:bg-[var(--wt-surface-muted)]">
+      <div className="min-w-0">
+        <div className="min-w-0">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--wt-text-muted)]">
+            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--wt-text-muted)]">
               {formatDate(log.date)}
             </span>
             <span className="text-slate-700">•</span>
-            <span className="text-xs text-[var(--wt-text-muted)]">
+            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--wt-text-muted)]">
               {activity?.label ?? log.activityType}
             </span>
+            {isNewest ? <Badge tone="blue">Most Recent</Badge> : null}
             {projectName ? (
               <>
                 <span className="text-slate-700">•</span>
@@ -642,42 +696,64 @@ function ManualLogRow({
               </>
             ) : null}
           </div>
-          <p className="mt-1 truncate text-sm font-semibold text-[var(--wt-text-strong)]">
+          <p className="mt-4 max-w-[44rem] text-base font-semibold leading-7 text-[var(--wt-text-strong)]">
             {log.summary}
           </p>
         </div>
 
-        <div className="hidden shrink-0 text-sm font-semibold text-[var(--wt-text-strong)] sm:block">
-          {log.durationMinutes ? formatMinutes(log.durationMinutes) : "0m"}
-        </div>
-        <span className={`hidden rounded-md border px-2 py-1 text-[10px] font-semibold sm:inline-flex ${toneBadgeClass(tone)}`}>
-          {activity?.label ?? log.activityType}
-        </span>
-        <Badge tone={log.includedInReport ? "green" : "slate"}>
-          {log.includedInReport ? "Included" : "Not included"}
-        </Badge>
-        <div className="flex shrink-0 items-center gap-2">
-          <Button
-            variant="ghost"
-            onClick={onEdit}
-            className="wt-action-info h-8 min-h-8 px-2.5"
-            aria-label={`Edit manual log: ${log.summary}`}
-            title="Edit manual log"
-          >
-            <Edit3 className="h-4 w-4" />
-            <span className="hidden text-xs sm:inline">Edit</span>
-          </Button>
-          <Button
-            variant="ghost"
-            onClick={onDelete}
-            disabled={isDeleting}
-            className="wt-action-danger h-8 min-h-8 px-2.5"
-            aria-label={`Delete manual log: ${log.summary}`}
-            title="Delete manual log"
-          >
-            <Trash2 className="h-4 w-4" />
-            <span className="hidden text-xs sm:inline">Delete</span>
-          </Button>
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex min-w-0 flex-wrap items-center gap-2.5">
+            <span className="inline-flex items-center gap-1.5 text-sm tabular-nums text-[var(--wt-text-muted)]">
+              <Clock3 className="h-4 w-4" />
+              {log.durationMinutes ? formatMinutes(log.durationMinutes) : "0m"}
+            </span>
+            <span className={`inline-flex rounded-md border px-2.5 py-1 text-xs font-semibold ${toneBadgeClass(tone)}`}>
+              {activity?.label ?? log.activityType}
+            </span>
+            <Badge tone={log.includedInReport ? "green" : "slate"}>
+              {log.includedInReport ? "Included" : "Not included"}
+            </Badge>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-2 opacity-80 transition-opacity duration-150 group-hover:opacity-100">
+            <Button
+              variant="ghost"
+              onClick={onView}
+              className="h-10 min-h-10 px-3"
+              aria-label={`View manual log: ${log.summary}`}
+              title="View manual log"
+            >
+              <Eye className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={onEdit}
+              className="wt-action-info h-10 min-h-10 px-3"
+              aria-label={`Edit manual log: ${log.summary}`}
+              title="Edit manual log"
+            >
+              <Edit3 className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={onDuplicate}
+              className="h-10 min-h-10 px-3"
+              aria-label={`Duplicate manual log: ${log.summary}`}
+              title="Duplicate manual log"
+            >
+              <Copy className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={onDelete}
+              disabled={isDeleting}
+              className="wt-action-danger h-10 min-h-10 px-3"
+              aria-label={`Delete manual log: ${log.summary}`}
+              title="Delete manual log"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
       </div>
     </article>
@@ -725,36 +801,6 @@ function Field({
         <span className="text-[11px] font-medium leading-5 text-[var(--wt-text-faint)]">{help}</span>
       ) : null}
     </label>
-  );
-}
-
-function IconBubble({
-  tone,
-  size = "md",
-  children,
-}: {
-  tone: IconTone;
-  size?: "md" | "lg";
-  children: ReactNode;
-}) {
-  const sizeClass = size === "lg" ? "h-14 w-14 rounded-2xl" : "h-12 w-12 rounded-2xl";
-  const toneClass: Record<IconTone, string> = {
-    blue: "border-blue-500/20 bg-blue-500/10 text-blue-600 dark:text-blue-200",
-    cyan: "border-cyan-500/20 bg-cyan-500/10 text-cyan-600 dark:text-cyan-200",
-    green: "border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-200",
-    purple: "border-violet-500/20 bg-violet-500/10 text-violet-600 dark:text-purple-200",
-    orange: "border-orange-500/20 bg-orange-500/10 text-orange-600 dark:text-orange-200",
-    amber: "border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-200",
-    rose: "border-rose-500/25 bg-rose-500/10 text-rose-600 dark:text-rose-200",
-    slate: "border-[var(--wt-border)] bg-[var(--wt-surface-muted)] text-[var(--wt-text-muted)]",
-  };
-
-  return (
-    <span
-      className={`grid shrink-0 place-items-center border shadow-[var(--wt-control-shadow)] ${sizeClass} ${toneClass[tone]}`}
-    >
-      {children}
-    </span>
   );
 }
 
