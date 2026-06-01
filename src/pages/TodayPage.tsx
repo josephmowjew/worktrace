@@ -33,6 +33,7 @@ import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { CloseButton } from "../components/ui/CloseButton";
 import { EndOfDayReviewModal } from "../components/ui/EndOfDayReviewModal";
+import { FocusTargetPicker } from "../components/ui/FocusTargetPicker";
 import { Panel } from "../components/ui/Panel";
 import { PrepareReportModal } from "../components/ui/PrepareReportModal";
 import { QuickManualLogModal, type QuickManualLogSubmitInput } from "../components/ui/QuickManualLogModal";
@@ -51,7 +52,7 @@ import {
 } from "../lib/api/focusSessions";
 import { getFrictionInsights } from "../lib/api/friction";
 import { addManualLogAttachment } from "../lib/api/manualLogAttachments";
-import { createManualLog } from "../lib/api/manualLogs";
+import { createManualLog, listManualLogs } from "../lib/api/manualLogs";
 import { dismissNudge, listNudgeDismissals } from "../lib/api/nudges";
 import {
   dismissPriorityReminder,
@@ -80,8 +81,7 @@ import {
 import { createWeeklyTask, listWeeklyTasks, updateWeeklyTask } from "../lib/api/weeklyTasks";
 import { todayRange } from "../lib/dates";
 import { useWeekRange } from "../hooks/useWeekRange";
-import type { FocusSession, StopFocusSessionInput } from "../types/focusSession";
-import type { Project } from "../types/project";
+import type { FocusSession, FocusTarget, FocusTargetGroup, StopFocusSessionInput } from "../types/focusSession";
 import type { WeeklyTask, WeeklyTaskPriority, WeeklyTaskStatus, WeeklyTaskType } from "../types/weeklyTask";
 import type { DailyPlanItem, DailyPlanItemStatus } from "../types/dailyPlan";
 import type { PriorityReminder } from "../types/priorityReminder";
@@ -170,6 +170,14 @@ export function TodayPage() {
     queryKey: ["focusSessions", today.from, today.to, "today"],
     queryFn: () =>
       listFocusSessions({
+        from: today.from,
+        to: today.to,
+      }),
+  });
+  const focusLogsQuery = useQuery({
+    queryKey: ["manualLogs", today.from, today.to, "focus"],
+    queryFn: () =>
+      listManualLogs({
         from: today.from,
         to: today.to,
       }),
@@ -566,6 +574,68 @@ export function TodayPage() {
   });
 
   const projects = (projectsQuery.data ?? []).filter((project) => project.status === "active");
+  const focusTargetGroups = useMemo<FocusTargetGroup[]>(() => {
+    const openTasks = (tasksQuery.data ?? [])
+      .filter((task) => task.status !== "completed" && task.status !== "dropped")
+      .slice()
+      .sort((a, b) => {
+        const order: Record<string, number> = {
+          in_progress: 0,
+          blocked: 1,
+          todo: 2,
+        };
+        const aRank = order[a.status] ?? 3;
+        const bRank = order[b.status] ?? 3;
+        if (aRank !== bRank) return aRank - bRank;
+        return a.title.localeCompare(b.title);
+      })
+      .map<FocusTarget>((task) => ({
+        kind: "task",
+        id: task.id,
+        title: task.title,
+        projectId: task.projectId ?? null,
+        projectName: task.projectName ?? null,
+      }));
+
+    const recentLogs = (focusLogsQuery.data ?? [])
+      .slice()
+      .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
+      .slice(0, 5)
+      .map<FocusTarget>((log) => ({
+        kind: "log",
+        id: log.id,
+        title: log.summary || `${log.activityType} log`,
+        projectId: log.projectId ?? null,
+      }));
+
+    const projectTargets = projects.map<FocusTarget>((project) => ({
+      kind: "project",
+      id: project.id,
+      name: project.name,
+    }));
+
+    return [
+      { id: "general", label: "General", options: [{ kind: "general" }] },
+      {
+        id: "tasks",
+        label: "Open tasks",
+        options: openTasks,
+        emptyMessage: "No open tasks this week.",
+      },
+      {
+        id: "logs",
+        label: "Today's logs",
+        options: recentLogs,
+        emptyMessage: "No manual logs today.",
+      },
+      {
+        id: "projects",
+        label: "Projects",
+        options: projectTargets,
+        emptyMessage: "No active projects.",
+      },
+    ];
+  }, [tasksQuery.data, focusLogsQuery.data, projects]);
   const tasks = tasksQuery.data ?? [];
   const days = activityQuery.data ?? [];
   const activityItems = days.flatMap((day) => day.items);
@@ -951,12 +1021,12 @@ export function TodayPage() {
               activeSession={activeFocusQuery.data}
               focusGoalMinutes={commandCenterQuery.data?.focusGoalMinutes ?? 240}
               focusActualMinutes={commandCenterQuery.data?.focusActualMinutes ?? 0}
-              projects={projects}
+              groups={focusTargetGroups}
               onStart={(input) =>
                 startFocusMutation.mutate({
                   title: input.title,
                   projectId: input.projectId ?? null,
-                  taskId: null,
+                  taskId: input.taskId ?? null,
                   notes: null,
                 })
               }
@@ -1578,11 +1648,36 @@ function MissionMetric({
   );
 }
 
+function resolveFocusTarget(
+  target: FocusTarget | null,
+  title: string,
+): { title: string; projectId: string | null; taskId: string | null } {
+  const trimmedTitle = title.trim() || "Focus session";
+  if (!target || target.kind === "general") {
+    return { title: trimmedTitle, projectId: null, taskId: null };
+  }
+  if (target.kind === "task") {
+    return {
+      title: title.trim() || target.title,
+      projectId: target.projectId ?? null,
+      taskId: target.id,
+    };
+  }
+  if (target.kind === "log") {
+    return {
+      title: title.trim() || target.title,
+      projectId: target.projectId ?? null,
+      taskId: null,
+    };
+  }
+  return { title: trimmedTitle, projectId: target.id, taskId: null };
+}
+
 function TodayFocusPanel({
   activeSession,
   focusGoalMinutes,
   focusActualMinutes,
-  projects,
+  groups,
   onStart,
   onStop,
   onCancel,
@@ -1591,16 +1686,28 @@ function TodayFocusPanel({
   activeSession?: FocusSession | null;
   focusGoalMinutes: number;
   focusActualMinutes: number;
-  projects: Project[];
-  onStart: (input: { title: string; projectId?: string | null }) => void;
+  groups: FocusTargetGroup[];
+  onStart: (input: { title: string; projectId?: string | null; taskId?: string | null }) => void;
   onStop: () => void;
   onCancel: () => void;
   isPending: boolean;
 }) {
   const [title, setTitle] = useState("");
-  const [projectId, setProjectId] = useState("none");
+  const [target, setTarget] = useState<FocusTarget | null>(null);
   const elapsed = useElapsedSeconds(activeSession?.startedAt);
   const focusPercent = Math.min(100, Math.round((focusActualMinutes / Math.max(focusGoalMinutes, 1)) * 100));
+
+  useEffect(() => {
+    if (!target) {
+      setTitle("");
+      return;
+    }
+    if (target.kind === "task" || target.kind === "log") {
+      setTitle(target.title);
+    } else {
+      setTitle("");
+    }
+  }, [target]);
 
   return (
     <Panel className={`wt-focus-primary border-emerald-300/15 bg-[linear-gradient(180deg,rgba(8,33,38,0.72),rgba(6,18,35,0.92))] p-4 ${
@@ -1631,30 +1738,25 @@ function TodayFocusPanel({
         </div>
       ) : (
         <div className="space-y-3">
+          <FocusTargetPicker
+            value={target}
+            onChange={setTarget}
+            groups={groups}
+            placeholder="General focus or pick a target"
+          />
           <input
             value={title}
             onChange={(event) => setTitle(event.currentTarget.value)}
             placeholder="What are you focusing on?"
             className="h-10 w-full rounded-lg border border-white/10 bg-slate-950/65 px-3 text-sm text-slate-100 outline-none placeholder:text-slate-600 focus:border-emerald-300/50 focus:ring-2 focus:ring-emerald-500/15"
           />
-          <select
-            value={projectId}
-            onChange={(event) => setProjectId(event.currentTarget.value)}
-            className="h-10 w-full rounded-lg border border-white/10 bg-slate-950/65 px-3 text-sm text-slate-100 outline-none focus:border-emerald-300/50 focus:ring-2 focus:ring-emerald-500/15"
-          >
-            <option value="none">General focus</option>
-            {projects.map((project) => (
-              <option key={project.id} value={project.id}>{project.name}</option>
-            ))}
-          </select>
           <Button
             variant="primary"
             onClick={() => {
-              onStart({
-                title: title.trim() || "Focus session",
-                projectId: projectId === "none" ? null : projectId,
-              });
+              const resolved = resolveFocusTarget(target, title);
+              onStart(resolved);
               setTitle("");
+              setTarget(null);
             }}
             disabled={isPending}
             className="w-full"

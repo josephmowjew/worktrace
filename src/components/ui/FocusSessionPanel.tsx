@@ -1,29 +1,40 @@
 import { Clock3, Focus, Play, Square, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import type { FocusSession } from "../../types/focusSession";
-import type { Project } from "../../types/project";
+import { useEffect, useState } from "react";
+import type { FocusSession, FocusTarget, FocusTargetGroup } from "../../types/focusSession";
 import { Button } from "./Button";
+import { FocusTargetPicker } from "./FocusTargetPicker";
 import { Panel } from "./Panel";
-import { Select } from "./Select";
 
 export function FocusSessionPanel({
   activeSession,
-  projects,
+  groups,
   onStart,
   onStop,
   onCancel,
   isPending,
 }: {
   activeSession?: FocusSession | null;
-  projects: Project[];
-  onStart: (input: { title: string; projectId?: string | null }) => void;
+  groups: FocusTargetGroup[];
+  onStart: (input: { title: string; projectId?: string | null; taskId?: string | null }) => void;
   onStop: () => void;
   onCancel: () => void;
   isPending: boolean;
 }) {
   const [title, setTitle] = useState("");
-  const [projectId, setProjectId] = useState("none");
+  const [target, setTarget] = useState<FocusTarget | null>(null);
   const elapsed = useElapsedSeconds(activeSession?.startedAt);
+
+  useEffect(() => {
+    if (!target) {
+      setTitle("");
+      return;
+    }
+    if (target.kind === "task" || target.kind === "log") {
+      setTitle(target.title);
+    } else {
+      setTitle("");
+    }
+  }, [target]);
 
   return (
     <Panel className="border-emerald-300/15 bg-emerald-400/10">
@@ -64,33 +75,24 @@ export function FocusSessionPanel({
         </div>
       ) : (
         <div className="space-y-3">
+          <FocusTargetPicker
+            value={target}
+            onChange={setTarget}
+            groups={groups}
+            placeholder="General focus or pick a target"
+          />
           <input
             value={title}
             onChange={(event) => setTitle(event.currentTarget.value)}
             placeholder="What are you focusing on?"
             className="h-10 w-full rounded-xl border border-white/10 bg-slate-950/70 px-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-emerald-300/50 focus:ring-2 focus:ring-emerald-500/15"
           />
-          <Select
-            value={projectId}
-            onChange={setProjectId}
-            size="sm"
-            options={[
-              { value: "none", label: "General focus", icon: Focus },
-              ...projects.map((project) => ({
-                value: project.id,
-                label: project.name,
-                icon: Focus,
-              })),
-            ]}
-          />
           <Button
             variant="primary"
             onClick={() => {
-              onStart({
-                title: title.trim() || "Focus session",
-                projectId: projectId === "none" ? null : projectId,
-              });
+              onStart(resolveFocusTarget(target, title));
               setTitle("");
+              setTarget(null);
             }}
             disabled={isPending}
             className="w-full"
@@ -104,6 +106,31 @@ export function FocusSessionPanel({
   );
 }
 
+function resolveFocusTarget(
+  target: FocusTarget | null,
+  title: string,
+): { title: string; projectId: string | null; taskId: string | null } {
+  const trimmedTitle = title.trim() || "Focus session";
+  if (!target || target.kind === "general") {
+    return { title: trimmedTitle, projectId: null, taskId: null };
+  }
+  if (target.kind === "task") {
+    return {
+      title: title.trim() || target.title,
+      projectId: target.projectId ?? null,
+      taskId: target.id,
+    };
+  }
+  if (target.kind === "log") {
+    return {
+      title: title.trim() || target.title,
+      projectId: target.projectId ?? null,
+      taskId: null,
+    };
+  }
+  return { title: trimmedTitle, projectId: target.id, taskId: null };
+}
+
 function useElapsedSeconds(startedAt?: string) {
   const [now, setNow] = useState(() => Date.now());
 
@@ -113,12 +140,10 @@ function useElapsedSeconds(startedAt?: string) {
     return () => window.clearInterval(timer);
   }, [startedAt]);
 
-  return useMemo(() => {
-    if (!startedAt) return 0;
-    const started = new Date(startedAt).getTime();
-    if (Number.isNaN(started)) return 0;
-    return Math.max(0, Math.floor((now - started) / 1_000));
-  }, [now, startedAt]);
+  if (!startedAt) return 0;
+  const started = new Date(startedAt).getTime();
+  if (Number.isNaN(started)) return 0;
+  return Math.max(0, Math.floor((now - started) / 1_000));
 }
 
 function formatElapsed(seconds: number) {

@@ -38,3 +38,16 @@ export type ListFocusSessionsInput = {
   status?: FocusSessionStatus | null;
   projectIds?: string[] | null;
 };
+
+export type FocusTarget =
+  | { kind: "task"; id: string; title: string; projectId?: string | null; projectName?: string | null }
+  | { kind: "log"; id: string; title: string; projectId?: string | null }
+  | { kind: "project"; id: string; name: string }
+  | { kind: "general" };
+
+export type FocusTargetGroup = {
+  id: string;
+  label: string;
+  options: FocusTarget[];
+  emptyMessage?: string;
+};
