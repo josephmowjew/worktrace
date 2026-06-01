@@ -18,6 +18,17 @@ type VoiceCommandResult = {
   transcript: string;
 };
 
+type WavRecordingResult = {
+  bytes: number[];
+  mimeType: string;
+  durationMs: number;
+  peak: number;
+};
+
+type VoiceCommandOptions = {
+  localOnly?: boolean;
+};
+
 type AnnounceOptions = {
   category?: "focus" | "nudge" | "sync" | "task" | "general";
   interrupt?: boolean;
@@ -25,7 +36,7 @@ type AnnounceOptions = {
 
 type SpeechContextValue = {
   announce: (text: string, options?: AnnounceOptions) => void;
-  startVoiceCommand: () => Promise<VoiceCommandResult | null>;
+  startVoiceCommand: (options?: VoiceCommandOptions) => Promise<VoiceCommandResult | null>;
   stopVoiceCommand: () => void;
   voices: SpeechSynthesisVoice[];
   status: VoiceCommandStatus;
@@ -49,6 +60,7 @@ export function SpeechProvider({ children }: PropsWithChildren) {
   const [error, setError] = useState<string | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const stopAudioCaptureRef = useRef<(() => void) | null>(null);
 
   const isSpeechSynthesisAvailable =
     typeof window !== "undefined" && "speechSynthesis" in window;
@@ -87,10 +99,11 @@ export function SpeechProvider({ children }: PropsWithChildren) {
   );
 
   const stopVoiceCommand = useCallback(() => {
+    stopAudioCaptureRef.current?.();
     recorderRef.current?.stop();
   }, []);
 
-  const startVoiceCommand = useCallback(async (): Promise<VoiceCommandResult | null> => {
+  const startVoiceCommand = useCallback(async (options: VoiceCommandOptions = {}): Promise<VoiceCommandResult | null> => {
     if (!settings?.voiceCommandsEnabled) {
       setError("Voice commands are disabled in Settings.");
       setStatus("error");
@@ -109,6 +122,30 @@ export function SpeechProvider({ children }: PropsWithChildren) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
+      if (options.localOnly) {
+        const recording = await recordWavFromStream(stream, MAX_RECORDING_MS, (stop) => {
+          stopAudioCaptureRef.current = stop;
+        });
+        if (recording.peak < 0.002) {
+          setStatus("idle");
+          setError("WorkTrace captured silence from the selected microphone. Check the app microphone permission or selected input device.");
+          return null;
+        }
+        setStatus("transcribing");
+        const result = await transcribeVoiceCommand({
+          audioBytes: recording.bytes,
+          mimeType: recording.mimeType,
+          localOnly: true,
+        });
+        const transcript = result.transcript;
+        setStatus("idle");
+        if (transcript.trim()) {
+          return { transcript };
+        }
+        setError("No speech was transcribed. Try again a little closer to the microphone.");
+        return null;
+      }
+
       const mimeType = pickMimeType();
       const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       recorderRef.current = recorder;
@@ -139,6 +176,7 @@ export function SpeechProvider({ children }: PropsWithChildren) {
             const result = await transcribeVoiceCommand({
               audioBytes: Array.from(new Uint8Array(buffer)),
               mimeType: blob.type,
+              localOnly: options.localOnly,
             });
             resolve(result.transcript);
           } catch (innerError) {
@@ -150,7 +188,11 @@ export function SpeechProvider({ children }: PropsWithChildren) {
       });
 
       setStatus("idle");
-      return transcript.trim() ? { transcript } : null;
+      if (transcript.trim()) {
+        return { transcript };
+      }
+      setError("No speech was transcribed. Try again a little closer to the microphone.");
+      return null;
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Voice command failed.";
       setError(message);
@@ -158,6 +200,7 @@ export function SpeechProvider({ children }: PropsWithChildren) {
       return null;
     } finally {
       recorderRef.current = null;
+      stopAudioCaptureRef.current = null;
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     }
@@ -202,6 +245,114 @@ export function useSpeech() {
 function pickMimeType() {
   const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"];
   return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) ?? "";
+}
+
+async function recordWavFromStream(
+  stream: MediaStream,
+  maxRecordingMs: number,
+  onStopReady: (stop: () => void) => void,
+): Promise<WavRecordingResult> {
+  const AudioContextClass =
+    window.AudioContext ||
+    (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  const audioContext = new AudioContextClass();
+  await audioContext.resume();
+  const source = audioContext.createMediaStreamSource(stream);
+  const processor = audioContext.createScriptProcessor(4096, 1, 1);
+  const chunks: Float32Array[] = [];
+  const startedAt = performance.now();
+  let peak = 0;
+  let stopped = false;
+
+  const stop = () => {
+    stopped = true;
+  };
+  onStopReady(stop);
+
+  processor.onaudioprocess = (event) => {
+    if (stopped) return;
+    const input = new Float32Array(event.inputBuffer.getChannelData(0));
+    for (const sample of input) {
+      peak = Math.max(peak, Math.abs(sample));
+    }
+    chunks.push(input);
+  };
+
+  source.connect(processor);
+  processor.connect(audioContext.destination);
+
+  await new Promise<void>((resolve) => {
+    const timeout = window.setTimeout(() => {
+      stopped = true;
+      resolve();
+    }, maxRecordingMs);
+
+    const interval = window.setInterval(() => {
+      if (!stopped) return;
+      window.clearTimeout(timeout);
+      window.clearInterval(interval);
+      resolve();
+    }, 50);
+  });
+
+  processor.disconnect();
+  source.disconnect();
+  await audioContext.close();
+
+  return {
+    bytes: Array.from(encodeWav(chunks, audioContext.sampleRate)),
+    mimeType: "audio/wav",
+    durationMs: Math.round(performance.now() - startedAt),
+    peak,
+  };
+}
+
+function encodeWav(chunks: Float32Array[], sampleRate: number) {
+  const samples = mergeAudioChunks(chunks);
+  const bytesPerSample = 2;
+  const blockAlign = bytesPerSample;
+  const buffer = new ArrayBuffer(44 + samples.length * bytesPerSample);
+  const view = new DataView(buffer);
+
+  writeAscii(view, 0, "RIFF");
+  view.setUint32(4, 36 + samples.length * bytesPerSample, true);
+  writeAscii(view, 8, "WAVE");
+  writeAscii(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, 16, true);
+  writeAscii(view, 36, "data");
+  view.setUint32(40, samples.length * bytesPerSample, true);
+
+  let offset = 44;
+  for (const sample of samples) {
+    const clamped = Math.max(-1, Math.min(1, sample));
+    view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
+    offset += 2;
+  }
+
+  return new Uint8Array(buffer);
+}
+
+function mergeAudioChunks(chunks: Float32Array[]) {
+  const length = chunks.reduce((total, chunk) => total + chunk.length, 0);
+  const merged = new Float32Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return merged;
+}
+
+function writeAscii(view: DataView, offset: number, value: string) {
+  for (let index = 0; index < value.length; index += 1) {
+    view.setUint8(offset + index, value.charCodeAt(index));
+  }
 }
 
 function clamp(value: number, min: number, max: number) {

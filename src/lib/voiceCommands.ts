@@ -1,3 +1,10 @@
+import type { VoiceCaptureDraft } from "../types/voiceCapture";
+import {
+  parseVoiceTranscript,
+  toVoiceCaptureDraft,
+} from "./voice";
+import type { VoiceParseContext } from "./voice";
+
 export type NormalizedVoiceCommand =
   | {
       kind: "power";
@@ -12,151 +19,102 @@ export type NormalizedVoiceCommand =
       requiresConfirmation: boolean;
     }
   | {
+      kind: "capture";
+      draft: VoiceCaptureDraft;
+      label: string;
+      requiresConfirmation: true;
+    }
+  | {
       kind: "unknown";
       transcript: string;
       label: string;
       requiresConfirmation: true;
     };
 
-const fillerPattern = /^(please\s+|worktrace\s+|hey\s+worktrace\s+)/i;
+export { extractVoiceCaptureContent, inferVoiceCaptureKind, parseVoiceTranscript } from "./voice";
+export type { VoiceParseResult, VoiceIntentCandidate, VoiceParseContext } from "./voice";
 
-export function normalizeVoiceTranscript(transcript: string): NormalizedVoiceCommand {
-  const cleaned = transcript
-    .trim()
-    .replace(/[.,!?]+$/g, "")
-    .replace(/\s+/g, " ")
-    .replace(fillerPattern, "");
-  const normalized = cleaned.toLowerCase();
-
-  if (!normalized) {
-    return unknownCommand(transcript);
-  }
-
-  if (["sync", "sync repositories", "sync repos", "sync now"].includes(normalized)) {
-    return powerCommand("sync", "Sync repositories", false);
-  }
-
-  if (
-    [
-      "sync sparc force",
-      "sync spark force",
-      "sync support",
-      "import sparc force",
-      "import spark force",
-    ].includes(normalized)
-  ) {
-    return powerCommand("sparc_force_sync", "Sync Sparc Force", false);
-  }
-
-  if (
-    ["report", "prepare report", "prepare weekly report", "weekly report"].includes(normalized)
-  ) {
-    return powerCommand("report", "Prepare weekly report", false);
-  }
-
-  const navigation = parseNavigation(normalized);
-  if (navigation) {
-    return navigation;
-  }
-
-  const task = parseCapture(normalized, ["add task", "new task", "create task"]);
-  if (task) {
-    return powerCommand(`task: ${task}`, `Add task: ${task}`, true);
-  }
-
-  const log = parseLog(normalized);
-  if (log) {
-    return powerCommand(`log: ${log}`, `Create manual log: ${log}`, true);
-  }
-
-  const focus = parseCapture(normalized, [
-    "start focus on",
-    "start focus",
-    "focus on",
-    "focus",
-  ]);
-  if (focus) {
-    return powerCommand(`focus: ${focus}`, `Start focus: ${focus}`, true);
-  }
-
-  return unknownCommand(cleaned);
-}
-
-function parseNavigation(normalized: string): NormalizedVoiceCommand | null {
-  const target = normalized
-    .replace(/^(go to|open|show|take me to)\s+/, "")
-    .replace(/^the\s+/, "");
-
-  const routes: Record<string, { path: string; label: string }> = {
-    today: { path: "/", label: "Go to Today" },
-    dashboard: { path: "/dashboard", label: "Go to Dashboard" },
-    projects: { path: "/projects", label: "Go to Repositories" },
-    repositories: { path: "/projects", label: "Go to Repositories" },
-    "activity timeline": { path: "/activity", label: "Go to Activity Timeline" },
-    activity: { path: "/activity", label: "Go to Activity Timeline" },
-    backup: { path: "/backup", label: "Go to Backup" },
-    "manual log": { path: "/manual-log", label: "Go to Manual Log" },
-    "weekly plan": { path: "/weekly-plan", label: "Go to Weekly Plan" },
-    reports: { path: "/reports", label: "Go to Reports" },
-    guide: { path: "/guide", label: "Go to Guide" },
-    settings: { path: "/settings", label: "Go to Settings" },
-    "sparc force": { path: "/settings", label: "Go to Sparc Force" },
-    "spark force": { path: "/settings", label: "Go to Sparc Force" },
-    "support integration": { path: "/settings", label: "Go to Sparc Force" },
-  };
-
-  const route = routes[target];
-  if (!route) return null;
-
-  return {
-    kind: "navigation",
-    path: route.path,
-    label: route.label,
-    requiresConfirmation: false,
-  };
-}
-
-function parseCapture(normalized: string, prefixes: string[]) {
-  for (const prefix of prefixes) {
-    if (normalized === prefix) return null;
-    if (normalized.startsWith(`${prefix} `)) {
-      return normalized.slice(prefix.length).trim();
-    }
-  }
-
-  return null;
-}
-
-function parseLog(normalized: string) {
-  const direct = parseCapture(normalized, ["log", "create log", "add log", "manual log"]);
-  if (!direct) return null;
-
-  const durationFirst = direct.match(/^(\d+)\s*(minutes?|mins?|hours?|hrs?)\s+(.+)$/);
-  if (!durationFirst) return direct;
-
-  const [, amount, unit, summary] = durationFirst;
-  const suffix = unit.startsWith("hour") || unit.startsWith("hr") ? "h" : "m";
-  return `${summary.trim()} ${amount}${suffix}`;
-}
-
-function powerCommand(
-  command: string,
-  label: string,
-  requiresConfirmation: boolean,
+export function normalizeVoiceTranscript(
+  transcript: string,
+  context: VoiceParseContext = {},
 ): NormalizedVoiceCommand {
-  return {
-    kind: "power",
-    command,
-    label,
-    requiresConfirmation,
-  };
+  const result = parseVoiceTranscript(transcript, context);
+  const candidate = result.topCandidate;
+
+  if (
+    !candidate ||
+    result.status === "unknown_review" ||
+    (result.status === "ambiguous" && candidate.captureDraft)
+  ) {
+    return unknownCommand(result.rawTranscript);
+  }
+
+  if (candidate.kind === "navigate" && candidate.path) {
+    return {
+      kind: "navigation",
+      path: candidate.path,
+      label: candidate.label,
+      requiresConfirmation: candidate.requiresConfirmation,
+    };
+  }
+
+  if (
+    candidate.kind === "sync_repositories" ||
+    candidate.kind === "sync_sparc_force" ||
+    candidate.kind === "prepare_report" ||
+    candidate.kind === "start_focus"
+  ) {
+    return {
+      kind: "power",
+      command: candidate.command ?? "",
+      label: candidate.label,
+      requiresConfirmation: candidate.requiresConfirmation,
+    };
+  }
+
+  if (candidate.captureDraft) {
+    return {
+      kind: "capture",
+      draft: candidate.captureDraft,
+      label: candidate.label,
+      requiresConfirmation: true,
+    };
+  }
+
+  return unknownCommand(result.rawTranscript);
+}
+
+export function parseVoiceCaptureDraft(
+  transcript: string,
+  context: VoiceParseContext = {},
+): VoiceCaptureDraft {
+  const result = parseVoiceTranscript(transcript, context);
+  const candidate = result.topCandidate;
+  if (
+    candidate?.captureDraft &&
+    (candidate.kind === "create_task" || candidate.kind === "create_manual_log") &&
+    result.status !== "unknown_review" &&
+    result.status !== "ambiguous"
+  ) {
+    return {
+      ...candidate.captureDraft,
+      reason: result.issues[0]?.message ?? candidate.captureDraft.reason ?? null,
+      issues: result.issues.map((issue) => issue.message),
+    } as VoiceCaptureDraft;
+  }
+
+  return toVoiceCaptureDraft({
+    ...result,
+    topCandidate: undefined,
+  });
 }
 
 function unknownCommand(transcript: string): NormalizedVoiceCommand {
+  const cleaned = transcript.trim();
   return {
     kind: "unknown",
-    transcript,
-    label: transcript.trim() ? `Unknown command: ${transcript.trim()}` : "No command heard",
+    transcript: cleaned,
+    label: cleaned ? `Unknown command: ${cleaned}` : "No command heard",
     requiresConfirmation: true,
   };
 }

@@ -21,13 +21,14 @@ import {
   Gauge,
   RefreshCw,
   ArrowUpCircle,
+  Mic,
   Square,
 } from "lucide-react";
 import type { PropsWithChildren } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listActivity } from "../../lib/api/activity";
@@ -36,6 +37,7 @@ import { getSparcForceIntegrationStatus, syncSparcForce } from "../../lib/api/sp
 import { listProjects } from "../../lib/api/projects";
 import { exportSettingsToFile, getSettings, importSettings } from "../../lib/api/settings";
 import { toggleTodoWidget } from "../../lib/api/todoWidget";
+import { showQuickCapture } from "../../lib/api/windows";
 import {
   checkForAppUpdate,
   getAppVersion,
@@ -48,7 +50,8 @@ import { useToast } from "../ui/ToastProvider";
 import { CommandPalette, createBaseCommandActions } from "../ui/CommandPalette";
 import { CloseButton } from "../ui/CloseButton";
 import { useSpeech } from "../ui/SpeechProvider";
-import { normalizeVoiceTranscript } from "../../lib/voiceCommands";
+import { normalizeVoiceTranscript, parseVoiceCaptureDraft } from "../../lib/voiceCommands";
+import type { VoiceCaptureDraft } from "../../types/voiceCapture";
 import {
   sparcForceSyncAnnouncement,
   syncAnnouncement,
@@ -79,6 +82,7 @@ export function AppLayout({ children }: PropsWithChildren) {
   const navigate = useNavigate();
   const repositorySync = useRepositorySync();
   const importInputRef = useRef<HTMLInputElement>(null);
+  const voiceCommandHandlerRef = useRef<() => void>(() => {});
   const weekRange = useWeekRange();
   const [isWidgetWindow, setIsWidgetWindow] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
@@ -106,6 +110,14 @@ export function AppLayout({ children }: PropsWithChildren) {
     refetchInterval: 5_000,
     retry: false,
   });
+  const voiceParseContext = useMemo(
+    () => ({
+      projects: (projectsQuery.data ?? [])
+        .filter((project) => project.status === "active")
+        .map((project) => ({ id: project.id, name: project.name })),
+    }),
+    [projectsQuery.data],
+  );
   const sparcForceStatusQuery = useQuery({
     queryKey: ["sparcForceIntegrationStatus"],
     queryFn: getSparcForceIntegrationStatus,
@@ -356,13 +368,30 @@ export function AppLayout({ children }: PropsWithChildren) {
     return false;
   }
 
+  async function showVoiceCaptureReview(draft: VoiceCaptureDraft) {
+    try {
+      await showQuickCapture();
+      window.setTimeout(() => {
+        void emit("quick-capture://voice-draft", draft);
+      }, 120);
+      setIsCommandPaletteOpen(false);
+      return true;
+    } catch (error) {
+      toast.error(
+        "Voice capture failed",
+        error instanceof Error ? error.message : "Could not open Quick Capture.",
+      );
+      return false;
+    }
+  }
+
   async function handleVoiceCommand() {
     if (speech.status === "listening") {
       speech.stopVoiceCommand();
       return;
     }
 
-    const result = await speech.startVoiceCommand();
+    const result = await speech.startVoiceCommand({ localOnly: true });
     if (!result) {
       if (speech.error) {
         toast.error("Voice command failed", speech.error);
@@ -370,13 +399,26 @@ export function AppLayout({ children }: PropsWithChildren) {
       return;
     }
 
-    const command = normalizeVoiceTranscript(result.transcript);
+    const command = normalizeVoiceTranscript(result.transcript, voiceParseContext);
     if (command.kind === "unknown") {
-      toast.info("Voice command not recognized", result.transcript);
-      speech.announce("I could not match that to a WorkTrace command.", {
-        category: "general",
-        interrupt: true,
-      });
+      if (await showVoiceCaptureReview(parseVoiceCaptureDraft(result.transcript, voiceParseContext))) {
+        toast.info("Review voice capture", "Choose task or manual log before saving.");
+        speech.announce("Review the captured transcript before saving.", {
+          category: "general",
+          interrupt: true,
+        });
+      }
+      return;
+    }
+
+    if (command.kind === "capture") {
+      if (await showVoiceCaptureReview(command.draft)) {
+        toast.success("Voice capture ready", command.label);
+        speech.announce("Voice capture is ready to review.", {
+          category: "general",
+          interrupt: true,
+        });
+      }
       return;
     }
 
@@ -408,6 +450,12 @@ export function AppLayout({ children }: PropsWithChildren) {
       speech.announce(command.label, { category: "general", interrupt: true });
     }
   }
+
+  useEffect(() => {
+    voiceCommandHandlerRef.current = () => {
+      void handleVoiceCommand();
+    };
+  });
 
   const commandActions = useMemo(
     () => [
@@ -466,6 +514,16 @@ export function AppLayout({ children }: PropsWithChildren) {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setIsCommandPaletteOpen((isOpen) => !isOpen);
+        return;
+      }
+
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        event.shiftKey &&
+        event.key.toLowerCase() === "m"
+      ) {
+        event.preventDefault();
+        voiceCommandHandlerRef.current();
       }
     };
 
@@ -482,6 +540,7 @@ export function AppLayout({ children }: PropsWithChildren) {
       queryClient.invalidateQueries({ queryKey: ["projectStats"] });
       queryClient.invalidateQueries({ queryKey: ["weekSummary"] });
       queryClient.invalidateQueries({ queryKey: ["reports"] });
+      queryClient.invalidateQueries({ queryKey: ["weeklyTasks"] });
     }).then((dispose) => {
       unlisten = dispose;
     }).catch(() => {});
@@ -788,6 +847,31 @@ export function AppLayout({ children }: PropsWithChildren) {
                   <ListTodo className="h-4 w-4" />
                   Widget
                 </button>
+                {speech.isVoiceCommandAvailable ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleVoiceCommand()}
+                    disabled={speech.status === "transcribing"}
+                    title="Voice capture (Ctrl + Shift + M)"
+                    className={[
+                      "inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold shadow-[var(--wt-control-shadow)] transition-[background-color,border-color,transform] duration-150 active:scale-[0.96] disabled:scale-100 disabled:opacity-60",
+                      speech.status === "listening"
+                        ? "border-red-500/25 bg-red-500/10 text-red-100 hover:bg-red-500/15"
+                        : "border-cyan-500/20 bg-cyan-500/10 text-cyan-100 hover:border-cyan-400/30 hover:bg-cyan-500/15",
+                    ].join(" ")}
+                  >
+                    {speech.status === "listening" ? (
+                      <Square className="h-4 w-4" />
+                    ) : (
+                      <Mic className="h-4 w-4" />
+                    )}
+                    {speech.status === "listening"
+                      ? "Stop"
+                      : speech.status === "transcribing"
+                        ? "Transcribing"
+                        : "Voice"}
+                  </button>
+                ) : null}
                 <div className="wt-control flex items-center gap-2 rounded-xl px-3 py-2">
                   <ProfileAvatar
                     imageUrl={profileImageUrl}
@@ -959,6 +1043,7 @@ function ImmersiveFocusBar({
     </div>
   );
 }
+
 function ProfileAvatar({
   imageUrl,
   name,
@@ -1014,6 +1099,7 @@ function formatElapsedTime(seconds: number) {
   const remainder = seconds % 60;
   return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${remainder.toString().padStart(2, "0")}`;
 }
+
 function initialsForName(value: string) {
   const parts = value
     .trim()

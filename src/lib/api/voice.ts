@@ -3,6 +3,7 @@ import { callCommand } from "./client";
 export type TranscribeVoiceCommandInput = {
   audioBytes: number[];
   mimeType: string;
+  localOnly?: boolean;
 };
 
 export type TranscribeVoiceCommandResult = {
