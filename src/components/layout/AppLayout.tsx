@@ -4,6 +4,7 @@ import {
   CalendarDays,
   Download,
   FileJson,
+  Focus,
   Home,
   BookOpen,
   ClipboardEdit,
@@ -20,6 +21,7 @@ import {
   Gauge,
   RefreshCw,
   ArrowUpCircle,
+  Square,
 } from "lucide-react";
 import type { PropsWithChildren } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
@@ -29,6 +31,7 @@ import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listActivity } from "../../lib/api/activity";
+import { getActiveFocusSession, stopFocusSession } from "../../lib/api/focusSessions";
 import { getSparcForceIntegrationStatus, syncSparcForce } from "../../lib/api/sparcForce";
 import { listProjects } from "../../lib/api/projects";
 import { exportSettingsToFile, getSettings, importSettings } from "../../lib/api/settings";
@@ -97,6 +100,12 @@ export function AppLayout({ children }: PropsWithChildren) {
     queryFn: listProjects,
     staleTime: 60_000,
   });
+  const activeFocusQuery = useQuery({
+    queryKey: ["focusSession", "active"],
+    queryFn: getActiveFocusSession,
+    refetchInterval: 5_000,
+    retry: false,
+  });
   const sparcForceStatusQuery = useQuery({
     queryKey: ["sparcForceIntegrationStatus"],
     queryFn: getSparcForceIntegrationStatus,
@@ -119,6 +128,25 @@ export function AppLayout({ children }: PropsWithChildren) {
       toast.error(
         "Todo widget failed",
         error instanceof Error ? error.message : "Could not toggle the todo widget.",
+      );
+    },
+  });
+  const stopFocusMutation = useMutation({
+    mutationFn: (id: string) =>
+      stopFocusSession(id, {
+        createManualLog: false,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["focusSession"] });
+      await queryClient.invalidateQueries({ queryKey: ["focusSessions"] });
+      await queryClient.invalidateQueries({ queryKey: ["todayCommandCenter"] });
+      toast.success("Focus session stopped");
+      speech.announce("Focus session stopped.", { category: "focus", interrupt: true });
+    },
+    onError: (error) => {
+      toast.error(
+        "Stop focus failed",
+        error instanceof Error ? error.message : "Focus session could not be stopped.",
       );
     },
   });
@@ -223,6 +251,8 @@ export function AppLayout({ children }: PropsWithChildren) {
       ...localReleases.filter((release) => release.version !== update.latestVersion),
     ];
   }, [checkForUpdateMutation.data, releaseNotesQuery.data?.releases]);
+  const activeFocusSession = activeFocusQuery.data ?? null;
+  const isFocusModeActive = Boolean(activeFocusSession);
 
   function openProjectsWorkspaceScan() {
     navigate("/projects", { state: { openWorkspaceScan: true } });
@@ -533,7 +563,11 @@ export function AppLayout({ children }: PropsWithChildren) {
   }, [checkForUpdateMutation, isWhatsNewOpen]);
 
   return (
-    <div className="h-screen overflow-hidden bg-[var(--wt-bg)] text-[var(--wt-text)]">
+    <div
+      className={`h-screen overflow-hidden bg-[var(--wt-bg)] text-[var(--wt-text)] ${
+        isFocusModeActive ? "wt-focus-mode-active" : ""
+      }`}
+    >
       <div
         className="fixed inset-0"
         style={{
@@ -544,7 +578,7 @@ export function AppLayout({ children }: PropsWithChildren) {
       <div className="relative flex h-screen flex-col overflow-hidden">
         <TitleBar />
         <div className="flex min-h-0 flex-1 overflow-hidden">
-          <aside className="m-2 mt-0 hidden min-h-0 w-[236px] shrink-0 flex-col rounded-lg border border-[var(--wt-border)] bg-[var(--wt-shell)] p-3 shadow-[var(--wt-panel-shadow)] lg:flex">
+          <aside className="wt-focus-muted m-2 mt-0 hidden min-h-0 w-[236px] shrink-0 flex-col rounded-lg border border-[var(--wt-border)] bg-[var(--wt-shell)] p-3 shadow-[var(--wt-panel-shadow)] lg:flex">
             <div className="mb-5 rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface)] p-3 shadow-[var(--wt-control-shadow)]">
               <div className="flex items-center gap-2.5">
                 <img
@@ -664,7 +698,7 @@ export function AppLayout({ children }: PropsWithChildren) {
               </div>
             ) : null}
 
-            <nav className="mb-3 flex shrink-0 gap-2 overflow-x-auto rounded-lg border border-[var(--wt-border)] bg-[var(--wt-surface)] p-2 shadow-[var(--wt-control-shadow)] lg:hidden">
+            <nav className="wt-focus-muted mb-3 flex shrink-0 gap-2 overflow-x-auto rounded-lg border border-[var(--wt-border)] bg-[var(--wt-surface)] p-2 shadow-[var(--wt-control-shadow)] lg:hidden">
               {navItems.map((item) => (
                 <NavLink
                   key={item.href}
@@ -686,7 +720,7 @@ export function AppLayout({ children }: PropsWithChildren) {
                 </NavLink>
               ))}
             </nav>
-            <header className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
+            <header className="wt-focus-muted mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
               <div className="wt-control flex items-center gap-2.5 rounded-xl px-3 py-2 text-xs text-[var(--wt-text-muted)]">
                 <CalendarDays className="h-4 w-4 text-[var(--wt-accent-text)]" />
                 {weekRange.label}
@@ -770,12 +804,22 @@ export function AppLayout({ children }: PropsWithChildren) {
               </div>
             </header>
 
-            <section className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden pr-1">
+            <section className="wt-focus-page min-h-0 flex-1 overflow-y-auto overflow-x-hidden pr-1">
               <div className="mx-auto w-full max-w-[1680px] pb-6">{children}</div>
             </section>
           </main>
         </div>
       </div>
+      {activeFocusSession ? (
+        <ImmersiveFocusBar
+          title={activeFocusSession.title}
+          context={activeFocusSession.projectName ?? activeFocusSession.taskTitle ?? "General focus"}
+          startedAt={activeFocusSession.startedAt}
+          isStopping={stopFocusMutation.isPending}
+          onOpenFocus={() => navigate("/", { state: { openFocus: true } })}
+          onStop={() => stopFocusMutation.mutate(activeFocusSession.id)}
+        />
+      ) : null}
       <CommandPalette
         isOpen={isCommandPaletteOpen}
         onClose={() => setIsCommandPaletteOpen(false)}
@@ -861,6 +905,60 @@ export function AppLayout({ children }: PropsWithChildren) {
   );
 }
 
+function ImmersiveFocusBar({
+  title,
+  context,
+  startedAt,
+  isStopping,
+  onOpenFocus,
+  onStop,
+}: {
+  title: string;
+  context: string;
+  startedAt: string;
+  isStopping: boolean;
+  onOpenFocus: () => void;
+  onStop: () => void;
+}) {
+  const elapsed = useElapsedSeconds(startedAt);
+
+  return (
+    <div className="pointer-events-none fixed inset-x-3 bottom-3 z-[9000] flex justify-center sm:inset-x-4">
+      <div className="wt-focus-bar pointer-events-auto flex w-full max-w-4xl items-center justify-between gap-3 rounded-2xl border border-emerald-300/25 bg-[color-mix(in_oklch,var(--wt-bg)_82%,oklch(0.24_0.06_170))] px-3 py-3 shadow-[0_18px_60px_rgba(2,6,23,0.42),inset_0_1px_0_rgba(255,255,255,0.10)] sm:px-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-emerald-200/25 bg-emerald-300/12 text-emerald-100">
+            <Focus className="h-[18px] w-[18px]" />
+          </span>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-[var(--wt-text-strong)]">{title}</p>
+            <p className="mt-0.5 truncate text-xs text-[var(--wt-text-muted)]">{context}</p>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="hidden min-w-[88px] rounded-xl border border-white/10 bg-slate-950/45 px-3 py-2 text-center text-sm font-semibold text-emerald-100 tabular-nums sm:inline-block">
+            {formatElapsedTime(elapsed)}
+          </span>
+          <button
+            type="button"
+            onClick={onOpenFocus}
+            className="inline-flex min-h-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.035] px-3 text-xs font-semibold text-slate-200 transition-[background-color,border-color,color,transform] duration-150 ease-out hover:border-emerald-200/25 hover:bg-emerald-300/10 hover:text-emerald-100 active:scale-[0.96]"
+          >
+            Focus
+          </button>
+          <button
+            type="button"
+            onClick={onStop}
+            disabled={isStopping}
+            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-rose-400/35 bg-rose-600 px-3 text-xs font-semibold text-white shadow-[0_10px_24px_rgba(225,29,72,0.26)] transition-[background-color,border-color,box-shadow,transform] duration-150 ease-out hover:bg-rose-500 active:scale-[0.96] disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <Square className="h-3.5 w-3.5" />
+            {isStopping ? "Stopping" : "Stop"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 function ProfileAvatar({
   imageUrl,
   name,
@@ -893,6 +991,29 @@ function ProfileAvatar({
   );
 }
 
+function useElapsedSeconds(startedAt?: string | null) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!startedAt) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [startedAt]);
+
+  return useMemo(() => {
+    if (!startedAt) return 0;
+    const started = new Date(startedAt).getTime();
+    if (Number.isNaN(started)) return 0;
+    return Math.max(0, Math.floor((now - started) / 1_000));
+  }, [now, startedAt]);
+}
+
+function formatElapsedTime(seconds: number) {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainder = seconds % 60;
+  return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${remainder.toString().padStart(2, "0")}`;
+}
 function initialsForName(value: string) {
   const parts = value
     .trim()

@@ -715,8 +715,10 @@ export function TodayPage() {
     });
   }, [onboardingProgress.isComplete, settingsQuery.data?.onboardingCompleted]);
 
+  const isFocusModeActive = Boolean(activeFocusQuery.data);
+
   return (
-    <div className="space-y-4">
+    <div className={`wt-focus-page-content space-y-4 ${isFocusModeActive ? "wt-today-focus-active" : ""}`}>
       {showOnboardingEntry ? (
         <OnboardingEntryPanel
           isPending={onboardingMutation.isPending}
@@ -733,7 +735,7 @@ export function TodayPage() {
         />
       ) : null}
 
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="wt-focus-muted flex flex-wrap items-center justify-between gap-4">
         <div className="flex min-w-0 flex-wrap items-center gap-3">
           <h1 className="text-2xl font-semibold tracking-tight text-white">Today</h1>
           <span className="inline-flex h-9 items-center gap-2 rounded-lg border border-white/10 bg-slate-950/45 px-3 text-xs font-medium text-slate-200 tabular-nums">
@@ -783,7 +785,7 @@ export function TodayPage() {
       ) : null}
 
       <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="space-y-4">
+        <div className="wt-focus-muted space-y-4">
           <TodayCommandCenterPanel
             todayDate={today.date}
             commandCenter={commandCenterQuery.data}
@@ -944,7 +946,7 @@ export function TodayPage() {
         </div>
 
         <aside className="space-y-4">
-          <div id="focus-session-panel">
+          <div id="focus-session-panel" className={isFocusModeActive ? "wt-focus-primary-region" : ""}>
             <TodayFocusPanel
               activeSession={activeFocusQuery.data}
               focusGoalMinutes={commandCenterQuery.data?.focusGoalMinutes ?? 240}
@@ -967,6 +969,7 @@ export function TodayPage() {
               }
             />
           </div>
+          <div className="wt-focus-muted space-y-4">
           <PriorityReminderPanel
             reminders={activePriorityReminders}
             isPending={snoozeReminderMutation.isPending || dismissPriorityReminderMutation.isPending}
@@ -999,6 +1002,7 @@ export function TodayPage() {
               <ReadinessRow done={blockers.length === 0} label="Blockers reviewed" />
             </div>
           </Panel>
+          </div>
         </aside>
       </div>
 
@@ -1599,7 +1603,9 @@ function TodayFocusPanel({
   const focusPercent = Math.min(100, Math.round((focusActualMinutes / Math.max(focusGoalMinutes, 1)) * 100));
 
   return (
-    <Panel className="border-emerald-300/15 bg-[linear-gradient(180deg,rgba(8,33,38,0.72),rgba(6,18,35,0.92))] p-4">
+    <Panel className={`wt-focus-primary border-emerald-300/15 bg-[linear-gradient(180deg,rgba(8,33,38,0.72),rgba(6,18,35,0.92))] p-4 ${
+      activeSession ? "shadow-[0_24px_72px_rgba(6,95,70,0.26),inset_0_1px_0_rgba(255,255,255,0.08)]" : ""
+    }`}>
       <div className="mb-4 flex items-center justify-between gap-3">
         <h2 className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-300">Focus Session</h2>
         <Badge tone={activeSession ? "green" : "slate"}>{activeSession ? "Active" : "Idle"}</Badge>
@@ -1610,14 +1616,14 @@ function TodayFocusPanel({
           <p className="text-xs text-slate-400">Focused on</p>
           <p className="mt-2 text-base font-semibold leading-6 text-white">{activeSession.title}</p>
           <p className="mt-1 text-xs text-slate-500">{activeSession.projectName ?? activeSession.taskTitle ?? "General focus"}</p>
-          <p className="mt-5 text-4xl font-semibold tracking-tight text-slate-100 tabular-nums">{formatElapsed(elapsed)}</p>
+          <p className="mt-6 min-h-[56px] text-5xl font-semibold tracking-normal text-emerald-50 tabular-nums sm:text-6xl">{formatElapsed(elapsed)}</p>
           <p className="mt-1 text-xs text-slate-500">Started {formatMeetingTime(activeSession.startedAt)}</p>
-          <div className="mt-4 grid grid-cols-2 gap-2">
-            <Button variant="primary" onClick={onStop} disabled={isPending} className="border-rose-500/35 bg-rose-600 hover:bg-rose-500">
+          <div className="mt-5 grid grid-cols-2 gap-2">
+            <Button variant="primary" onClick={onStop} disabled={isPending} className="h-11 border-rose-500/35 bg-rose-600 hover:bg-rose-500">
               <Square className="h-4 w-4" />
               Stop
             </Button>
-            <Button variant="ghost" onClick={onCancel} disabled={isPending}>
+            <Button variant="ghost" onClick={onCancel} disabled={isPending} className="h-11">
               <X className="h-4 w-4" />
               Cancel
             </Button>

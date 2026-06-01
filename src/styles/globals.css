@@ -324,6 +324,53 @@ li {
   color: var(--wt-accent-strong) !important;
 }
 
+.wt-focus-muted,
+.wt-focus-page {
+  transition-property: opacity, filter, transform, background-color, border-color;
+  transition-duration: 220ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+.wt-focus-mode-active .wt-focus-muted {
+  opacity: 0.34;
+  filter: saturate(0.65) blur(1.5px);
+}
+
+.wt-focus-mode-active .wt-focus-muted:hover,
+.wt-focus-mode-active .wt-focus-muted:focus-within {
+  opacity: 0.74;
+  filter: saturate(0.82) blur(0.5px);
+}
+
+.wt-focus-mode-active .wt-focus-page {
+  padding-bottom: 5.75rem;
+}
+
+.wt-today-focus-active .wt-focus-primary-region {
+  position: sticky;
+  top: 0;
+  z-index: 12;
+}
+
+.wt-today-focus-active .wt-focus-primary {
+  border-color: color-mix(in oklch, var(--wt-success) 34%, transparent);
+  background:
+    radial-gradient(circle at 70% 0%, color-mix(in oklch, var(--wt-success) 16%, transparent), transparent 34%),
+    linear-gradient(180deg, color-mix(in oklch, oklch(0.24 0.06 170) 62%, transparent), var(--wt-surface-strong));
+  transform: translateY(-1px);
+}
+
+.wt-focus-bar {
+  backdrop-filter: blur(18px) saturate(1.12);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wt-focus-muted,
+  .wt-focus-page {
+    transition-duration: 1ms;
+  }
+}
+
 [data-theme="light"] :where(
   [class*="bg-black"],
   [class*="bg-slate-950"],
