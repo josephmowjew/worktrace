@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use chrono::{Datelike, NaiveDate, NaiveDateTime};
+use chrono::{Datelike, Local, NaiveDate, NaiveDateTime};
 
 use crate::domain::activity::{ActivityItem, ListActivityInput};
 use crate::domain::calendar::ListCalendarEventsInput;
@@ -625,8 +625,11 @@ fn meeting_gap_insights(
 }
 
 fn stale_task_insights(tasks: &[WeeklyTask], to: &str, surface: &str) -> Vec<FrictionInsight> {
-    let Some(anchor) = parse_date(to) else {
-        return Vec::new();
+    let today = Local::now().date_naive();
+    let to_date = parse_date(to);
+    let anchor = match to_date {
+        Some(d) if d < today => d,
+        _ => today,
     };
     let stale = tasks
         .iter()
@@ -1545,6 +1548,24 @@ mod tests {
             insights[0].evidence_items[0].source_type,
             FrictionEvidenceSourceType::WeeklyTask
         ));
+    }
+
+    #[test]
+    fn stale_tasks_do_not_flag_recent_in_progress_when_to_is_future() {
+        let today = Local::now().date_naive();
+        let fresh_date = (today - chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
+        let future_end = (today + chrono::Duration::days(5)).format("%Y-%m-%d").to_string();
+        let tasks = vec![task(
+            "task_fresh",
+            "Setup Sparc HR",
+            WeeklyTaskStatus::InProgress,
+            &fresh_date,
+        )];
+        let insights = stale_task_insights(&tasks, &future_end, "friction");
+        assert!(
+            insights.is_empty(),
+            "task created yesterday should not be stale just because `to` is in the future"
+        );
     }
 
     #[test]
