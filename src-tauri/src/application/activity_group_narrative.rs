@@ -310,7 +310,20 @@ impl<'a> GroupNarrativeSynthesizer<'a> {
                     .is_empty()
                     || !overlap(&terms.issue_tokens, &memory_terms.issue_tokens).is_empty()
                     || overlap_ratio(&terms.module_terms, &memory_terms.module_terms) >= 0.35;
-                (score >= 0.48 && (same_project || strong_anchor)).then_some((score, memory))
+                let current_is_release = release_evidence_terms(terms);
+                let memory_is_release =
+                    release_evidence_terms(&memory_terms) || release_title(&memory.edited_title);
+                let release_safe = !memory_is_release || current_is_release;
+                let release_anchor = same_project && current_is_release && memory_is_release;
+                let threshold = if release_anchor {
+                    0.14
+                } else if strong_anchor {
+                    0.48
+                } else {
+                    0.62
+                };
+                (release_safe && score >= threshold && (same_project || strong_anchor))
+                    .then_some((score, memory))
             })
             .max_by(|left, right| left.0.total_cmp(&right.0))
             .map(|(_, memory)| memory)
@@ -413,6 +426,14 @@ impl<'a> GroupNarrativeSynthesizer<'a> {
                 branch,
                 0.78,
                 "Candidate from dominant branch phrase",
+            );
+        }
+        if architecture_foundation_work(terms) {
+            push(
+                "architecture_pattern",
+                "application architecture foundation".to_string(),
+                0.88,
+                "Candidate from repeated architecture and foundation setup evidence",
             );
         }
         if release_or_updater_work(
@@ -917,6 +938,9 @@ fn known_subject_phrase(subject: &str) -> Option<String> {
     {
         return Some("contract attachments".to_string());
     }
+    if architecture_subject_phrase(&lower) {
+        return Some("application architecture foundation".to_string());
+    }
     None
 }
 
@@ -935,6 +959,8 @@ fn infer_action(terms: &NarrativeEvidenceTerms) -> &'static str {
         "Prepared"
     } else if contains_any(&subject_branch_text, &["remove", "delete", "drop"]) {
         "Removed"
+    } else if architecture_foundation_work(terms) {
+        "Added"
     } else if contains_any(
         &subject_branch_text,
         &["fix", "bug", "issue", "error", "regression"],
@@ -976,16 +1002,90 @@ fn release_or_updater_work(
     path_terms: &str,
     change_terms: &str,
 ) -> bool {
+    let support_text = format!("{path_terms} {change_terms}");
+    let subject_has_release_intent = contains_any(subject_branch_text, &["signed windows"])
+        || (contains_any(subject_branch_text, &["release", "v0"])
+            && contains_any(subject_branch_text, &["prepare", "version", "changelog"]))
+        || (contains_any(subject_branch_text, &["prepare", "wire"])
+            && contains_any(subject_branch_text, &["updater", "artifact"]));
+    let support_has_release_surface = contains_any(
+        &support_text,
+        &["updater", "manifest", "changelog", "latest", "artifact"],
+    );
+
+    subject_has_release_intent && support_has_release_surface
+}
+
+fn release_evidence_terms(terms: &NarrativeEvidenceTerms) -> bool {
+    release_or_updater_work(
+        &[
+            terms.commit_subjects.join(" "),
+            terms.branch_phrases.join(" "),
+            terms.source_titles.join(" "),
+        ]
+        .join(" ")
+        .to_lowercase(),
+        &terms.path_terms.join(" ").to_lowercase(),
+        &terms.change_terms.join(" ").to_lowercase(),
+    )
+}
+
+fn release_title(title: &str) -> bool {
+    let lower = title.to_lowercase();
+    contains_any(&lower, &["release", "updater", "signed windows"])
+}
+
+fn architecture_foundation_work(terms: &NarrativeEvidenceTerms) -> bool {
+    let subject_text = terms.commit_subjects.join(" ").to_lowercase();
+    let path_text = terms.path_terms.join(" ").to_lowercase();
+    let module_text = terms.module_terms.join(" ").to_lowercase();
+    let hits = count_matches(
+        &subject_text,
+        &[
+            "package versions",
+            "startup composition",
+            "error handling",
+            "correlation ids",
+            "health checks",
+            "domain base",
+            "domain event",
+            "dbcontext",
+            "db context",
+            "entity framework",
+            "ef core",
+        ],
+    );
+    hits >= 3
+        || (hits >= 2
+            && contains_any(
+                &format!("{subject_text} {path_text} {module_text}"),
+                &[
+                    "domain",
+                    "infrastructure",
+                    "startup",
+                    "dbcontext",
+                    "architecture",
+                ],
+            ))
+}
+
+fn architecture_subject_phrase(subject: &str) -> bool {
     contains_any(
-        subject_branch_text,
-        &["release", "v0", "version", "signed windows"],
-    ) || (contains_any(subject_branch_text, &["prepare", "wire"])
-        && contains_any(
-            &format!("{subject_branch_text} {path_terms} {change_terms}"),
-            &["updater", "manifest", "changelog"],
-        ))
-        || (contains_any(path_terms, &["updater", "manifest"])
-            && contains_any(subject_branch_text, &["signed", "artifact", "endpoint"]))
+        subject,
+        &[
+            "package versions",
+            "startup composition",
+            "error handling",
+            "correlation ids",
+            "health checks",
+            "domain base",
+            "domain event",
+            "dbcontext",
+            "db context",
+            "entity framework",
+            "ef core",
+        ],
+    )
 }
 
 fn dominant_change_family(terms: &NarrativeEvidenceTerms) -> &'static str {
@@ -1156,13 +1256,6 @@ fn coherent_feature(action: &str, feature: &str, terms: &NarrativeEvidenceTerms)
             | ("Configured", "tauri")
             | ("Added", "tauri")
     ) || cleaned.split_whitespace().all(generic_feature_term);
-    if release_or_updater_work(
-        &terms.commit_subjects.join(" ").to_lowercase(),
-        &terms.path_terms.join(" ").to_lowercase(),
-        &terms.change_terms.join(" ").to_lowercase(),
-    ) {
-        return "signed windows updater release".to_string();
-    }
     if !awkward && high_quality_phrase(&cleaned) {
         return cleaned;
     }
@@ -1450,6 +1543,14 @@ mod tests {
         }
     }
 
+    fn project_evidence(project_name: &str, terms: NarrativeEvidenceTerms) -> NarrativeEvidence {
+        NarrativeEvidence {
+            project_id: Some("p1".to_string()),
+            project_name: Some(project_name.to_string()),
+            terms,
+        }
+    }
+
     #[test]
     fn weak_subjects_do_not_dominate_titles() {
         let narrative = GroupNarrativeSynthesizer::new(
@@ -1581,6 +1682,139 @@ mod tests {
             narrative.title,
             "Sparc Force - Prepared Signed Windows Updater Release"
         );
+    }
+
+    #[test]
+    fn architecture_setup_commits_do_not_become_release_work() {
+        let narrative = GroupNarrativeSynthesizer::new(
+            &[project_evidence(
+                "Sparc-HR-New",
+                NarrativeEvidenceTerms {
+                    branch_phrases: branch_phrases_from_ref(Some("master")),
+                    commit_subjects: vec![
+                        "PH02-001 Centralize package versions".to_string(),
+                        "PH02-002 Configure startup composition".to_string(),
+                        "PH02-003 Add safe error handling and correlation IDs".to_string(),
+                        "PH02-004 Add health checks".to_string(),
+                        "PH03-001 Add domain base interfaces".to_string(),
+                        "PH03-002 Add domain entities".to_string(),
+                        "PH03-003 Add domain event primitives".to_string(),
+                        "PH03-004 Add aggregate root base".to_string(),
+                        "PH04-001 Configure EF Core MySQL DbContext".to_string(),
+                        "PH04-002 Add identity model configuration".to_string(),
+                        "PH04-003 Add repository abstractions".to_string(),
+                        "PH04-004 Add database migrations".to_string(),
+                        "PH04-005 Add infrastructure registration".to_string(),
+                    ],
+                    module_terms: vec![
+                        "domain".to_string(),
+                        "infrastructure".to_string(),
+                        "application".to_string(),
+                    ],
+                    path_terms: vec![
+                        "domain".to_string(),
+                        "infrastructure".to_string(),
+                        "startup".to_string(),
+                        "dbcontext".to_string(),
+                    ],
+                    change_terms: vec!["source".to_string(), "config".to_string()],
+                    ..NarrativeEvidenceTerms::default()
+                },
+            )],
+            &[],
+        )
+        .synthesize();
+
+        assert_eq!(
+            narrative.title,
+            "Sparc HR New - Added Application Architecture Foundation"
+        );
+        assert_ne!(
+            narrative.title,
+            "Sparc HR New - Prepared Signed Windows Updater Release"
+        );
+        let candidates =
+            serde_json::from_str::<Vec<TitleCandidateDto>>(&narrative.candidates_json).unwrap();
+        assert!(!candidates
+            .iter()
+            .any(|candidate| candidate.strategy == "release_pattern"));
+    }
+
+    #[test]
+    fn release_memory_does_not_apply_to_architecture_evidence() {
+        let release_terms = NarrativeEvidenceTerms {
+            commit_subjects: vec![
+                "release: prepare v0.1.1".to_string(),
+                "fix: wire signed windows updater artifact in latest manifest".to_string(),
+            ],
+            path_terms: vec!["manifest".to_string(), "updater".to_string()],
+            change_terms: vec!["config".to_string()],
+            ..NarrativeEvidenceTerms::default()
+        };
+        let memory = ActivityGroupTitleMemory {
+            edited_title: "Sparc HR New - Prepared Signed Windows Updater Release".to_string(),
+            edited_summary: None,
+            project_id: Some("p1".to_string()),
+            evidence_terms: "signed windows updater release manifest".to_string(),
+            evidence_terms_json: Some(serde_json::to_string(&release_terms).unwrap()),
+        };
+
+        let architecture_terms = NarrativeEvidenceTerms {
+            commit_subjects: vec![
+                "PH02-001 Centralize package versions".to_string(),
+                "PH02-002 Configure startup composition".to_string(),
+                "PH03-001 Add domain base interfaces".to_string(),
+                "PH04-001 Configure EF Core MySQL DbContext".to_string(),
+            ],
+            module_terms: vec!["domain".to_string(), "infrastructure".to_string()],
+            path_terms: vec!["domain".to_string(), "dbcontext".to_string()],
+            change_terms: vec!["source".to_string(), "config".to_string()],
+            ..NarrativeEvidenceTerms::default()
+        };
+
+        let narrative = GroupNarrativeSynthesizer::new(
+            &[project_evidence("Sparc-HR-New", architecture_terms)],
+            &[memory],
+        )
+        .synthesize();
+
+        assert_ne!(
+            narrative.title,
+            "Sparc HR New - Prepared Signed Windows Updater Release"
+        );
+        assert_ne!(narrative.naming_strategy, "user_memory");
+    }
+
+    #[test]
+    fn release_memory_can_apply_to_similar_release_evidence() {
+        let release_terms = NarrativeEvidenceTerms {
+            commit_subjects: vec![
+                "release: prepare v0.1.1".to_string(),
+                "fix: wire signed windows updater artifact in latest manifest".to_string(),
+            ],
+            path_terms: vec!["manifest".to_string(), "updater".to_string()],
+            change_terms: vec!["config".to_string()],
+            ..NarrativeEvidenceTerms::default()
+        };
+        let memory = ActivityGroupTitleMemory {
+            edited_title: "Sparc HR New - Prepared Signed Windows Updater Release".to_string(),
+            edited_summary: None,
+            project_id: Some("p1".to_string()),
+            evidence_terms: "signed windows updater release manifest".to_string(),
+            evidence_terms_json: Some(serde_json::to_string(&release_terms).unwrap()),
+        };
+
+        let narrative = GroupNarrativeSynthesizer::new(
+            &[project_evidence("Sparc-HR-New", release_terms)],
+            &[memory],
+        )
+        .synthesize();
+
+        assert_eq!(
+            narrative.title,
+            "Sparc HR New - Prepared Signed Windows Updater Release"
+        );
+        assert_eq!(narrative.naming_strategy, "user_memory");
     }
 
     #[test]
