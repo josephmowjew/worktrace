@@ -1,11 +1,11 @@
 {
-  "version": "0.1.6",
-  "notes": "Added an updater smoke-test release so installed 0.1.5 builds can verify signed in-app updates end to end.\nConfirmed release packaging now embeds the updater public key and publishes a signed Windows updater bundle.",
-  "pub_date": "2026-05-30T20:45:00Z",
+  "version": "0.1.7",
+  "notes": "Added immersive focus mode, explicit focus targets, and a polished manual log workspace for smoother daily capture.\nAdded robust local voice capture review while keeping voice processing local-first.\nImproved workspace filtering and hardened native activity and attachment commands.\nFixed stale task detection and activity group title synthesis so reports stay anchored to real daily context.",
+  "pub_date": "2026-06-09T17:18:57Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUbndnaUhWc2ZhVUk5Q2FlbkJyZHJhR3JtSks0SXNHb05oU0pwNVI4UldXWjgra0l2R1E4SitGZkxRcWlnaDFoR25xMHVjcC9iRU5yKy95VkkzV1JzRDBKV3E3elhaSEE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwMTczNjEzCWZpbGU6V29ya1RyYWNlXzAuMS42X3g2NC1zZXR1cC5leGUKajMwSE53QW5ncmVFZmtDejQybS93VmozQ1IyTENjaGhXS0x0V1hHTGNwUVgwaU9JYXJ6bmo1clNwRHJ3R1Nqay9Nc2JuSkF5RjdYYUxESDFVZ2gxQ1E9PQo=",
-      "url": "https://github.com/josephmowjew/worktrace/releases/download/v0.1.6/WorkTrace_0.1.6_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUbndnaUhWc2ZhVUthZGF2cTlSWEcvNWt4ZnR1YXpHTThoYTFGTlZiTlhmNVo5REhUR3lsSTZCOGtVMnRwaVNiRzZtaWNEOWV0ZXBObE10N1JpbHYvazRuSFFTZjc5NGdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxMDI1NDkwCWZpbGU6V29ya1RyYWNlXzAuMS43X3g2NC1zZXR1cC5leGUKZHRlL3p2QzhyNUdKMFVadGNMd3R4M1FsV25sbktkVm92ZjJOSjkxV2k2STY5VEJNaG82TlBXRUcrREQ0eGFPaHpCb1l4TWdsWTkyZjhwNXlVa0VPQlE9PQo=",
+      "url": "https://github.com/josephmowjew/worktrace/releases/download/v0.1.7/WorkTrace_0.1.7_x64-setup.exe"
     }
   }
 }

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.7] - 2026-06-09
+- Added immersive focus mode, explicit focus targets, and a polished manual log workspace for smoother daily capture.
+- Added robust local voice capture review while keeping voice processing local-first.
+- Improved workspace filtering and hardened native activity and attachment commands.
+- Fixed stale task detection and activity group title synthesis so reports stay anchored to real daily context.
+
 ## [0.1.6] - 2026-05-30
 - Added an updater smoke-test release so installed 0.1.5 builds can verify signed in-app updates end to end.
 - Confirmed release packaging now embeds the updater public key and publishes a signed Windows updater bundle.

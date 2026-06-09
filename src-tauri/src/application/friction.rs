@@ -876,6 +876,7 @@ fn repeated_issue_insights(
     repeated.sort_by(|a, b| {
         repeated_score(&b.1)
             .cmp(&repeated_score(&a.1))
+            .then_with(|| b.0.split_whitespace().count().cmp(&a.0.split_whitespace().count()))
             .then_with(|| a.0.cmp(&b.0))
     });
     let Some((phrase, occurrences)) = repeated.first() else {

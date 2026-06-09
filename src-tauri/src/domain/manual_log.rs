@@ -1,7 +1,6 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "PascalCase")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActivityType {
     Meeting,
     Development,
@@ -17,6 +16,7 @@ pub enum ActivityType {
     Debugging,
     ClientCall,
     AdminTask,
+    Custom(String),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -78,7 +78,7 @@ pub struct UpdateManualLogInput {
 }
 
 impl ActivityType {
-    pub fn as_storage_value(&self) -> &'static str {
+    pub fn as_storage_value(&self) -> &str {
         match self {
             Self::Meeting => "Meeting",
             Self::Development => "Development",
@@ -94,30 +94,69 @@ impl ActivityType {
             Self::Debugging => "Debugging",
             Self::ClientCall => "Client Call",
             Self::AdminTask => "Admin Task",
+            Self::Custom(value) => value.as_str(),
+        }
+    }
+
+    fn as_wire_value(&self) -> &str {
+        match self {
+            Self::Meeting => "Meeting",
+            Self::Development => "Development",
+            Self::BugFix => "BugFix",
+            Self::Testing => "Testing",
+            Self::Deployment => "Deployment",
+            Self::Research => "Research",
+            Self::Documentation => "Documentation",
+            Self::Planning => "Planning",
+            Self::Support => "Support",
+            Self::CodeReview => "CodeReview",
+            Self::ClientFeedback => "ClientFeedback",
+            Self::Debugging => "Debugging",
+            Self::ClientCall => "ClientCall",
+            Self::AdminTask => "AdminTask",
+            Self::Custom(value) => value.as_str(),
         }
     }
 }
 
-impl TryFrom<String> for ActivityType {
-    type Error = String;
+impl Serialize for ActivityType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_wire_value())
+    }
+}
 
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        match value.as_str() {
-            "Meeting" => Ok(Self::Meeting),
-            "Development" => Ok(Self::Development),
-            "Bug Fix" => Ok(Self::BugFix),
-            "Testing" => Ok(Self::Testing),
-            "Deployment" => Ok(Self::Deployment),
-            "Research" => Ok(Self::Research),
-            "Documentation" => Ok(Self::Documentation),
-            "Planning" => Ok(Self::Planning),
-            "Support" => Ok(Self::Support),
-            "Code Review" => Ok(Self::CodeReview),
-            "Client Feedback" => Ok(Self::ClientFeedback),
-            "Debugging" => Ok(Self::Debugging),
-            "Client Call" => Ok(Self::ClientCall),
-            "Admin Task" => Ok(Self::AdminTask),
-            _ => Err(format!("unknown activity type: {value}")),
+impl<'de> Deserialize<'de> for ActivityType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(Self::from(value))
+    }
+}
+
+impl From<String> for ActivityType {
+    fn from(value: String) -> Self {
+        let trimmed = value.trim();
+        match trimmed {
+            "Meeting" => Self::Meeting,
+            "Development" => Self::Development,
+            "BugFix" | "Bug Fix" => Self::BugFix,
+            "Testing" => Self::Testing,
+            "Deployment" => Self::Deployment,
+            "Research" => Self::Research,
+            "Documentation" => Self::Documentation,
+            "Planning" => Self::Planning,
+            "Support" => Self::Support,
+            "CodeReview" | "Code Review" => Self::CodeReview,
+            "ClientFeedback" | "Client Feedback" => Self::ClientFeedback,
+            "Debugging" => Self::Debugging,
+            "ClientCall" | "Client Call" => Self::ClientCall,
+            "AdminTask" | "Admin Task" => Self::AdminTask,
+            _ => Self::Custom(trimmed.to_string()),
         }
     }
 }
