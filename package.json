@@ -14,7 +14,7 @@
     "preview": "vite preview",
     "test": "vitest --environment jsdom src/test",
     "test:run": "vitest run --environment jsdom src/test",
-    "tauri": "tauri",
+    "tauri": "powershell -ExecutionPolicy Bypass -File ./scripts/tauri.ps1",
     "tauri:dev": "powershell -ExecutionPolicy Bypass -File ./scripts/tauri-dev.ps1",
     "tauri:build": "powershell -ExecutionPolicy Bypass -File ./scripts/tauri-build.ps1",
     "tauri:test": "powershell -ExecutionPolicy Bypass -File ./scripts/tauri-test.ps1",

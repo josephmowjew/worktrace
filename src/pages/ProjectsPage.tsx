@@ -4,6 +4,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
   Archive,
+  ArrowRight,
   CheckCircle2,
   ChevronDown,
   EyeOff,
@@ -486,10 +487,14 @@ export function ProjectsPage() {
         sourceFilter === "all" ||
         (sourceFilter === "workspace" && Boolean(project.workspaceId)) ||
         (sourceFilter === "personal" && !project.workspaceId);
+      const matchesWorkspace =
+        sourceFilter !== "workspace" ||
+        !selectedWorkspaceId ||
+        project.workspaceId === selectedWorkspaceId;
       const matchesSearch =
         repositorySearchTokens.length === 0 || searchMatchedProjectIds.has(project.id);
 
-      return matchesStatus && matchesCategory && matchesClassification && matchesSource && matchesSearch;
+      return matchesStatus && matchesCategory && matchesClassification && matchesSource && matchesWorkspace && matchesSearch;
     });
   }, [
     projects,
@@ -497,6 +502,7 @@ export function ProjectsPage() {
     categoryFilter,
     classificationFilter,
     sourceFilter,
+    selectedWorkspaceId,
     repositorySearchTokens.length,
     searchMatchedProjectIds,
   ]);
@@ -666,6 +672,21 @@ export function ProjectsPage() {
 
   function showAllRepositories() {
     setRecentCommitLimit((current) => (current === 5 ? 50 : 5));
+  }
+
+  function goToProjectDetails(projectId: string) {
+    navigate(`/projects/${projectId}`);
+  }
+
+  function resetRepositoryFilters() {
+    setSearch("");
+    setStatusFilter("active");
+    setSourceFilter("all");
+    setSelectedWorkspaceId(null);
+    setCategoryFilter("all");
+    setClassificationFilter("all");
+    setSortBy("recentlyUpdated");
+    setCurrentPage(1);
   }
 
   return (
@@ -990,11 +1011,23 @@ export function ProjectsPage() {
                           .map((project) => (
                             <div
                               key={project.id}
-                              className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => goToProjectDetails(project.id)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  goToProjectDetails(project.id);
+                                }
+                              }}
+                              className="group flex cursor-pointer flex-wrap items-center justify-between gap-3 px-4 py-3 outline-none transition-[background-color,box-shadow] duration-150 hover:bg-blue-500/[0.06] focus-visible:bg-blue-500/[0.08] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-300/35"
+                              aria-label={`View details for ${project.name}`}
                             >
                               <div className="min-w-0">
                                 <div className="flex flex-wrap items-center gap-2">
-                                  <p className="font-semibold text-slate-100">{project.name}</p>
+                                  <p className="font-semibold text-slate-100 transition-colors group-hover:text-blue-100">
+                                    {project.name}
+                                  </p>
                                   <span
                                     className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold ${
                                       project.status === "active"
@@ -1012,7 +1045,15 @@ export function ProjectsPage() {
                                 </div>
                                 <p className="mt-1 truncate text-xs text-slate-500">{project.repoPath}</p>
                               </div>
-                              <div className="flex items-center gap-2">
+                              <div
+                                className="flex items-center gap-2"
+                                onClick={(event) => event.stopPropagation()}
+                                onKeyDown={(event) => event.stopPropagation()}
+                              >
+                                <span className="hidden items-center gap-1.5 px-2 text-xs font-semibold text-blue-200/80 transition-colors group-hover:text-blue-100 sm:inline-flex">
+                                  View details
+                                  <ArrowRight className="h-3.5 w-3.5" />
+                                </span>
                                 <Button variant="ghost" onClick={() => openEditForm(project)}>
                                   Edit
                                 </Button>
@@ -1130,11 +1171,54 @@ export function ProjectsPage() {
                 isSearching={search.trim().length > 0}
                 placeholder="Search repositories, paths, GitHub URLs, categories, or workspace names..."
                 chips={[
-                  { label: "All", icon: LayoutGrid, active: true },
-                  { label: "Repositories", icon: FolderKanban },
-                  { label: "Workspaces", icon: Layers },
-                  { label: "Branches", icon: GitBranch },
-                  { label: "Active", icon: CheckCircle2 },
+                  {
+                    label: "All",
+                    icon: LayoutGrid,
+                    active:
+                      sourceFilter === "all" &&
+                      !selectedWorkspaceId &&
+                      categoryFilter === "all" &&
+                      classificationFilter === "all" &&
+                      sortBy === "recentlyUpdated",
+                    onClick: resetRepositoryFilters,
+                  },
+                  {
+                    label: "Repositories",
+                    icon: FolderKanban,
+                    active: sourceFilter === "all" && !selectedWorkspaceId,
+                    onClick: () => {
+                      setSourceFilter("all");
+                      setSelectedWorkspaceId(null);
+                      setCurrentPage(1);
+                    },
+                  },
+                  {
+                    label: "Workspaces",
+                    icon: Layers,
+                    active: sourceFilter === "workspace",
+                    onClick: () => {
+                      setSourceFilter("workspace");
+                      setCurrentPage(1);
+                    },
+                  },
+                  {
+                    label: "Branches",
+                    icon: GitBranch,
+                    active: sortBy === "commits",
+                    onClick: () => {
+                      setSortBy("commits");
+                      setCurrentPage(1);
+                    },
+                  },
+                  {
+                    label: "Active",
+                    icon: CheckCircle2,
+                    active: statusFilter === "active",
+                    onClick: () => {
+                      setStatusFilter("active");
+                      setCurrentPage(1);
+                    },
+                  },
                 ]}
                 previewItems={repositorySearchPreviewItems}
                 previewTitle="Top repositories"
@@ -1160,6 +1244,9 @@ export function ProjectsPage() {
                 value={sourceFilter}
                 onChange={(v) => {
                   setSourceFilter(v as typeof sourceFilter);
+                  if (v !== "workspace") {
+                    setSelectedWorkspaceId(null);
+                  }
                   setCurrentPage(1);
                 }}
                 options={[
@@ -1168,6 +1255,23 @@ export function ProjectsPage() {
                   { value: "personal", label: "Personal" },
                 ]}
               />
+
+              {sourceFilter === "workspace" ? (
+                <FilterSelect
+                  value={selectedWorkspaceId ?? "all"}
+                  onChange={(v) => {
+                    setSelectedWorkspaceId(v === "all" ? null : v);
+                    setCurrentPage(1);
+                  }}
+                  options={[
+                    { value: "all", label: "All Workspaces" },
+                    ...workspaces.map((workspace) => ({
+                      value: workspace.id,
+                      label: workspace.name,
+                    })),
+                  ]}
+                />
+              ) : null}
 
               <FilterSelect
                 value={categoryFilter}
@@ -1208,15 +1312,10 @@ export function ProjectsPage() {
                 ]}
               />
 
-              {(search || statusFilter !== "active" || sourceFilter !== "all" || categoryFilter !== "all" || classificationFilter !== "all") && (
+              {(search || statusFilter !== "active" || sourceFilter !== "all" || selectedWorkspaceId || categoryFilter !== "all" || classificationFilter !== "all") && (
                 <button
                   onClick={() => {
-                    setSearch("");
-                    setStatusFilter("active");
-                    setSourceFilter("all");
-                    setCategoryFilter("all");
-                    setClassificationFilter("all");
-                    setCurrentPage(1);
+                    resetRepositoryFilters();
                   }}
                   className="rounded-lg px-3 py-2 text-xs font-medium text-blue-300 transition-colors hover:bg-white/10"
                 >
@@ -1393,6 +1492,8 @@ export function ProjectsPage() {
                       type="button"
                       onClick={() => {
                         setSelectedWorkspaceId(workspace.id);
+                        setSourceFilter("workspace");
+                        setCurrentPage(1);
                         scanWorkspaceMutation.mutate(workspace.id);
                       }}
                       className={`w-full rounded-xl border px-3 py-2 text-left transition ${
