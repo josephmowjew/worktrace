@@ -1,5 +1,5 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
 use std::collections::hash_map::DefaultHasher;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
 use chrono::{Datelike, Local, NaiveDate, NaiveDateTime};
@@ -106,14 +106,7 @@ impl FrictionService {
             .collect::<Vec<_>>();
         items.sort_by(|a, b| a.occurred_at.cmp(&b.occurred_at));
 
-        let graph = FrictionGraph::new(
-            items,
-            tasks,
-            manual_logs,
-            events,
-            focus_sessions,
-            reports,
-        );
+        let graph = FrictionGraph::new(items, tasks, manual_logs, events, focus_sessions, reports);
         let mut insights = graph.generate_insights(surface, &input.to);
 
         finalize_insights(
@@ -196,7 +189,11 @@ impl FrictionGraph {
         insights.extend(project_switching_insights(&self.activity, surface));
         insights.extend(context_switching_insights(&self.activity, surface));
         insights.extend(support_mode_insights(&self.manual_logs, surface));
-        insights.extend(meeting_gap_insights(&self.activity, &self.calendar_events, surface));
+        insights.extend(meeting_gap_insights(
+            &self.activity,
+            &self.calendar_events,
+            surface,
+        ));
         insights.extend(stale_task_insights(&self.tasks, to, surface));
         insights.extend(repeated_issue_insights(
             &self.activity,
@@ -275,7 +272,10 @@ fn activity_node(item: &ActivityItem) -> FrictionNode {
 
 fn task_node(task: &WeeklyTask) -> FrictionNode {
     let mut metrics = BTreeMap::new();
-    metrics.insert("estimated_minutes".to_string(), task.estimated_minutes.unwrap_or(0) as f64);
+    metrics.insert(
+        "estimated_minutes".to_string(),
+        task.estimated_minutes.unwrap_or(0) as f64,
+    );
     FrictionNode {
         key: format!("weekly_task:{}", task.id),
         source_type: FrictionEvidenceSourceType::WeeklyTask,
@@ -286,9 +286,13 @@ fn task_node(task: &WeeklyTask) -> FrictionNode {
         project_name: task.project_name.clone(),
         title: task.title.clone(),
         route: "/weekly-plan".to_string(),
-        tokens: meaningful_words(&format!("{} {}", task.title, task.details.clone().unwrap_or_default()))
-            .into_iter()
-            .collect(),
+        tokens: meaningful_words(&format!(
+            "{} {}",
+            task.title,
+            task.details.clone().unwrap_or_default()
+        ))
+        .into_iter()
+        .collect(),
         anchors: candidate_phrases(&task.title).into_iter().collect(),
         metrics,
     }
@@ -296,7 +300,10 @@ fn task_node(task: &WeeklyTask) -> FrictionNode {
 
 fn manual_log_node(log: &ManualLog) -> FrictionNode {
     let mut metrics = BTreeMap::new();
-    metrics.insert("duration_minutes".to_string(), log.duration_minutes.unwrap_or(0) as f64);
+    metrics.insert(
+        "duration_minutes".to_string(),
+        log.duration_minutes.unwrap_or(0) as f64,
+    );
     FrictionNode {
         key: format!("manual_log:{}", log.id),
         source_type: FrictionEvidenceSourceType::ManualLog,
@@ -346,10 +353,20 @@ fn focus_node(session: &crate::domain::focus_session::FocusSession) -> FrictionN
         project_name: session.project_name.clone(),
         title: session.title.clone(),
         route: "/".to_string(),
-        tokens: meaningful_words(&format!("{} {}", session.title, session.notes.clone().unwrap_or_default()))
+        tokens: meaningful_words(&format!(
+            "{} {}",
+            session.title,
+            session.notes.clone().unwrap_or_default()
+        ))
+        .into_iter()
+        .collect(),
+        anchors: session
+            .task_title
+            .as_deref()
+            .map(candidate_phrases)
+            .unwrap_or_default()
             .into_iter()
             .collect(),
-        anchors: session.task_title.as_deref().map(candidate_phrases).unwrap_or_default().into_iter().collect(),
         metrics,
     }
 }
@@ -392,7 +409,11 @@ fn suppress_duplicate_candidates(mut insights: Vec<FrictionInsight>) -> Vec<Fric
                     .collect::<Vec<_>>()
                     .join("|")
             };
-            let key = format!("{}:{}:{evidence_seed}", insight.kind_label(), insight.date.as_deref().unwrap_or("range"));
+            let key = format!(
+                "{}:{}:{evidence_seed}",
+                insight.kind_label(),
+                insight.date.as_deref().unwrap_or("range")
+            );
             seen.insert(key)
         })
         .collect()
@@ -474,9 +495,14 @@ fn context_switching_insights(items: &[ActivityItem], surface: &str) -> Vec<Fric
         .filter_map(|(date, day_items)| {
             let projects = day_items
                 .iter()
-                .map(|item| item.project_name.clone().unwrap_or_else(|| "General".to_string()))
+                .map(|item| {
+                    item.project_name
+                        .clone()
+                        .unwrap_or_else(|| "General".to_string())
+                })
                 .collect::<HashSet<_>>();
-            if day_items.len() < CONTEXT_BLOCK_THRESHOLD || projects.len() < CONTEXT_PROJECT_THRESHOLD
+            if day_items.len() < CONTEXT_BLOCK_THRESHOLD
+                || projects.len() < CONTEXT_PROJECT_THRESHOLD
             {
                 return None;
             }
@@ -498,8 +524,20 @@ fn context_switching_insights(items: &[ActivityItem], surface: &str) -> Vec<Fric
                     format!("{} projects or sources", projects.len()),
                 ],
                 vec![
-                    threshold_metric("blocks", "Blocks", day_items.len().to_string(), CONTEXT_BLOCK_THRESHOLD.to_string(), "above"),
-                    threshold_metric("sources", "Sources", projects.len().to_string(), CONTEXT_PROJECT_THRESHOLD.to_string(), "above"),
+                    threshold_metric(
+                        "blocks",
+                        "Blocks",
+                        day_items.len().to_string(),
+                        CONTEXT_BLOCK_THRESHOLD.to_string(),
+                        "above",
+                    ),
+                    threshold_metric(
+                        "sources",
+                        "Sources",
+                        projects.len().to_string(),
+                        CONTEXT_PROJECT_THRESHOLD.to_string(),
+                        "above",
+                    ),
                 ],
                 "View Activity",
                 "/activity",
@@ -538,7 +576,10 @@ fn support_mode_insights(logs: &[ManualLog], surface: &str) -> Vec<FrictionInsig
     if heavy_days.len() < SUPPORT_DAY_THRESHOLD {
         return Vec::new();
     }
-    let support_minutes = heavy_days.iter().map(|(_, (_, support))| *support).sum::<i64>();
+    let support_minutes = heavy_days
+        .iter()
+        .map(|(_, (_, support))| *support)
+        .sum::<i64>();
     vec![insight(
         surface,
         "support_mode",
@@ -556,9 +597,25 @@ fn support_mode_insights(logs: &[ManualLog], surface: &str) -> Vec<FrictionInsig
             .map(|(date, (total, support))| format!("{date}: {support} of {total} minutes"))
             .collect(),
         vec![
-            threshold_metric("qualifying_days", "Days", heavy_days.len().to_string(), SUPPORT_DAY_THRESHOLD.to_string(), "above"),
-            threshold_metric("support_ratio", "Support share", ">=40%".to_string(), "40%".to_string(), "above"),
-            metric("support_time", "Support time", format_minutes(support_minutes)),
+            threshold_metric(
+                "qualifying_days",
+                "Days",
+                heavy_days.len().to_string(),
+                SUPPORT_DAY_THRESHOLD.to_string(),
+                "above",
+            ),
+            threshold_metric(
+                "support_ratio",
+                "Support share",
+                ">=40%".to_string(),
+                "40%".to_string(),
+                "above",
+            ),
+            metric(
+                "support_time",
+                "Support time",
+                format_minutes(support_minutes),
+            ),
         ],
         "Open Manual Log",
         "/manual-log",
@@ -579,7 +636,10 @@ fn meeting_gap_insights(
         .filter_map(|item| parse_datetime(&item.occurred_at).map(|time| (time, item)))
         .collect::<Vec<_>>();
     let mut insights = Vec::new();
-    for event in events.iter().filter(|event| !event.is_cancelled && !event.all_day) {
+    for event in events
+        .iter()
+        .filter(|event| !event.is_cancelled && !event.all_day)
+    {
         let Some(end) = parse_datetime(&event.ends_at) else {
             continue;
         };
@@ -615,7 +675,13 @@ fn meeting_gap_insights(
                 format!("Meeting: {}", event.title),
                 format!("Gap: {}", format_minutes(gap)),
             ],
-            vec![threshold_metric("gap_minutes", "Gap", format_minutes(gap), format_minutes(MEETING_GAP_MINUTES), "above")],
+            vec![threshold_metric(
+                "gap_minutes",
+                "Gap",
+                format_minutes(gap),
+                format_minutes(MEETING_GAP_MINUTES),
+                "above",
+            )],
             "Open Today",
             "/",
             Some(date.clone()),
@@ -669,7 +735,11 @@ fn stale_task_insights(tasks: &[WeeklyTask], to: &str, surface: &str) -> Vec<Fri
             date: task.week_start_date.clone(),
             occurred_at: Some(task.updated_at.clone()),
             project_name: task.project_name.clone(),
-            detail: Some(format!("{} days open / {}", days, task.status.as_storage_value())),
+            detail: Some(format!(
+                "{} days open / {}",
+                days,
+                task.status.as_storage_value()
+            )),
             route: Some("/weekly-plan".to_string()),
             role: "primary".to_string(),
             observed_value: Some(days.to_string()),
@@ -686,7 +756,11 @@ fn stale_task_insights(tasks: &[WeeklyTask], to: &str, surface: &str) -> Vec<Fri
         "Some open work is old enough to deserve a decision: finish, carry, drop, or mark blocked.",
         "Review stale tasks before planning more work.",
         evidence_strings(&evidence_items),
-        vec![metric("stale_tasks", "Stale tasks", stale.len().to_string())],
+        vec![metric(
+            "stale_tasks",
+            "Stale tasks",
+            stale.len().to_string(),
+        )],
         "Review tasks",
         "/weekly-plan",
         None,
@@ -796,8 +870,7 @@ fn repeated_issue_insights(
     let mut repeated = candidates
         .into_iter()
         .filter(|(phrase, occurrences)| {
-            !completed_phrases.contains(phrase)
-                && strong_repeated_candidate(phrase, occurrences)
+            !completed_phrases.contains(phrase) && strong_repeated_candidate(phrase, occurrences)
         })
         .collect::<Vec<_>>();
     repeated.sort_by(|a, b| {
@@ -832,15 +905,28 @@ fn repeated_issue_insights(
         "Turn the repeated thread into one explicit task or blocker.",
         evidence_strings(&evidence_items),
         vec![
-            threshold_metric("records", "Records", occurrences.len().to_string(), REPEATED_ISSUE_OCCURRENCES.to_string(), "above"),
-            threshold_metric("days", "Days", evidence_dates.len().to_string(), REPEATED_ISSUE_DAYS.to_string(), "above"),
+            threshold_metric(
+                "records",
+                "Records",
+                occurrences.len().to_string(),
+                REPEATED_ISSUE_OCCURRENCES.to_string(),
+                "above",
+            ),
+            threshold_metric(
+                "days",
+                "Days",
+                evidence_dates.len().to_string(),
+                REPEATED_ISSUE_DAYS.to_string(),
+                "above",
+            ),
         ],
         "Review tasks",
         "/weekly-plan",
         None,
     );
     insight.evidence_items = evidence_items;
-    insight.primary_action = task_primary_action(&insight.id, &insight.evidence_items, Some(phrase));
+    insight.primary_action =
+        task_primary_action(&insight.id, &insight.evidence_items, Some(phrase));
     vec![insight]
 }
 
@@ -935,7 +1021,13 @@ fn late_report_insights(
         late.iter()
             .map(|report| format!("{} saved {}", report.title, date_part(&report.created_at)))
             .collect(),
-        vec![threshold_metric("late_reports", "Late reports", late.len().to_string(), "2".to_string(), "above")],
+        vec![threshold_metric(
+            "late_reports",
+            "Late reports",
+            late.len().to_string(),
+            "2".to_string(),
+            "above",
+        )],
         "Prepare report",
         "/reports",
         None,
@@ -956,7 +1048,13 @@ struct RepeatedOccurrence {
 impl RepeatedOccurrence {
     fn to_evidence_item(&self) -> FrictionEvidenceItem {
         FrictionEvidenceItem {
-            evidence_id: format!("{}:{}", source_label(&self.source_type).to_ascii_lowercase().replace(' ', "_"), self.source_id),
+            evidence_id: format!(
+                "{}:{}",
+                source_label(&self.source_type)
+                    .to_ascii_lowercase()
+                    .replace(' ', "_"),
+                self.source_id
+            ),
             source_type: self.source_type.clone(),
             source_id: self.source_id.clone(),
             title: self.title.clone(),
@@ -1116,7 +1214,12 @@ fn evidence_strings(items: &[FrictionEvidenceItem]) -> Vec<String> {
                 .as_deref()
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or("General");
-            format!("{} / {} / {}", item.date, source_label(&item.source_type), project)
+            format!(
+                "{} / {} / {}",
+                item.date,
+                source_label(&item.source_type),
+                project
+            )
         })
         .collect()
 }
@@ -1194,14 +1297,21 @@ fn finalize_insights(
             .as_ref()
             .map(|date| format!("day:{date}"))
             .unwrap_or_else(|| format!("range:{from}:{to}"));
-        insight.id = format!("friction:v2:{}:{scope_key}:{evidence_fingerprint}", insight.kind_label());
+        insight.id = format!(
+            "friction:v2:{}:{scope_key}:{evidence_fingerprint}",
+            insight.kind_label()
+        );
         insight.nudge_key = format!(
             "friction:v2:{}:{scope_key}:{}",
             insight.kind_label(),
             stable_hash(&pattern_seed)
         );
         if let Some(action) = insight.primary_action.as_mut() {
-            if let Some(state) = action.state_json.as_mut().and_then(|value| value.as_object_mut()) {
+            if let Some(state) = action
+                .state_json
+                .as_mut()
+                .and_then(|value| value.as_object_mut())
+            {
                 state.insert("frictionInsightId".to_string(), json!(insight.id.clone()));
             }
         }
@@ -1214,7 +1324,12 @@ fn threshold_reason(insight: &FrictionInsight) -> String {
         .iter()
         .filter_map(|metric| {
             metric.threshold.as_ref().map(|threshold| {
-                format!("{} {} {}", metric.label, metric.direction.as_deref().unwrap_or("met"), threshold)
+                format!(
+                    "{} {} {}",
+                    metric.label,
+                    metric.direction.as_deref().unwrap_or("met"),
+                    threshold
+                )
             })
         })
         .collect::<Vec<_>>();
@@ -1298,7 +1413,10 @@ fn insight(
     let impact_label = impact_label_for(&severity).to_string();
     let detail = detail.into();
     let key_scope = key_scope.replace(' ', "_");
-    let nudge_key = format!("friction:v2:{key}:{key_scope}:{}", stable_hash(&format!("{key}:{key_scope}")));
+    let nudge_key = format!(
+        "friction:v2:{key}:{key_scope}:{}",
+        stable_hash(&format!("{key}:{key_scope}"))
+    );
     FrictionInsight {
         id: format!("friction:v2:{key}:{key_scope}:pending"),
         nudge_key,
@@ -1337,7 +1455,11 @@ fn insight(
     }
 }
 
-fn metric(key: impl Into<String>, label: impl Into<String>, value: impl Into<String>) -> FrictionInsightMetric {
+fn metric(
+    key: impl Into<String>,
+    label: impl Into<String>,
+    value: impl Into<String>,
+) -> FrictionInsightMetric {
     FrictionInsightMetric {
         key: key.into(),
         label: label.into(),
@@ -1553,8 +1675,12 @@ mod tests {
     #[test]
     fn stale_tasks_do_not_flag_recent_in_progress_when_to_is_future() {
         let today = Local::now().date_naive();
-        let fresh_date = (today - chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
-        let future_end = (today + chrono::Duration::days(5)).format("%Y-%m-%d").to_string();
+        let fresh_date = (today - chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        let future_end = (today + chrono::Duration::days(5))
+            .format("%Y-%m-%d")
+            .to_string();
         let tasks = vec![task(
             "task_fresh",
             "Setup Sparc HR",
@@ -1612,7 +1738,11 @@ mod tests {
             WeeklyTaskStatus::Todo,
             "2026-05-27",
         )];
-        let logs = vec![manual_log("log_1", "2026-05-28", "callback timeout handling follow-up")];
+        let logs = vec![manual_log(
+            "log_1",
+            "2026-05-28",
+            "callback timeout handling follow-up",
+        )];
 
         let insights = repeated_issue_insights(&items, &tasks, &logs, "friction");
         assert_eq!(insights.len(), 1);
@@ -1645,7 +1775,11 @@ mod tests {
             WeeklyTaskStatus::Completed,
             "2026-05-27",
         )];
-        let logs = vec![manual_log("log_1", "2026-05-28", "callback timeout handling follow-up")];
+        let logs = vec![manual_log(
+            "log_1",
+            "2026-05-28",
+            "callback timeout handling follow-up",
+        )];
 
         assert!(repeated_issue_insights(&items, &tasks, &logs, "friction").is_empty());
     }

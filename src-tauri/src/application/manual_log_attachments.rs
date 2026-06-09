@@ -31,7 +31,10 @@ impl ManualLogAttachmentService {
             .list_by_manual_log(manual_log_id)
             .await
             .map_err(ManualLogAttachmentServiceError::Database)?;
-        Ok(attachments.into_iter().map(ManualLogAttachment::from).collect())
+        Ok(attachments
+            .into_iter()
+            .map(ManualLogAttachment::from)
+            .collect())
     }
 
     pub async fn add(
@@ -270,7 +273,10 @@ fn safe_storage_path(
     Ok(path)
 }
 
-fn detect_mime_type(path: &Path, extension: &str) -> Result<String, ManualLogAttachmentServiceError> {
+fn detect_mime_type(
+    path: &Path,
+    extension: &str,
+) -> Result<String, ManualLogAttachmentServiceError> {
     let mut buffer = [0_u8; 16];
     let mut file = fs::File::open(path).map_err(ManualLogAttachmentServiceError::Io)?;
     let read = file

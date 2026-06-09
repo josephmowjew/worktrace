@@ -36,18 +36,20 @@ pub async fn add_manual_log_attachment(
     let logs = ManualLogRepository::new(state.database.pool());
     let repository = ManualLogAttachmentRepository::new(state.database.pool());
 
-    Ok(match ManualLogAttachmentService::add(
-        &app,
-        &logs,
-        &repository,
-        &manual_log_id,
-        &source_path,
+    Ok(
+        match ManualLogAttachmentService::add(
+            &app,
+            &logs,
+            &repository,
+            &manual_log_id,
+            &source_path,
+        )
+        .await
+        {
+            Ok(attachment) => AppResult::ok(attachment),
+            Err(error) => manual_log_attachment_error(error),
+        },
     )
-    .await
-    {
-        Ok(attachment) => AppResult::ok(attachment),
-        Err(error) => manual_log_attachment_error(error),
-    })
 }
 
 #[tauri::command]
@@ -58,10 +60,12 @@ pub async fn delete_manual_log_attachment(
 ) -> Result<AppResult<bool>, String> {
     let repository = ManualLogAttachmentRepository::new(state.database.pool());
 
-    Ok(match ManualLogAttachmentService::delete(&app, &repository, &id).await {
-        Ok(deleted) => AppResult::ok(deleted),
-        Err(error) => manual_log_attachment_error(error),
-    })
+    Ok(
+        match ManualLogAttachmentService::delete(&app, &repository, &id).await {
+            Ok(deleted) => AppResult::ok(deleted),
+            Err(error) => manual_log_attachment_error(error),
+        },
+    )
 }
 
 #[tauri::command]
@@ -72,10 +76,12 @@ pub async fn open_manual_log_attachment(
 ) -> Result<AppResult<bool>, String> {
     let repository = ManualLogAttachmentRepository::new(state.database.pool());
 
-    Ok(match ManualLogAttachmentService::open(&app, &repository, &id).await {
-        Ok(opened) => AppResult::ok(opened),
-        Err(error) => manual_log_attachment_error(error),
-    })
+    Ok(
+        match ManualLogAttachmentService::open(&app, &repository, &id).await {
+            Ok(opened) => AppResult::ok(opened),
+            Err(error) => manual_log_attachment_error(error),
+        },
+    )
 }
 
 #[tauri::command]
@@ -86,10 +92,12 @@ pub async fn get_manual_log_attachment_preview(
 ) -> Result<AppResult<Option<ManualLogAttachmentPreview>>, String> {
     let repository = ManualLogAttachmentRepository::new(state.database.pool());
 
-    Ok(match ManualLogAttachmentService::preview(&app, &repository, &id).await {
-        Ok(preview) => AppResult::ok(preview),
-        Err(error) => manual_log_attachment_error(error),
-    })
+    Ok(
+        match ManualLogAttachmentService::preview(&app, &repository, &id).await {
+            Ok(preview) => AppResult::ok(preview),
+            Err(error) => manual_log_attachment_error(error),
+        },
+    )
 }
 
 fn manual_log_attachment_error<T: Serialize>(

@@ -21,23 +21,25 @@ pub async fn get_friction_insights(
     let focus_session_repository = FocusSessionRepository::new(state.database.pool());
     let report_repository = ReportRepository::new(state.database.pool());
 
-    Ok(match FrictionService::get_insights(
-        &activity_repository,
-        &manual_log_repository,
-        &weekly_task_repository,
-        &calendar_event_repository,
-        &focus_session_repository,
-        &report_repository,
-        input,
+    Ok(
+        match FrictionService::get_insights(
+            &activity_repository,
+            &manual_log_repository,
+            &weekly_task_repository,
+            &calendar_event_repository,
+            &focus_session_repository,
+            &report_repository,
+            input,
+        )
+        .await
+        {
+            Ok(insights) => AppResult::ok(insights),
+            Err(FrictionServiceError::Validation(message)) => {
+                AppResult::err("VALIDATION_ERROR", message)
+            }
+            Err(FrictionServiceError::Database(error)) => {
+                AppResult::err("DATABASE_ERROR", error.to_string())
+            }
+        },
     )
-    .await
-    {
-        Ok(insights) => AppResult::ok(insights),
-        Err(FrictionServiceError::Validation(message)) => {
-            AppResult::err("VALIDATION_ERROR", message)
-        }
-        Err(FrictionServiceError::Database(error)) => {
-            AppResult::err("DATABASE_ERROR", error.to_string())
-        }
-    })
 }

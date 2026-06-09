@@ -53,7 +53,9 @@ pub async fn quick_capture_log(
 ) -> Result<AppResult<ManualLog>, String> {
     let repository = ManualLogRepository::new(state.database.pool());
     let settings_repository =
-        crate::infrastructure::database::repositories::SettingsRepository::new(state.database.pool());
+        crate::infrastructure::database::repositories::SettingsRepository::new(
+            state.database.pool(),
+        );
     let settings = match settings_repository.get().await {
         Ok(settings) => settings,
         Err(error) => return Ok(AppResult::err("DATABASE_ERROR", error.to_string())),
@@ -74,18 +76,20 @@ pub async fn quick_capture_log(
         ),
     };
 
-    Ok(match ManualLogService::create(&repository, create_input).await {
-        Ok(log) => {
-            let _ = app.emit("quick-capture://created", &log);
-            AppResult::ok(log)
-        }
-        Err(ManualLogServiceError::Validation(message)) => {
-            AppResult::err("VALIDATION_ERROR", message)
-        }
-        Err(ManualLogServiceError::Database(error)) => {
-            AppResult::err("DATABASE_ERROR", error.to_string())
-        }
-    })
+    Ok(
+        match ManualLogService::create(&repository, create_input).await {
+            Ok(log) => {
+                let _ = app.emit("quick-capture://created", &log);
+                AppResult::ok(log)
+            }
+            Err(ManualLogServiceError::Validation(message)) => {
+                AppResult::err("VALIDATION_ERROR", message)
+            }
+            Err(ManualLogServiceError::Database(error)) => {
+                AppResult::err("DATABASE_ERROR", error.to_string())
+            }
+        },
+    )
 }
 
 #[tauri::command]

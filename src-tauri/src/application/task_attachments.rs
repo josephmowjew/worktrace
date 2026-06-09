@@ -232,7 +232,10 @@ fn canonical_source(path: &str) -> Result<PathBuf, TaskAttachmentServiceError> {
     fs::canonicalize(path).map_err(TaskAttachmentServiceError::Io)
 }
 
-fn safe_relative_path(task_id: &str, stored_name: &str) -> Result<String, TaskAttachmentServiceError> {
+fn safe_relative_path(
+    task_id: &str,
+    stored_name: &str,
+) -> Result<String, TaskAttachmentServiceError> {
     validate_id(task_id, "Task id")?;
     if stored_name.contains('/') || stored_name.contains('\\') || stored_name.contains("..") {
         return Err(TaskAttachmentServiceError::Validation(
@@ -242,7 +245,10 @@ fn safe_relative_path(task_id: &str, stored_name: &str) -> Result<String, TaskAt
     Ok(format!("tasks/{task_id}/{stored_name}"))
 }
 
-fn safe_storage_path(root: &Path, relative_path: &str) -> Result<PathBuf, TaskAttachmentServiceError> {
+fn safe_storage_path(
+    root: &Path,
+    relative_path: &str,
+) -> Result<PathBuf, TaskAttachmentServiceError> {
     let relative = Path::new(relative_path);
     if relative.is_absolute()
         || relative
@@ -266,7 +272,9 @@ fn safe_storage_path(root: &Path, relative_path: &str) -> Result<PathBuf, TaskAt
 fn detect_mime_type(path: &Path, extension: &str) -> Result<String, TaskAttachmentServiceError> {
     let mut buffer = [0_u8; 16];
     let mut file = fs::File::open(path).map_err(TaskAttachmentServiceError::Io)?;
-    let read = file.read(&mut buffer).map_err(TaskAttachmentServiceError::Io)?;
+    let read = file
+        .read(&mut buffer)
+        .map_err(TaskAttachmentServiceError::Io)?;
     let bytes = &buffer[..read];
     let mime_type = match extension {
         "png" if bytes.starts_with(b"\x89PNG\r\n\x1a\n") => "image/png",
@@ -291,7 +299,9 @@ fn hash_file(path: &Path) -> Result<String, TaskAttachmentServiceError> {
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 8192];
     loop {
-        let count = reader.read(&mut buffer).map_err(TaskAttachmentServiceError::Io)?;
+        let count = reader
+            .read(&mut buffer)
+            .map_err(TaskAttachmentServiceError::Io)?;
         if count == 0 {
             break;
         }

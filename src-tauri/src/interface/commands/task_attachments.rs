@@ -1,9 +1,7 @@
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
-use crate::application::task_attachments::{
-    TaskAttachmentService, TaskAttachmentServiceError,
-};
+use crate::application::task_attachments::{TaskAttachmentService, TaskAttachmentServiceError};
 use crate::domain::task_attachment::{TaskAttachment, TaskAttachmentPreview};
 use crate::infrastructure::database::repositories::{
     TaskAttachmentRepository, WeeklyTaskRepository,
@@ -18,10 +16,12 @@ pub async fn list_task_attachments(
 ) -> Result<AppResult<Vec<TaskAttachment>>, String> {
     let repository = TaskAttachmentRepository::new(state.database.pool());
 
-    Ok(match TaskAttachmentService::list(&repository, &task_id).await {
-        Ok(attachments) => AppResult::ok(attachments),
-        Err(error) => task_attachment_error(error),
-    })
+    Ok(
+        match TaskAttachmentService::list(&repository, &task_id).await {
+            Ok(attachments) => AppResult::ok(attachments),
+            Err(error) => task_attachment_error(error),
+        },
+    )
 }
 
 #[tauri::command]
@@ -50,10 +50,12 @@ pub async fn delete_task_attachment(
 ) -> Result<AppResult<bool>, String> {
     let repository = TaskAttachmentRepository::new(state.database.pool());
 
-    Ok(match TaskAttachmentService::delete(&app, &repository, &id).await {
-        Ok(deleted) => AppResult::ok(deleted),
-        Err(error) => task_attachment_error(error),
-    })
+    Ok(
+        match TaskAttachmentService::delete(&app, &repository, &id).await {
+            Ok(deleted) => AppResult::ok(deleted),
+            Err(error) => task_attachment_error(error),
+        },
+    )
 }
 
 #[tauri::command]
@@ -64,10 +66,12 @@ pub async fn open_task_attachment(
 ) -> Result<AppResult<bool>, String> {
     let repository = TaskAttachmentRepository::new(state.database.pool());
 
-    Ok(match TaskAttachmentService::open(&app, &repository, &id).await {
-        Ok(opened) => AppResult::ok(opened),
-        Err(error) => task_attachment_error(error),
-    })
+    Ok(
+        match TaskAttachmentService::open(&app, &repository, &id).await {
+            Ok(opened) => AppResult::ok(opened),
+            Err(error) => task_attachment_error(error),
+        },
+    )
 }
 
 #[tauri::command]
@@ -78,10 +82,12 @@ pub async fn get_task_attachment_preview(
 ) -> Result<AppResult<Option<TaskAttachmentPreview>>, String> {
     let repository = TaskAttachmentRepository::new(state.database.pool());
 
-    Ok(match TaskAttachmentService::preview(&app, &repository, &id).await {
-        Ok(preview) => AppResult::ok(preview),
-        Err(error) => task_attachment_error(error),
-    })
+    Ok(
+        match TaskAttachmentService::preview(&app, &repository, &id).await {
+            Ok(preview) => AppResult::ok(preview),
+            Err(error) => task_attachment_error(error),
+        },
+    )
 }
 
 fn task_attachment_error<T: Serialize>(error: TaskAttachmentServiceError) -> AppResult<T> {
@@ -92,8 +98,6 @@ fn task_attachment_error<T: Serialize>(error: TaskAttachmentServiceError) -> App
         TaskAttachmentServiceError::Database(error) => {
             AppResult::err("DATABASE_ERROR", error.to_string())
         }
-        TaskAttachmentServiceError::Io(error) => {
-            AppResult::err("FILE_ERROR", error.to_string())
-        }
+        TaskAttachmentServiceError::Io(error) => AppResult::err("FILE_ERROR", error.to_string()),
     }
 }

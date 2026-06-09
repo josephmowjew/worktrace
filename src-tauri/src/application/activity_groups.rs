@@ -1540,7 +1540,11 @@ fn common_workspace_id(nodes: &[EvidenceNode]) -> Option<String> {
 }
 
 fn grouping_family(item: &ActivityItem) -> String {
-    if let Some(workspace_id) = item.workspace_id.as_deref().filter(|value| !value.is_empty()) {
+    if let Some(workspace_id) = item
+        .workspace_id
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
         return format!("workspace:{workspace_id}");
     }
     project_family(item)
@@ -1833,7 +1837,11 @@ mod tests {
                         "SPARC-FORCE-WEB",
                         Some("workspace_sparc"),
                     ),
-                    vec![change("hash_web_1", "src/components/CampaignInvitesTable.tsx", "src")],
+                    vec![change(
+                        "hash_web_1",
+                        "src/components/CampaignInvitesTable.tsx",
+                        "src",
+                    )],
                     Vec::new(),
                     None,
                 ),

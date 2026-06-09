@@ -450,9 +450,10 @@ pub fn configure_desktop_lifecycle_inner(
     } else {
         autostart.disable()
     };
-    let error = result.err().map(|error| error.to_string()).filter(|message| {
-        startup_enabled || !message.contains("os error 2")
-    });
+    let error = result
+        .err()
+        .map(|error| error.to_string())
+        .filter(|message| startup_enabled || !message.contains("os error 2"));
 
     *state
         .desktop_lifecycle_error

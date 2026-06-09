@@ -19,7 +19,9 @@ pub async fn list_priority_reminders(
     input: ListPriorityRemindersInput,
 ) -> Result<AppResult<Vec<PriorityReminder>>, String> {
     let repository = PriorityReminderRepository::new(state.database.pool());
-    Ok(map_result(PriorityReminderService::list(&repository, input).await))
+    Ok(map_result(
+        PriorityReminderService::list(&repository, input).await,
+    ))
 }
 
 #[tauri::command]
@@ -60,7 +62,9 @@ pub async fn dismiss_priority_reminder(
     input: DismissPriorityReminderInput,
 ) -> Result<AppResult<Vec<PriorityReminder>>, String> {
     let repository = PriorityReminderRepository::new(state.database.pool());
-    Ok(map_result(PriorityReminderService::dismiss(&repository, input).await))
+    Ok(map_result(
+        PriorityReminderService::dismiss(&repository, input).await,
+    ))
 }
 
 fn map_result(

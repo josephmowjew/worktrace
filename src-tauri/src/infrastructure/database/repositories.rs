@@ -4381,7 +4381,10 @@ impl<'a> ManualLogAttachmentRepository<'a> {
         .fetch_all(self.pool)
         .await?;
 
-        Ok(rows.into_iter().map(manual_log_attachment_from_row).collect())
+        Ok(rows
+            .into_iter()
+            .map(manual_log_attachment_from_row)
+            .collect())
     }
 
     pub async fn count_by_manual_log(&self, manual_log_id: &str) -> Result<usize, sqlx::Error> {
@@ -6149,7 +6152,10 @@ impl<'a> TaskAttachmentRepository<'a> {
         Self { pool }
     }
 
-    pub async fn list_by_task(&self, task_id: &str) -> Result<Vec<TaskAttachmentRecord>, sqlx::Error> {
+    pub async fn list_by_task(
+        &self,
+        task_id: &str,
+    ) -> Result<Vec<TaskAttachmentRecord>, sqlx::Error> {
         let rows = sqlx::query(
             r#"
             SELECT id, task_id, original_name, stored_name, storage_relative_path, mime_type,
@@ -6167,12 +6173,11 @@ impl<'a> TaskAttachmentRepository<'a> {
     }
 
     pub async fn count_by_task(&self, task_id: &str) -> Result<usize, sqlx::Error> {
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM task_attachments WHERE task_id = ?1",
-        )
-        .bind(task_id)
-        .fetch_one(self.pool)
-        .await?;
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM task_attachments WHERE task_id = ?1")
+                .bind(task_id)
+                .fetch_one(self.pool)
+                .await?;
 
         Ok(count.max(0) as usize)
     }
@@ -11921,11 +11926,7 @@ mod tests {
             "C:\\Backups"
         );
         assert_eq!(
-            repository
-                .get()
-                .await
-                .expect("get settings")
-                .week_starts_on,
+            repository.get().await.expect("get settings").week_starts_on,
             "sunday"
         );
     }
