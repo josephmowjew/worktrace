@@ -37,6 +37,7 @@ import { listActivity } from "../lib/api/activity";
 import { listProjects } from "../lib/api/projects";
 import { listWeeklyTasks } from "../lib/api/weeklyTasks";
 import { getSettings } from "../lib/api/settings";
+import { invalidateWorkEvidence } from "../lib/api/queryKeys";
 import { syncAnnouncement, syncStartedAnnouncement } from "../lib/announcements";
 import { shiftWeek } from "../lib/dates";
 import { useWeekRange } from "../hooks/useWeekRange";
@@ -225,13 +226,9 @@ export function DashboardPage() {
           onAlreadyRunning: () => toast.info("Sync already running", "Repository activity is still being refreshed."),
         },
       );
-      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard-activity-hours"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard-breakdown"] });
-      queryClient.invalidateQueries({ queryKey: ["activity"] });
-      queryClient.invalidateQueries({ queryKey: ["weeklyTasks"] });
-      queryClient.invalidateQueries({ queryKey: ["frictionInsights"] });
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      await invalidateWorkEvidence(queryClient, {
+        extraQueryKeys: [["projects"]],
+      });
       toast.success(
         "Sync complete",
         `Scanned ${result.scannedProjects} projects. Added ${result.newCommits} commits and updated ${result.updatedCommits}.`,

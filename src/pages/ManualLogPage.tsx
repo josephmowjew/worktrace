@@ -51,6 +51,7 @@ import {
 } from "../lib/api/manualLogs";
 import { addManualLogAttachment } from "../lib/api/manualLogAttachments";
 import { listProjects } from "../lib/api/projects";
+import { invalidateWorkEvidence } from "../lib/api/queryKeys";
 import { manualLogAnnouncement } from "../lib/announcements";
 import { useWeekRange } from "../hooks/useWeekRange";
 import { manualLogToneByType, toneBadgeClass } from "../lib/workItemStyles";
@@ -182,12 +183,9 @@ export function ManualLogPage() {
       return log;
     },
     onSuccess: async (log, values) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["manualLogs"] }),
-        queryClient.invalidateQueries({ queryKey: ["manualLogAttachments", log.id] }),
-        queryClient.invalidateQueries({ queryKey: ["activity"] }),
-        queryClient.invalidateQueries({ queryKey: ["reports"] }),
-      ]);
+      await invalidateWorkEvidence(queryClient, {
+        extraQueryKeys: [["manualLogAttachments", log.id]],
+      });
       toast.success(editingLog ? "Manual log updated" : "Manual log saved");
       speech.announce(
         manualLogAnnouncement(
@@ -207,11 +205,7 @@ export function ManualLogPage() {
   const deleteMutation = useMutation({
     mutationFn: deleteManualLog,
     onSuccess: async (_result, logId) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["manualLogs"] }),
-        queryClient.invalidateQueries({ queryKey: ["activity"] }),
-        queryClient.invalidateQueries({ queryKey: ["reports"] }),
-      ]);
+      await invalidateWorkEvidence(queryClient);
       toast.success("Manual log deleted");
       const deletedLog = logs.find((log) => log.id === logId);
       if (deletedLog) {

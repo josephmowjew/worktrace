@@ -41,6 +41,7 @@ import { listActivityGroups, recordActivityGroupTitleFeedback, refreshActivityGr
 import { getBackgroundJobStatus, getEmbeddingStatus, queueActivityEmbeddingRefresh, runBackgroundJobsOnce, semanticActivitySearch } from "../lib/api/embeddings";
 import { listProjects } from "../lib/api/projects";
 import { listWeeklyTasks } from "../lib/api/weeklyTasks";
+import { invalidateWorkEvidence } from "../lib/api/queryKeys";
 import { syncAnnouncement, syncStartedAnnouncement } from "../lib/announcements";
 import { shiftWeek } from "../lib/dates";
 import { useWeekRange } from "../hooks/useWeekRange";
@@ -236,13 +237,9 @@ export function ActivityTimelinePage() {
     },
     onSuccess: async (result) => {
       setOrganizePhase("idle");
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["activity"] }),
-        queryClient.invalidateQueries({ queryKey: ["activityGroups"] }),
-        queryClient.invalidateQueries({ queryKey: ["semanticActivitySearch"] }),
-        queryClient.invalidateQueries({ queryKey: ["backgroundJobStatus"] }),
-        queryClient.invalidateQueries({ queryKey: ["reports"] }),
-      ]);
+      await invalidateWorkEvidence(queryClient, {
+        extraQueryKeys: [["semanticActivitySearch"], ["backgroundJobStatus"]],
+      });
       if (result.backgroundJobsQueued > 0) {
         runBackgroundJobsOnce()
           .finally(() => {
@@ -283,8 +280,7 @@ export function ActivityTimelinePage() {
         useEmbeddings: embeddingStatusQuery.data?.available ?? false,
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["activityGroups"] });
-      queryClient.invalidateQueries({ queryKey: ["reports"] });
+      void invalidateWorkEvidence(queryClient);
     },
   });
 
@@ -308,8 +304,7 @@ export function ActivityTimelinePage() {
     onSuccess: (_, variables) => {
       const original = editingGroup;
       setEditingGroup(null);
-      queryClient.invalidateQueries({ queryKey: ["activityGroups"] });
-      queryClient.invalidateQueries({ queryKey: ["reports"] });
+      void invalidateWorkEvidence(queryClient);
       if (original && (original.title !== variables.group.title || original.reportSummary !== variables.group.reportSummary)) {
         recordActivityGroupTitleFeedback({
           groupId: variables.id,
@@ -335,8 +330,7 @@ export function ActivityTimelinePage() {
         candidateTitle: candidate.title,
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["activityGroups"] });
-      queryClient.invalidateQueries({ queryKey: ["reports"] });
+      void invalidateWorkEvidence(queryClient);
       toast.success("Title updated", "The selected title was saved and will improve future naming.");
     },
     onError: (error) => {
@@ -402,13 +396,7 @@ export function ActivityTimelinePage() {
           onAlreadyRunning: () => toast.info("Sync already running", "Repository activity is still being refreshed."),
         },
       );
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["activity"] }),
-        queryClient.invalidateQueries({ queryKey: ["activityGroups"] }),
-        queryClient.invalidateQueries({ queryKey: ["heatmap"] }),
-        queryClient.invalidateQueries({ queryKey: ["weekSummary"] }),
-        queryClient.invalidateQueries({ queryKey: ["keyHighlights"] }),
-      ]);
+      await invalidateWorkEvidence(queryClient);
       toast.success(
         result.fullProjects > 0 ? "Full sync complete" : "Sync complete",
         result.newCommits === 0 && result.updatedCommits === 0

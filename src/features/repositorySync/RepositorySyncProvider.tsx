@@ -3,6 +3,7 @@ import type { PropsWithChildren } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { syncCommits } from "../../lib/api/gitSync";
 import { WorkTraceCommandError } from "../../lib/api/client";
+import { invalidateWorkEvidence } from "../../lib/api/queryKeys";
 import type { SyncCommitsInput, SyncCommitsResult } from "../../types/gitSync";
 
 export type RepositorySyncScope =
@@ -35,24 +36,6 @@ type RepositorySyncContextValue = {
 
 const RepositorySyncContext = createContext<RepositorySyncContextValue | null>(null);
 
-const commonInvalidationRoots = [
-  ["activity"],
-  ["activityGroups"],
-  ["projects"],
-  ["projectStats"],
-  ["recentCommits"],
-  ["topContributors"],
-  ["dashboard-stats"],
-  ["dashboard-activity-hours"],
-  ["dashboard-breakdown"],
-  ["weekSummary"],
-  ["keyHighlights"],
-  ["heatmap"],
-  ["weeklyTasks"],
-  ["reports"],
-  ["frictionInsights"],
-] as const;
-
 export function RepositorySyncProvider({ children }: PropsWithChildren) {
   const queryClient = useQueryClient();
   const inFlightRef = useRef<Promise<SyncCommitsResult> | null>(null);
@@ -62,11 +45,9 @@ export function RepositorySyncProvider({ children }: PropsWithChildren) {
   const [lastError, setLastError] = useState<Error | null>(null);
 
   const invalidateCommonSyncViews = useCallback(async () => {
-    await Promise.all(
-      commonInvalidationRoots.map((queryKey) =>
-        queryClient.invalidateQueries({ queryKey }),
-      ),
-    );
+    await invalidateWorkEvidence(queryClient, {
+      extraQueryKeys: [["projects"], ["recentCommits"], ["topContributors"]],
+    });
   }, [queryClient]);
 
   const syncRepositories = useCallback(

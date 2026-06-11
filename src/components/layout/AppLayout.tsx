@@ -51,6 +51,7 @@ import { CommandPalette, createBaseCommandActions } from "../ui/CommandPalette";
 import { CloseButton } from "../ui/CloseButton";
 import { useSpeech } from "../ui/SpeechProvider";
 import { normalizeVoiceTranscript, parseVoiceCaptureDraft } from "../../lib/voiceCommands";
+import { invalidateWorkEvidence } from "../../lib/api/queryKeys";
 import type { VoiceCaptureDraft } from "../../types/voiceCapture";
 import {
   sparcForceSyncAnnouncement,
@@ -534,13 +535,7 @@ export function AppLayout({ children }: PropsWithChildren) {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     listen("quick-capture://created", () => {
-      queryClient.invalidateQueries({ queryKey: ["manualLogs"] });
-      queryClient.invalidateQueries({ queryKey: ["activity"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboardStats"] });
-      queryClient.invalidateQueries({ queryKey: ["projectStats"] });
-      queryClient.invalidateQueries({ queryKey: ["weekSummary"] });
-      queryClient.invalidateQueries({ queryKey: ["reports"] });
-      queryClient.invalidateQueries({ queryKey: ["weeklyTasks"] });
+      void invalidateWorkEvidence(queryClient);
     }).then((dispose) => {
       unlisten = dispose;
     }).catch(() => {});

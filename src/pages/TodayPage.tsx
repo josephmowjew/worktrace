@@ -70,7 +70,7 @@ import {
   updateDailyPlanItem,
   upsertDailyPlan,
 } from "../lib/api/dailyPlan";
-import { weeklyTaskQueryRoots } from "../lib/api/queryKeys";
+import { invalidateWorkEvidence } from "../lib/api/queryKeys";
 import {
   manualLogAnnouncement,
   syncAnnouncement,
@@ -289,23 +289,15 @@ export function TodayPage() {
   ]);
 
   async function invalidateDailyViews() {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["activity"] }),
-      queryClient.invalidateQueries({ queryKey: ["manualLogs"] }),
-      queryClient.invalidateQueries({ queryKey: ["reports"] }),
-      queryClient.invalidateQueries({ queryKey: ["reportNotes"] }),
-      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] }),
-      queryClient.invalidateQueries({ queryKey: ["weekCapacity"] }),
-      queryClient.invalidateQueries({ queryKey: ["focusSession"] }),
-      queryClient.invalidateQueries({ queryKey: ["focusSessions"] }),
-      queryClient.invalidateQueries({ queryKey: ["nudgeDismissals"] }),
-      queryClient.invalidateQueries({ queryKey: ["priorityReminders"] }),
-      queryClient.invalidateQueries({ queryKey: ["frictionInsights"] }),
-      queryClient.invalidateQueries({ queryKey: ["todayCommandCenter", today.date] }),
-      ...weeklyTaskQueryRoots.map((queryKey) =>
-        queryClient.invalidateQueries({ queryKey }),
-      ),
-    ]);
+    await invalidateWorkEvidence(queryClient, {
+      extraQueryKeys: [
+        ["focusSession"],
+        ["focusSessions"],
+        ["nudgeDismissals"],
+        ["priorityReminders"],
+        ["todayCommandCenter", today.date],
+      ],
+    });
   }
 
   async function handleSyncRepositories() {

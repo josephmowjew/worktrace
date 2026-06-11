@@ -35,7 +35,7 @@ import {
   listWeeklyTasks,
   updateWeeklyTask,
 } from "../lib/api/weeklyTasks";
-import { weeklyTaskQueryRoots } from "../lib/api/queryKeys";
+import { invalidateWorkEvidence } from "../lib/api/queryKeys";
 import { taskAnnouncement, taskUpdateAnnouncement } from "../lib/announcements";
 import { useWeekRange } from "../hooks/useWeekRange";
 import type {
@@ -117,15 +117,7 @@ export function WeeklyPlanPage() {
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   async function invalidateWeeklyTaskViews() {
-    await Promise.all([
-      ...weeklyTaskQueryRoots.map((queryKey) =>
-        queryClient.invalidateQueries({ queryKey }),
-      ),
-      queryClient.invalidateQueries({ queryKey: ["reports"] }),
-      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] }),
-      queryClient.invalidateQueries({ queryKey: ["weekCapacity"] }),
-      queryClient.invalidateQueries({ queryKey: ["frictionInsights"] }),
-    ]);
+    await invalidateWorkEvidence(queryClient);
   }
 
   const projectsQuery = useQuery({
