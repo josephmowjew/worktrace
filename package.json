@@ -1,7 +1,7 @@
 {
   "name": "worktrace",
   "private": true,
-  "version": "0.1.7",
+  "version": "0.1.8",
   "author": "Joseph Mojoo",
   "repository": {
     "type": "git",
@@ -10,7 +10,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build --config vite.config.js --configLoader native",
     "preview": "vite preview",
     "test": "vitest --environment jsdom src/test",
     "test:run": "vitest run --environment jsdom src/test",

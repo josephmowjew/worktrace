@@ -1,11 +1,11 @@
 {
-  "version": "0.1.7",
-  "notes": "Added immersive focus mode, explicit focus targets, and a polished manual log workspace for smoother daily capture.\nAdded robust local voice capture review while keeping voice processing local-first.\nImproved workspace filtering and hardened native activity and attachment commands.\nFixed stale task detection and activity group title synthesis so reports stay anchored to real daily context.",
-  "pub_date": "2026-06-09T17:18:57Z",
+  "version": "0.1.8",
+  "notes": "Added smarter commit-to-task drafting with multiple ranked title candidates, group-aware context, and evidence-rich task descriptions.\nAdded commit-linked task provenance, duplicate prevention, and a review modal that surfaces title suggestions and structured evidence before creation.\nImproved work evidence invalidation so activity-driven reporting stays aligned with the latest grouped commit context.",
+  "pub_date": "2026-06-15T07:02:37.373Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUbndnaUhWc2ZhVUthZGF2cTlSWEcvNWt4ZnR1YXpHTThoYTFGTlZiTlhmNVo5REhUR3lsSTZCOGtVMnRwaVNiRzZtaWNEOWV0ZXBObE10N1JpbHYvazRuSFFTZjc5NGdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxMDI1NDkwCWZpbGU6V29ya1RyYWNlXzAuMS43X3g2NC1zZXR1cC5leGUKZHRlL3p2QzhyNUdKMFVadGNMd3R4M1FsV25sbktkVm92ZjJOSjkxV2k2STY5VEJNaG82TlBXRUcrREQ0eGFPaHpCb1l4TWdsWTkyZjhwNXlVa0VPQlE9PQo=",
-      "url": "https://github.com/josephmowjew/worktrace/releases/download/v0.1.7/WorkTrace_0.1.7_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUbndnaUhWc2ZhVUY4SnV5aU9iSlZodEwrMFg5dWVLWlFESTh6ckQveUJiNG85MFV1bzZzNzI3eDd6WFd4MDNvbW5lZ1dTN0p2Q0thN0lNbmVjWk5laUNlaVhIRXB1ZmdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxNTA2OTIyCWZpbGU6V29ya1RyYWNlXzAuMS44X3g2NC1zZXR1cC5leGUKcTNPWmwwS2YybXJrWmoyWGJCVnM0SEFnNTBodTV1VXh0RjhtSnZQY0dSc2g0ZFBzS2pHdTBPQkZQV2ViWUNaRUVRVjYyT3JCOFB4VUpjME5wZGVuQXc9PQo=",
+      "url": "https://github.com/josephmowjew/worktrace/releases/download/v0.1.8/WorkTrace_0.1.8_x64-setup.exe"
     }
   }
 }

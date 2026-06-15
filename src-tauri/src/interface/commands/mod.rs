@@ -2,6 +2,7 @@ pub mod activity;
 pub mod activity_groups;
 pub mod app_updates;
 pub mod calendar;
+pub mod commit_tasks;
 pub mod daily_plan;
 pub mod dashboard;
 pub mod embeddings;
@@ -90,6 +91,8 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         calendar::sync_calendar_events,
         calendar::list_calendar_events,
         calendar::get_week_capacity,
+        commit_tasks::preview_commit_task_draft,
+        commit_tasks::create_weekly_task_from_commit,
         focus_sessions::get_active_focus_session,
         focus_sessions::list_focus_sessions,
         focus_sessions::start_focus_session,

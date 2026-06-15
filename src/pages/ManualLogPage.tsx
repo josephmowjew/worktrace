@@ -79,25 +79,19 @@ const activityTypes: Array<{
   { value: "AdminTask", label: "Admin Task", icon: BriefcaseBusiness, tone: "slate" },
 ];
 
+const CUSTOM_ACTIVITY_TYPE_VALUE = "__custom__";
+const customActivityTypeOption = {
+  value: CUSTOM_ACTIVITY_TYPE_VALUE,
+  label: "Other",
+  icon: ClipboardCheck,
+};
+const knownActivityTypeValues = new Set(activityTypes.map((type) => type.value));
+
 const manualLogSchema = z.object({
   projectId: z.string().optional(),
   date: z.string().trim().min(1, "Date is required"),
-  activityType: z.enum([
-    "Meeting",
-    "Development",
-    "BugFix",
-    "Testing",
-    "Deployment",
-    "Research",
-    "Documentation",
-    "Planning",
-    "Support",
-    "CodeReview",
-    "ClientFeedback",
-    "Debugging",
-    "ClientCall",
-    "AdminTask",
-  ]),
+  activityType: z.string().trim().min(1, "Activity type is required"),
+  customActivityType: z.string().trim().optional(),
   summary: z.string().trim().min(1, "Summary is required"),
   outcome: z.string().optional(),
   durationMinutes: z.union([
@@ -106,6 +100,14 @@ const manualLogSchema = z.object({
   ]),
   followUp: z.string().optional(),
   includedInReport: z.boolean(),
+}).superRefine((values, context) => {
+  if (values.activityType === CUSTOM_ACTIVITY_TYPE_VALUE && !values.customActivityType?.trim()) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["customActivityType"],
+      message: "Enter a custom activity type",
+    });
+  }
 });
 
 type ManualLogFormValues = z.infer<typeof manualLogSchema>;
@@ -141,6 +143,7 @@ export function ManualLogPage() {
     resolver: zodResolver(manualLogSchema),
     defaultValues: defaultValues(weekRange.from),
   });
+  const selectedActivityType = form.watch("activityType");
 
   const projects = (projectsQuery.data ?? []).filter(
     (project) => project.status === "active",
@@ -230,7 +233,7 @@ export function ManualLogPage() {
     form.reset({
       projectId: log.projectId ?? "",
       date: log.date,
-      activityType: log.activityType,
+      ...activityTypeToFormValues(log.activityType),
       summary: log.summary,
       outcome: log.outcome ?? "",
       durationMinutes: log.durationMinutes ?? "",
@@ -245,7 +248,7 @@ export function ManualLogPage() {
     form.reset({
       projectId: log.projectId ?? "",
       date: log.date,
-      activityType: log.activityType,
+      ...activityTypeToFormValues(log.activityType),
       summary: log.summary,
       outcome: log.outcome ?? "",
       durationMinutes: log.durationMinutes ?? "",
@@ -418,14 +421,31 @@ export function ManualLogPage() {
               <SelectField
                 control={form.control}
                 name="activityType"
-                options={activityTypes.map((type) => ({
-                  value: type.value,
-                  label: type.label,
-                  icon: type.icon,
-                }))}
+                options={[
+                  ...activityTypes.map((type) => ({
+                    value: type.value,
+                    label: type.label,
+                    icon: type.icon,
+                  })),
+                  customActivityTypeOption,
+                ]}
                 size="md"
               />
             </Field>
+
+            {selectedActivityType === CUSTOM_ACTIVITY_TYPE_VALUE ? (
+              <Field
+                label="Custom Activity Type"
+                help="Use the label you want to see on this work log."
+                error={form.formState.errors.customActivityType?.message}
+              >
+                <input
+                  className={inputClass}
+                  placeholder="Training, Data Cleanup, Stakeholder Review..."
+                  {...form.register("customActivityType")}
+                />
+              </Field>
+            ) : null}
 
             <Field
               label="Duration (minutes)"
@@ -806,6 +826,7 @@ function defaultValues(date: string): ManualLogFormValues {
     projectId: "",
     date,
     activityType: "Meeting",
+    customActivityType: "",
     summary: "",
     outcome: "",
     durationMinutes: "",
@@ -818,7 +839,10 @@ function toManualLogInput(values: ManualLogFormValues) {
   return {
     projectId: values.projectId || null,
     date: values.date,
-    activityType: values.activityType,
+    activityType:
+      values.activityType === CUSTOM_ACTIVITY_TYPE_VALUE
+        ? values.customActivityType?.trim() || "Other"
+        : values.activityType,
     summary: values.summary,
     outcome: values.outcome?.trim() || null,
     durationMinutes:
@@ -827,6 +851,20 @@ function toManualLogInput(values: ManualLogFormValues) {
         : Number(values.durationMinutes),
     followUp: values.followUp?.trim() || null,
     includedInReport: values.includedInReport,
+  };
+}
+
+function activityTypeToFormValues(activityType: ActivityType) {
+  if (knownActivityTypeValues.has(activityType)) {
+    return {
+      activityType,
+      customActivityType: "",
+    };
+  }
+
+  return {
+    activityType: CUSTOM_ACTIVITY_TYPE_VALUE,
+    customActivityType: activityType,
   };
 }
 

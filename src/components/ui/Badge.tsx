@@ -17,7 +17,7 @@ export function Badge({
 }: PropsWithChildren<{ tone?: BadgeTone }>) {
   return (
     <span
-      className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[10px] font-semibold ${toneClasses[tone]}`}
+      className={`inline-flex max-w-full items-center rounded-md border px-2 py-0.5 text-[10px] font-semibold leading-4 [overflow-wrap:anywhere] ${toneClasses[tone]}`}
     >
       {children}
     </span>

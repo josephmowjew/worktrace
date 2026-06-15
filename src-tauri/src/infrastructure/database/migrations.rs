@@ -151,6 +151,9 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::raw_sql(GITHUB_INTEGRATION_SQL).execute(pool).await?;
     run_github_multi_account_migration(pool).await?;
     sqlx::raw_sql(TASK_ATTACHMENTS_SQL).execute(pool).await?;
+    sqlx::raw_sql(WEEKLY_TASK_SOURCE_LINKS_SQL)
+        .execute(pool)
+        .await?;
     sqlx::raw_sql(MANUAL_LOG_ATTACHMENTS_SQL)
         .execute(pool)
         .await?;
@@ -419,6 +422,32 @@ async fn run_sparc_force_dedup_migration(pool: &SqlitePool) -> Result<(), sqlx::
 
     Ok(())
 }
+
+const WEEKLY_TASK_SOURCE_LINKS_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS weekly_task_source_links (
+  id TEXT PRIMARY KEY,
+  weekly_task_id TEXT NOT NULL,
+  source_type TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  commit_hash TEXT NOT NULL,
+  activity_id TEXT NOT NULL,
+  summary_snapshot TEXT NOT NULL,
+  confidence REAL,
+  confidence_label TEXT,
+  rationale_json TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (weekly_task_id) REFERENCES weekly_tasks(id) ON DELETE CASCADE,
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_weekly_task_source_links_commit
+  ON weekly_task_source_links(source_type, project_id, commit_hash);
+CREATE INDEX IF NOT EXISTS idx_weekly_task_source_links_task
+  ON weekly_task_source_links(weekly_task_id);
+CREATE INDEX IF NOT EXISTS idx_weekly_task_source_links_activity
+  ON weekly_task_source_links(activity_id);
+"#;
 
 const SPARC_FORCE_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS sparc_force_connections (

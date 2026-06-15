@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use chrono::{Datelike, NaiveDate, Utc};
+use chrono::{Datelike, NaiveDate, Timelike, Utc};
 use sqlx::{Row, SqlitePool};
 
 use crate::application::repositories::{
@@ -24,6 +24,7 @@ use crate::domain::calendar::{
     WeekCapacity,
 };
 use crate::domain::commit::Commit;
+use crate::domain::commit_task::WeeklyTaskSourceLink;
 use crate::domain::daily_plan::{
     DailyPlan, DailyPlanItem, DailyPlanItemStatus, GetDailyPlanInput, ReplaceDailyPlanItemInput,
     UpdateDailyPlanItemInput, UpsertDailyPlanInput,
@@ -2328,6 +2329,13 @@ impl<'a> ActivityRepository<'a> {
         Self { pool }
     }
 
+    pub async fn find_commit_activity(
+        &self,
+        activity_id: &str,
+    ) -> Result<Option<ActivityItem>, sqlx::Error> {
+        activity_item_for_source(self.pool, "commit", activity_id).await
+    }
+
     pub async fn list(&self, input: ListActivityInput) -> Result<Vec<ActivityDay>, sqlx::Error> {
         let mut items = Vec::new();
         let include_commits = input
@@ -2709,16 +2717,14 @@ impl<'a> ActivityRepository<'a> {
         let rows = sqlx::query(
             r#"
             SELECT
-                (CAST(strftime('%w', commits.committed_at) AS INTEGER) + 6) % 7 AS day,
-                CAST(strftime('%H', commits.committed_at) AS INTEGER) AS hour,
-                COUNT(*) AS count
+                commits.project_id,
+                commits.committed_at
             FROM commits
             JOIN projects ON projects.id = commits.project_id
             WHERE projects.status = 'active'
               AND substr(commits.committed_at, 1, 10) >= ?1
               AND substr(commits.committed_at, 1, 10) <= ?2
-            GROUP BY day, hour
-            ORDER BY day, hour
+            ORDER BY commits.committed_at
             "#,
         )
         .bind(&input.from)
@@ -2726,21 +2732,33 @@ impl<'a> ActivityRepository<'a> {
         .fetch_all(self.pool)
         .await?;
 
-        let mut cells = Vec::new();
-        let mut max_count: i64 = 0;
+        let mut grouped: HashMap<(i64, i64), i64> = HashMap::new();
 
         for row in rows {
-            let day: i64 = row.get("day");
-            let hour: i64 = row.get("hour");
-            let count: i64 = row.get("count");
+            let project_id: String = row.get("project_id");
+            if !project_filter_matches(&input.project_ids, &project_id) {
+                continue;
+            }
 
-            if day >= 1 && day <= 5 {
-                if count > max_count {
-                    max_count = count;
-                }
-                cells.push(HeatmapCell { day, hour, count });
+            let committed_at: String = row.get("committed_at");
+            let Ok(committed_at) = chrono::DateTime::parse_from_rfc3339(&committed_at) else {
+                continue;
+            };
+
+            let day = committed_at.weekday().number_from_monday() as i64;
+            if (1..=5).contains(&day) {
+                let hour = committed_at.hour() as i64;
+                *grouped.entry((day, hour)).or_insert(0) += 1;
             }
         }
+
+        let mut cells = grouped
+            .into_iter()
+            .map(|((day, hour), count)| HeatmapCell { day, hour, count })
+            .collect::<Vec<_>>();
+        cells.sort_by_key(|cell| (cell.day, cell.hour));
+
+        let max_count = cells.iter().map(|cell| cell.count).max().unwrap_or(0);
 
         Ok(HeatmapData { cells, max_count })
     }
@@ -3449,6 +3467,37 @@ impl<'a> ActivityGroupRepository<'a> {
             .bind(fingerprint)
             .fetch_optional(self.pool)
             .await?;
+
+        if let Some(row) = row {
+            let id: String = row.get("id");
+            self.get(&id).await
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub async fn find_containing_activity(
+        &self,
+        source_type: &str,
+        source_id: &str,
+    ) -> Result<Option<ActivityGroup>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            SELECT activity_groups.id
+            FROM activity_group_items
+            JOIN activity_groups ON activity_groups.id = activity_group_items.group_id
+            WHERE activity_group_items.source_type = ?1
+              AND activity_group_items.source_id = ?2
+            ORDER BY activity_groups.user_edited_at DESC,
+                     activity_groups.confidence DESC,
+                     activity_groups.updated_at DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(source_type)
+        .bind(source_id)
+        .fetch_optional(self.pool)
+        .await?;
 
         if let Some(row) = row {
             let id: String = row.get("id");
@@ -6117,6 +6166,87 @@ impl<'a> WeeklyTaskRepository<'a> {
         .await?;
 
         Ok(row.map(weekly_task_from_row))
+    }
+}
+
+pub struct WeeklyTaskSourceLinkRepository<'a> {
+    pool: &'a SqlitePool,
+}
+
+impl<'a> WeeklyTaskSourceLinkRepository<'a> {
+    pub fn new(pool: &'a SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn find_by_commit(
+        &self,
+        project_id: &str,
+        commit_hash: &str,
+    ) -> Result<Option<WeeklyTaskSourceLink>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, weekly_task_id, source_type, project_id, commit_hash, activity_id,
+                   summary_snapshot, confidence, confidence_label, rationale_json, created_at, updated_at
+            FROM weekly_task_source_links
+            WHERE source_type = 'commit'
+              AND project_id = ?1
+              AND commit_hash = ?2
+            LIMIT 1
+            "#,
+        )
+        .bind(project_id)
+        .bind(commit_hash)
+        .fetch_optional(self.pool)
+        .await?;
+
+        Ok(row.map(weekly_task_source_link_from_row))
+    }
+
+    pub async fn create(
+        &self,
+        input: &WeeklyTaskSourceLink,
+    ) -> Result<WeeklyTaskSourceLink, sqlx::Error> {
+        let now = current_timestamp();
+        let link = WeeklyTaskSourceLink {
+            id: generate_id("weekly_task_source_link"),
+            weekly_task_id: input.weekly_task_id.clone(),
+            source_type: input.source_type.clone(),
+            project_id: input.project_id.clone(),
+            commit_hash: input.commit_hash.clone(),
+            activity_id: input.activity_id.clone(),
+            summary_snapshot: input.summary_snapshot.clone(),
+            confidence: input.confidence,
+            confidence_label: input.confidence_label.clone(),
+            rationale_json: input.rationale_json.clone(),
+            created_at: now.clone(),
+            updated_at: now,
+        };
+
+        sqlx::query(
+            r#"
+            INSERT INTO weekly_task_source_links (
+              id, weekly_task_id, source_type, project_id, commit_hash, activity_id,
+              summary_snapshot, confidence, confidence_label, rationale_json, created_at, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            "#,
+        )
+        .bind(&link.id)
+        .bind(&link.weekly_task_id)
+        .bind(&link.source_type)
+        .bind(&link.project_id)
+        .bind(&link.commit_hash)
+        .bind(&link.activity_id)
+        .bind(&link.summary_snapshot)
+        .bind(link.confidence)
+        .bind(&link.confidence_label)
+        .bind(&link.rationale_json)
+        .bind(&link.created_at)
+        .bind(&link.updated_at)
+        .execute(self.pool)
+        .await?;
+
+        Ok(link)
     }
 }
 
@@ -8978,6 +9108,23 @@ fn weekly_task_from_row(row: sqlx::sqlite::SqliteRow) -> WeeklyTask {
     }
 }
 
+fn weekly_task_source_link_from_row(row: sqlx::sqlite::SqliteRow) -> WeeklyTaskSourceLink {
+    WeeklyTaskSourceLink {
+        id: row.get("id"),
+        weekly_task_id: row.get("weekly_task_id"),
+        source_type: row.get("source_type"),
+        project_id: row.get("project_id"),
+        commit_hash: row.get("commit_hash"),
+        activity_id: row.get("activity_id"),
+        summary_snapshot: row.get("summary_snapshot"),
+        confidence: row.get("confidence"),
+        confidence_label: row.get("confidence_label"),
+        rationale_json: row.get("rationale_json"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    }
+}
+
 fn daily_plan_from_row(row: sqlx::sqlite::SqliteRow) -> DailyPlan {
     DailyPlan {
         id: row.get("id"),
@@ -11049,6 +11196,166 @@ mod tests {
             .expect("list filtered activity");
 
         assert!(no_matching_project.is_empty());
+    }
+
+    #[tokio::test]
+    async fn activity_heatmap_groups_commits_by_stored_offset_weekday_and_hour() {
+        let pool = test_pool().await;
+        let project = create_project(&pool).await;
+        let commit_repository = CommitRepository::new(&pool);
+        let activity_repository = ActivityRepository::new(&pool);
+
+        let mut monday = test_commit(&project.id, "heatmap_monday", "feat: monday work");
+        monday.committed_at = "2026-05-18T09:00:00+02:00".to_string();
+        commit_repository
+            .upsert(&monday)
+            .await
+            .expect("insert monday commit");
+
+        let mut tuesday = test_commit(&project.id, "heatmap_tuesday", "feat: tuesday work");
+        tuesday.committed_at = "2026-05-19T11:00:00+02:00".to_string();
+        commit_repository
+            .upsert(&tuesday)
+            .await
+            .expect("insert tuesday commit");
+
+        let mut near_midnight =
+            test_commit(&project.id, "heatmap_midnight", "fix: preserve offset day");
+        near_midnight.committed_at = "2026-05-19T00:30:00+02:00".to_string();
+        commit_repository
+            .upsert(&near_midnight)
+            .await
+            .expect("insert near midnight commit");
+
+        let mut weekend = test_commit(&project.id, "heatmap_weekend", "chore: weekend work");
+        weekend.committed_at = "2026-05-23T10:00:00+02:00".to_string();
+        commit_repository
+            .upsert(&weekend)
+            .await
+            .expect("insert weekend commit");
+
+        let heatmap = activity_repository
+            .get_heatmap_data(HeatmapInput {
+                from: "2026-05-18".to_string(),
+                to: "2026-05-24".to_string(),
+                project_ids: None,
+            })
+            .await
+            .expect("get heatmap");
+
+        assert!(heatmap
+            .cells
+            .iter()
+            .any(|cell| cell.day == 1 && cell.hour == 9 && cell.count == 1));
+        assert!(heatmap
+            .cells
+            .iter()
+            .any(|cell| cell.day == 2 && cell.hour == 0 && cell.count == 1));
+        assert!(heatmap
+            .cells
+            .iter()
+            .any(|cell| cell.day == 2 && cell.hour == 11 && cell.count == 1));
+        assert!(!heatmap.cells.iter().any(|cell| cell.day > 5));
+        assert_eq!(heatmap.max_count, 1);
+    }
+
+    #[tokio::test]
+    async fn activity_heatmap_applies_project_filter() {
+        let pool = test_pool().await;
+        let project = create_project(&pool).await;
+        let other_project = ProjectRepository::new(&pool)
+            .create(CreateProjectInput {
+                name: "Other API".to_string(),
+                description: None,
+                repo_path: Some("C:\\repo\\other-api".to_string()),
+                github_url: Some("https://github.com/company/other-api".to_string()),
+                github_account_id: None,
+                project_type: Some("Company".to_string()),
+                classification: None,
+            })
+            .await
+            .expect("create other project");
+        let commit_repository = CommitRepository::new(&pool);
+        let activity_repository = ActivityRepository::new(&pool);
+
+        let mut included = test_commit(&project.id, "heatmap_included", "feat: included work");
+        included.committed_at = "2026-05-19T11:00:00+02:00".to_string();
+        commit_repository
+            .upsert(&included)
+            .await
+            .expect("insert included commit");
+
+        let mut excluded =
+            test_commit(&other_project.id, "heatmap_excluded", "feat: excluded work");
+        excluded.committed_at = "2026-05-19T11:00:00+02:00".to_string();
+        commit_repository
+            .upsert(&excluded)
+            .await
+            .expect("insert excluded commit");
+
+        let heatmap = activity_repository
+            .get_heatmap_data(HeatmapInput {
+                from: "2026-05-18".to_string(),
+                to: "2026-05-24".to_string(),
+                project_ids: Some(vec![project.id]),
+            })
+            .await
+            .expect("get filtered heatmap");
+
+        assert_eq!(heatmap.cells.len(), 1);
+        assert_eq!(heatmap.cells[0].day, 2);
+        assert_eq!(heatmap.cells[0].hour, 11);
+        assert_eq!(heatmap.cells[0].count, 1);
+        assert_eq!(heatmap.max_count, 1);
+    }
+
+    #[tokio::test]
+    async fn weekly_task_source_links_prevent_duplicate_commit_links() {
+        let pool = test_pool().await;
+        let project = create_project(&pool).await;
+        let weekly_tasks = WeeklyTaskRepository::new(&pool);
+        let links = WeeklyTaskSourceLinkRepository::new(&pool);
+        let task = weekly_tasks
+            .create(CreateWeeklyTaskInput {
+                project_id: Some(project.id.clone()),
+                task_type: WeeklyTaskType::CompletedChecklist,
+                status: Some(WeeklyTaskStatus::Completed),
+                title: "Complete commit task drafting".to_string(),
+                details: None,
+                week_start_date: "2026-06-08".to_string(),
+                target_date: None,
+                completed_at: Some("2026-06-10".to_string()),
+                priority: Some(WeeklyTaskPriority::Normal),
+                included_in_report: Some(true),
+                progress_percent: None,
+                estimated_minutes: None,
+            })
+            .await
+            .expect("create task");
+        let link = WeeklyTaskSourceLink {
+            id: String::new(),
+            weekly_task_id: task.id.clone(),
+            source_type: "commit".to_string(),
+            project_id: project.id.clone(),
+            commit_hash: "1234567890abcdef1234567890abcdef12345678".to_string(),
+            activity_id: "commit_activity_1".to_string(),
+            summary_snapshot: "feat: commit task drafting".to_string(),
+            confidence: Some(0.82),
+            confidence_label: Some("strong".to_string()),
+            rationale_json: Some(r#"["test"]"#.to_string()),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+
+        links.create(&link).await.expect("create source link");
+        let existing = links
+            .find_by_commit(&project.id, &link.commit_hash)
+            .await
+            .expect("find link")
+            .expect("existing link");
+
+        assert_eq!(existing.weekly_task_id, task.id);
+        assert!(links.create(&link).await.is_err());
     }
 
     #[tokio::test]

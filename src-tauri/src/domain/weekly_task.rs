@@ -61,7 +61,7 @@ pub struct ListWeeklyTasksInput {
     pub included_in_report: Option<bool>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateWeeklyTaskInput {
     pub project_id: Option<String>,

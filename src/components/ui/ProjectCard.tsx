@@ -119,19 +119,19 @@ export function ProjectCard({
       <div className="absolute inset-0 bg-gradient-to-br opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
 
       <div className="relative p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-start gap-3">
+        <div className="flex min-w-0 items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-3">
             <div
               className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border bg-gradient-to-br ${colorClass}`}
             >
               <Icon className="h-5 w-5" />
             </div>
 
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 flex-wrap items-start gap-2">
                 <button
                   onClick={() => navigate(`/projects/${project.id}`)}
-                  className="truncate text-sm font-semibold text-white transition-colors hover:text-blue-200"
+                  className="min-w-0 max-w-full text-left text-sm font-semibold leading-5 text-white transition-colors hover:text-blue-200 [overflow-wrap:anywhere]"
                 >
                   {project.name}
                 </button>
@@ -144,7 +144,7 @@ export function ProjectCard({
               </div>
 
               {project.description && (
-                <p className="mt-1 line-clamp-2 text-xs text-slate-400">
+                <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-400 [overflow-wrap:anywhere]">
                   {project.description}
                 </p>
               )}
@@ -154,30 +154,32 @@ export function ProjectCard({
                   href={project.githubUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="mt-2 inline-flex items-center gap-1 text-xs text-cyan-300/85 hover:text-cyan-200"
+                  className="mt-2 inline-flex max-w-full items-start gap-1 text-xs leading-5 text-cyan-300/85 hover:text-cyan-200"
                 >
-                  <GitBranch className="h-3 w-3" />
-                  <span className="truncate">
+                  <GitBranch className="mt-0.5 h-3 w-3 shrink-0" />
+                  <span className="min-w-0 [overflow-wrap:anywhere]">
                     {project.githubUrl.replace(/^https?:\/\//, "")}
                   </span>
-                  <ExternalLink className="h-3 w-3 shrink-0" />
+                  <ExternalLink className="mt-0.5 h-3 w-3 shrink-0" />
                 </a>
               )}
 
               {workspaceName && (
-                <div className="mt-2 inline-flex max-w-full items-center gap-1 rounded-md border border-cyan-300/15 bg-cyan-500/10 px-2 py-1 text-[10px] font-semibold text-cyan-200">
-                  <Layers className="h-3 w-3 shrink-0" />
-                  <span className="truncate">{workspaceName}</span>
+                <div className="mt-2 inline-flex max-w-full items-start gap-1 rounded-md border border-cyan-300/15 bg-cyan-500/10 px-2 py-1 text-[10px] font-semibold leading-4 text-cyan-200">
+                  <Layers className="mt-0.5 h-3 w-3 shrink-0" />
+                  <span className="min-w-0 [overflow-wrap:anywhere]">{workspaceName}</span>
                 </div>
               )}
             </div>
           </div>
         </div>
 
-        <div className="mt-4 flex items-center justify-between">
-          <Badge tone="blue">{project.projectType || "Company"}</Badge>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+          <div className="min-w-0 max-w-full">
+            <Badge tone="blue">{project.projectType || "Company"}</Badge>
+          </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex shrink-0 items-center gap-1.5">
             <button
               onClick={onEdit}
               className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-400 transition-colors hover:bg-white/10 hover:text-white"
@@ -196,26 +198,26 @@ export function ProjectCard({
         </div>
 
         <div className="mt-4 grid grid-cols-3 gap-2 rounded-xl border border-white/8 bg-slate-950/50 p-3">
-          <div className="text-center">
-            <p className="text-lg font-semibold text-white">{commitsThisWeek}</p>
-            <p className="text-[10px] text-slate-500">Commits This Week</p>
+          <div className="min-w-0 text-center">
+            <p className="text-lg font-semibold text-white [overflow-wrap:anywhere]">{commitsThisWeek}</p>
+            <p className="text-[10px] leading-4 text-slate-500">Commits This Week</p>
           </div>
-          <div className="text-center">
-            <p className="text-lg font-semibold text-white">
+          <div className="min-w-0 text-center">
+            <p className="text-lg font-semibold text-white [overflow-wrap:anywhere]">
               {lastSync ? formatTimeAgo(lastSync) : "N/A"}
             </p>
-            <p className="text-[10px] text-slate-500">Latest Commit</p>
+            <p className="text-[10px] leading-4 text-slate-500">Latest Commit</p>
           </div>
-          <div className="text-center">
-            <p className="text-lg font-semibold text-white">
+          <div className="min-w-0 text-center">
+            <p className="text-lg font-semibold text-white [overflow-wrap:anywhere]">
               {formatHours(hoursTracked)}
             </p>
-            <p className="text-[10px] text-slate-500">Hours Tracked</p>
+            <p className="text-[10px] leading-4 text-slate-500">Hours Tracked</p>
           </div>
         </div>
 
-        <div className="mt-3 flex items-center gap-2 text-[10px] text-slate-500">
-          <span>Updated {formatTimeAgo(project.updatedAt)}</span>
+        <div className="mt-3 flex min-w-0 items-center gap-2 text-[10px] leading-4 text-slate-500">
+          <span className="[overflow-wrap:anywhere]">Updated {formatTimeAgo(project.updatedAt)}</span>
         </div>
       </div>
     </Panel>

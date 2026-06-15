@@ -10,6 +10,7 @@ import { ProjectDetailTabs, type ProjectDetailTab } from "../components/ui/Proje
 import { CommitList } from "../components/ui/CommitList";
 import { TaskList } from "../components/ui/TaskList";
 import { TaskDetailModal } from "../components/ui/TaskDetailModal";
+import { CommitTaskReviewModal } from "../components/ui/CommitTaskReviewModal";
 import { MeetingList } from "../components/ui/MeetingList";
 import { ManualLogDetailModal } from "../components/ui/ManualLogDetailModal";
 import { ProjectSidebar } from "../components/ui/ProjectSidebar";
@@ -36,6 +37,7 @@ import {
 import { syncGitHubProjectActivity } from "../lib/api/github";
 import { listActivity, getWeekSummary } from "../lib/api/activity";
 import { listActivityGroups, recordActivityGroupTitleFeedback, updateActivityGroup } from "../lib/api/activityGroups";
+import { createWeeklyTaskFromCommit, previewCommitTaskDraft } from "../lib/api/commitTasks";
 import { listWeeklyTasks } from "../lib/api/weeklyTasks";
 import { listManualLogs } from "../lib/api/manualLogs";
 import { syncAnnouncement, syncStartedAnnouncement } from "../lib/announcements";
@@ -44,6 +46,7 @@ import { useWeekRange } from "../hooks/useWeekRange";
 import type { CreateProjectInput, GitRef, GitRefFilter, GitWorktree, ProjectGitFocus } from "../types/project";
 import type { ActivityItem } from "../types/activity";
 import type { ActivityGroup } from "../types/activityGroup";
+import type { CommitTaskDraftResponse } from "../types/commitTask";
 import type { WeeklyTask } from "../types/weeklyTask";
 import type { ManualLog } from "../types/manualLog";
 import type { PrPackageGroupContext } from "../lib/prBuilder";
@@ -63,6 +66,7 @@ export function ProjectDetailPage() {
   const [isPrBuilderOpen, setIsPrBuilderOpen] = useState(false);
   const [isEditFormOpen, setIsEditFormOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<ActivityGroup | null>(null);
+  const [commitTaskDraft, setCommitTaskDraft] = useState<CommitTaskDraftResponse | null>(null);
   const [viewingTask, setViewingTask] = useState<WeeklyTask | null>(null);
   const [viewingMeeting, setViewingMeeting] = useState<ManualLog | null>(null);
   const [organizeStatus, setOrganizeStatus] = useState<string | null>(null);
@@ -276,6 +280,42 @@ export function ProjectDetailPage() {
     },
     onError: (error) => {
       toast.error("Update failed", error instanceof Error ? error.message : "Work item could not be updated.");
+    },
+  });
+
+  const previewCommitTaskMutation = useMutation({
+    mutationFn: (item: ActivityItem) =>
+      previewCommitTaskDraft({
+        activityId: item.id,
+        weekStartDate: weekRange.from,
+      }),
+    onSuccess: (response) => {
+      setCommitTaskDraft(response);
+    },
+    onError: (error) => {
+      toast.error("Task draft failed", error instanceof Error ? error.message : "The commit task draft could not be prepared.");
+    },
+  });
+
+  const createCommitTaskMutation = useMutation({
+    mutationFn: ({ response, task }: { response: CommitTaskDraftResponse; task: Parameters<typeof createWeeklyTaskFromCommit>[0]["task"] }) =>
+      createWeeklyTaskFromCommit({
+        activityId: response.evidence.activityId,
+        task,
+        confidence: response.confidence,
+        confidenceLabel: response.confidenceLabel,
+        rationale: response.rationale,
+      }),
+    onSuccess: async (outcome) => {
+      setCommitTaskDraft(null);
+      await invalidateProjectViews(queryClient, projectId);
+      toast.success(
+        outcome.alreadyCreated ? "Task already exists" : "Task created",
+        outcome.task.title,
+      );
+    },
+    onError: (error) => {
+      toast.error("Task create failed", error instanceof Error ? error.message : "The task could not be created from this commit.");
     },
   });
 
@@ -577,6 +617,7 @@ export function ProjectDetailPage() {
                 onToggleCommit={toggleCommitSelection}
                 onEditGroup={setEditingGroup}
                 onBuildGroupPr={buildPrFromGroup}
+                onCreateTaskFromCommit={(item) => previewCommitTaskMutation.mutate(item)}
               />
             </>
           )}
@@ -602,8 +643,12 @@ export function ProjectDetailPage() {
           {activeTab === "meetings" && (
             <MeetingList meetings={meetings} isLoading={logsQuery.isLoading} onMeetingClick={setViewingMeeting} />
           )}
-      {activeTab === "all" && (
-            <CommitList commits={allActivity} isLoading={activityQuery.isLoading || logsQuery.isLoading} />
+          {activeTab === "all" && (
+            <CommitList
+              commits={allActivity}
+              isLoading={activityQuery.isLoading || logsQuery.isLoading}
+              onCreateTaskFromCommit={(item) => previewCommitTaskMutation.mutate(item)}
+            />
           )}
         </div>
 
@@ -633,6 +678,21 @@ export function ProjectDetailPage() {
         log={viewingMeeting}
         onClose={() => setViewingMeeting(null)}
       />
+      {commitTaskDraft ? (
+        <CommitTaskReviewModal
+          response={commitTaskDraft}
+          isSaving={createCommitTaskMutation.isPending}
+          error={createCommitTaskMutation.error instanceof Error ? createCommitTaskMutation.error.message : null}
+          onClose={() => setCommitTaskDraft(null)}
+          onConfirm={(task) => createCommitTaskMutation.mutate({ response: commitTaskDraft, task })}
+          onViewExisting={() => {
+            if (commitTaskDraft.existingTask) {
+              setViewingTask(commitTaskDraft.existingTask);
+              setCommitTaskDraft(null);
+            }
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -649,6 +709,7 @@ function ProjectWorkStream({
   onToggleCommit,
   onEditGroup,
   onBuildGroupPr,
+  onCreateTaskFromCommit,
 }: {
   groups: ActivityGroup[];
   rawCommits: ActivityItem[];
@@ -661,6 +722,7 @@ function ProjectWorkStream({
   onToggleCommit: (commitId: string) => void;
   onEditGroup: (group: ActivityGroup) => void;
   onBuildGroupPr: (group: ActivityGroup) => void;
+  onCreateTaskFromCommit: (commit: ActivityItem) => void;
 }) {
   if (isLoading) {
     return (
@@ -724,6 +786,7 @@ function ProjectWorkStream({
             isLoading={false}
             selectedCommitIds={selectedCommitIds}
             onToggleCommit={onToggleCommit}
+            onCreateTaskFromCommit={onCreateTaskFromCommit}
           />
         ),
       )}

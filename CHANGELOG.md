@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.8] - 2026-06-15
+- Added smarter commit-to-task drafting with multiple ranked title candidates, group-aware context, and evidence-rich task descriptions.
+- Added commit-linked task provenance, duplicate prevention, and a review modal that surfaces title suggestions and structured evidence before creation.
+- Improved work evidence invalidation so activity-driven reporting stays aligned with the latest grouped commit context.
+
 ## [0.1.7] - 2026-06-09
 - Added immersive focus mode, explicit focus targets, and a polished manual log workspace for smoother daily capture.
 - Added robust local voice capture review while keeping voice processing local-first.

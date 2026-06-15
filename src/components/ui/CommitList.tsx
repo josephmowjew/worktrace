@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ChevronRight, Copy, GitCommit, User } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Copy, GitCommit, ListTodo, User } from "lucide-react";
 import { useState } from "react";
 import type { ActivityItem } from "../../types/activity";
 import { GitContextBadges } from "./GitContextBadges";
@@ -9,11 +9,13 @@ export function CommitList({
   isLoading,
   selectedCommitIds,
   onToggleCommit,
+  onCreateTaskFromCommit,
 }: {
   commits: ActivityItem[];
   isLoading: boolean;
   selectedCommitIds?: Set<string>;
   onToggleCommit?: (commitId: string) => void;
+  onCreateTaskFromCommit?: (commit: ActivityItem) => void;
 }) {
   if (isLoading) {
     return (
@@ -49,6 +51,7 @@ export function CommitList({
           commit={commit}
           isSelected={selectedCommitIds?.has(commit.id) ?? false}
           onToggle={onToggleCommit}
+          onCreateTaskFromCommit={onCreateTaskFromCommit}
         />
       ))}
     </div>
@@ -59,10 +62,12 @@ function CommitItem({
   commit,
   isSelected,
   onToggle,
+  onCreateTaskFromCommit,
 }: {
   commit: ActivityItem;
   isSelected: boolean;
   onToggle?: (commitId: string) => void;
+  onCreateTaskFromCommit?: (commit: ActivityItem) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -119,20 +124,32 @@ function CommitItem({
           </p>
         </div>
 
-        {hasExtraContent && (
-          <button
-            type="button"
-            onClick={() => setExpanded(!expanded)}
-            className="shrink-0 rounded-lg p-1.5 text-slate-500 transition-colors hover:bg-white/5 hover:text-slate-300"
-            aria-label={expanded ? "Collapse details" : "Expand details"}
-          >
-            {expanded ? (
-              <ChevronDown className="h-4 w-4" />
-            ) : (
-              <ChevronRight className="h-4 w-4" />
-            )}
-          </button>
-        )}
+        <div className="flex shrink-0 items-center gap-1">
+          {onCreateTaskFromCommit && commit.activityType === "commit" && commit.commitHash ? (
+            <button
+              type="button"
+              onClick={() => onCreateTaskFromCommit(commit)}
+              className="rounded-lg p-1.5 text-cyan-300 transition-colors hover:bg-cyan-500/10 hover:text-cyan-100"
+              aria-label="Create task from commit"
+            >
+              <ListTodo className="h-4 w-4" />
+            </button>
+          ) : null}
+          {hasExtraContent && (
+            <button
+              type="button"
+              onClick={() => setExpanded(!expanded)}
+              className="rounded-lg p-1.5 text-slate-500 transition-colors hover:bg-white/5 hover:text-slate-300"
+              aria-label={expanded ? "Collapse details" : "Expand details"}
+            >
+              {expanded ? (
+                <ChevronDown className="h-4 w-4" />
+              ) : (
+                <ChevronRight className="h-4 w-4" />
+              )}
+            </button>
+          )}
+        </div>
       </div>
 
       {expanded && hasExtraContent && (

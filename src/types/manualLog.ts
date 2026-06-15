@@ -1,18 +1,4 @@
-export type ActivityType =
-  | "Meeting"
-  | "Development"
-  | "BugFix"
-  | "Testing"
-  | "Deployment"
-  | "Research"
-  | "Documentation"
-  | "Planning"
-  | "Support"
-  | "CodeReview"
-  | "ClientFeedback"
-  | "Debugging"
-  | "ClientCall"
-  | "AdminTask";
+export type ActivityType = string;
 
 export type ManualLog = {
   id: string;

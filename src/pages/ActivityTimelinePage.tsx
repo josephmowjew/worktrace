@@ -34,10 +34,12 @@ import { TimelineGroupItem } from "../components/timeline/TimelineGroupItem";
 import { StoryTimeline } from "../components/timeline/StoryTimeline";
 import type { MixedTimelineDay as MixedTimelineDayModel, TimelineEntry } from "../components/timeline/storyTimelineModel";
 import { TaskDetailModal } from "../components/ui/TaskDetailModal";
+import { CommitTaskReviewModal } from "../components/ui/CommitTaskReviewModal";
 import { Badge } from "../components/ui/Badge";
 import { ModalShell } from "../components/ui/ModalShell";
 import { listActivity, getActivityHeatmap, getWeekSummary, getKeyHighlights } from "../lib/api/activity";
 import { listActivityGroups, recordActivityGroupTitleFeedback, refreshActivityGroupSuggestions, selectActivityGroupTitleCandidate, suggestActivityGroups, updateActivityGroup } from "../lib/api/activityGroups";
+import { createWeeklyTaskFromCommit, previewCommitTaskDraft } from "../lib/api/commitTasks";
 import { getBackgroundJobStatus, getEmbeddingStatus, queueActivityEmbeddingRefresh, runBackgroundJobsOnce, semanticActivitySearch } from "../lib/api/embeddings";
 import { listProjects } from "../lib/api/projects";
 import { listWeeklyTasks } from "../lib/api/weeklyTasks";
@@ -48,6 +50,7 @@ import { useWeekRange } from "../hooks/useWeekRange";
 import { isRepositorySyncInProgressError, useRepositorySync } from "../features/repositorySync/RepositorySyncProvider";
 import type { ActivityItem } from "../types/activity";
 import type { ActivityGroup, TitleCandidate } from "../types/activityGroup";
+import type { CommitTaskDraftResponse } from "../types/commitTask";
 import type { WeeklyTask } from "../types/weeklyTask";
 import { useEscapeKey } from "../hooks/useEscapeKey";
 
@@ -78,6 +81,7 @@ export function ActivityTimelinePage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [viewingTask, setViewingTask] = useState<WeeklyTask | null>(null);
   const [editingGroup, setEditingGroup] = useState<ActivityGroup | null>(null);
+  const [commitTaskDraft, setCommitTaskDraft] = useState<CommitTaskDraftResponse | null>(null);
   const [syncMenuOpen, setSyncMenuOpen] = useState(false);
   const [organizePhase, setOrganizePhase] = useState<"idle" | "evidence" | "grouping">("idle");
   const [viewMode, setViewMode] = useState<"timeline" | "story">("timeline");
@@ -335,6 +339,42 @@ export function ActivityTimelinePage() {
     },
     onError: (error) => {
       toast.error("Title update failed", error instanceof Error ? error.message : "The title candidate could not be saved.");
+    },
+  });
+
+  const previewCommitTaskMutation = useMutation({
+    mutationFn: (item: ActivityItem) =>
+      previewCommitTaskDraft({
+        activityId: item.id,
+        weekStartDate: weekRange.from,
+      }),
+    onSuccess: (response) => {
+      setCommitTaskDraft(response);
+    },
+    onError: (error) => {
+      toast.error("Task draft failed", error instanceof Error ? error.message : "The commit task draft could not be prepared.");
+    },
+  });
+
+  const createCommitTaskMutation = useMutation({
+    mutationFn: ({ response, task }: { response: CommitTaskDraftResponse; task: Parameters<typeof createWeeklyTaskFromCommit>[0]["task"] }) =>
+      createWeeklyTaskFromCommit({
+        activityId: response.evidence.activityId,
+        task,
+        confidence: response.confidence,
+        confidenceLabel: response.confidenceLabel,
+        rationale: response.rationale,
+      }),
+    onSuccess: async (outcome) => {
+      setCommitTaskDraft(null);
+      await invalidateWorkEvidence(queryClient, { extraQueryKeys: [["weeklyTasks"]] });
+      toast.success(
+        outcome.alreadyCreated ? "Task already exists" : "Task created",
+        outcome.task.title,
+      );
+    },
+    onError: (error) => {
+      toast.error("Task create failed", error instanceof Error ? error.message : "The task could not be created from this commit.");
     },
   });
 
@@ -717,6 +757,7 @@ export function ActivityTimelinePage() {
                     day={day}
                     onViewTask={setViewingTask}
                     onEditGroup={setEditingGroup}
+                    onCreateTaskFromCommit={(item) => previewCommitTaskMutation.mutate(item)}
                     onSelectTitleCandidate={(group, candidate) =>
                       selectTitleCandidateMutation.mutate({ group, candidate })
                     }
@@ -779,6 +820,23 @@ export function ActivityTimelinePage() {
           onSave={(values) => updateGroupMutation.mutate({ id: editingGroup.id, group: values })}
         />
       ) : null}
+      {commitTaskDraft ? (
+        <CommitTaskReviewModal
+          response={commitTaskDraft}
+          isSaving={createCommitTaskMutation.isPending}
+          error={createCommitTaskMutation.error instanceof Error ? createCommitTaskMutation.error.message : null}
+          onClose={() => {
+            setCommitTaskDraft(null);
+          }}
+          onConfirm={(task) => createCommitTaskMutation.mutate({ response: commitTaskDraft, task })}
+          onViewExisting={() => {
+            if (commitTaskDraft.existingTask) {
+              setViewingTask(commitTaskDraft.existingTask);
+              setCommitTaskDraft(null);
+            }
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -789,11 +847,13 @@ function MixedTimelineDay({
   day,
   onViewTask,
   onEditGroup,
+  onCreateTaskFromCommit,
   onSelectTitleCandidate,
 }: {
   day: MixedTimelineDay;
   onViewTask: (task: WeeklyTask) => void;
   onEditGroup: (group: ActivityGroup) => void;
+  onCreateTaskFromCommit: (item: ActivityItem) => void;
   onSelectTitleCandidate: (group: ActivityGroup, candidate: TitleCandidate) => void;
 }) {
   return (
@@ -818,7 +878,7 @@ function MixedTimelineDay({
             <div key={`${entry.kind}-${entry.id}`} className="relative">
               <div className="pointer-events-none absolute -left-[72px] top-9 z-20 h-4 w-4 -translate-x-1/2 rounded-full border border-blue-100/40 bg-blue-500 shadow-[0_0_0_6px_rgba(15,23,42,0.92),0_0_26px_rgba(59,130,246,0.42)] max-sm:hidden" />
               {entry.kind === "activity" ? (
-                <TimelineItem item={entry.item} />
+                <TimelineItem item={entry.item} onCreateTaskFromCommit={onCreateTaskFromCommit} />
               ) : entry.kind === "group" ? (
                 <TimelineGroupItem
                   group={entry.group}

@@ -1,5 +1,6 @@
 use chrono::{Datelike, Duration, NaiveDate};
 use serde::Deserialize;
+use sqlx::SqlitePool;
 use tauri::State;
 
 use crate::domain::dashboard::{DailyActivityHours, DashboardStats, ProjectBreakdown};
@@ -176,9 +177,19 @@ pub async fn get_weekly_activity_hours(
         Err(message) => return Ok(AppResult::err("VALIDATION_ERROR", message)),
     };
 
+    weekly_activity_hours_for_range(pool, start, end)
+        .await
+        .map(AppResult::ok)
+        .map_err(|e| e.to_string())
+}
+
+async fn weekly_activity_hours_for_range(
+    pool: &SqlitePool,
+    start: NaiveDate,
+    end: NaiveDate,
+) -> Result<Vec<DailyActivityHours>, sqlx::Error> {
     let mut result = Vec::new();
     let mut current = start;
-
     while current <= end {
         let date_str = format_date(current);
         let label = day_label(current);
@@ -189,8 +200,7 @@ pub async fn get_weekly_activity_hours(
         )
         .bind(&date_str)
         .fetch_one(pool)
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
 
         // Get manual log hours for this day
         let manual_hours: f64 = sqlx::query_scalar(
@@ -198,8 +208,7 @@ pub async fn get_weekly_activity_hours(
         )
         .bind(&date_str)
         .fetch_one(pool)
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
 
         let total_hours = (commit_count as f64 * 0.5) + manual_hours;
 
@@ -212,7 +221,7 @@ pub async fn get_weekly_activity_hours(
         current = current + Duration::days(1);
     }
 
-    Ok(AppResult::ok(result))
+    Ok(result)
 }
 
 #[tauri::command]
@@ -271,4 +280,59 @@ pub async fn get_project_breakdown(
         .collect();
 
     Ok(AppResult::ok(breakdown))
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::NaiveDate;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+
+    use super::*;
+    use crate::infrastructure::database::migrations::run_migrations;
+
+    async fn test_pool() -> SqlitePool {
+        let options = SqliteConnectOptions::new()
+            .filename(":memory:")
+            .create_if_missing(true);
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .expect("create sqlite test pool");
+
+        run_migrations(&pool).await.expect("run migrations");
+        pool
+    }
+
+    #[tokio::test]
+    async fn weekly_activity_hours_counts_excluded_manual_log_duration() {
+        let pool = test_pool().await;
+
+        sqlx::query(
+            r#"
+            INSERT INTO manual_logs (
+              id, project_id, date, activity_type, summary, outcome,
+              duration_minutes, follow_up, included_in_report, created_at, updated_at
+            )
+            VALUES
+              ('log_included', NULL, '2026-06-08', 'Development', 'Included log', NULL, 60, NULL, 1, '2026-06-08T09:00:00Z', '2026-06-08T09:00:00Z'),
+              ('log_excluded', NULL, '2026-06-08', 'Development', 'Excluded log', NULL, 120, NULL, 0, '2026-06-08T10:00:00Z', '2026-06-08T10:00:00Z')
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("insert manual logs");
+
+        let hours = weekly_activity_hours_for_range(
+            &pool,
+            NaiveDate::from_ymd_opt(2026, 6, 8).expect("start date"),
+            NaiveDate::from_ymd_opt(2026, 6, 8).expect("end date"),
+        )
+        .await
+        .expect("get weekly activity hours");
+
+        assert_eq!(hours.len(), 1);
+        assert_eq!(hours[0].hours, 3.0);
+    }
 }

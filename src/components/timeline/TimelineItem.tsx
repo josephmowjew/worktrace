@@ -6,6 +6,7 @@ import {
   FileText,
   FlaskConical,
   GitPullRequest,
+  ListTodo,
   Headphones,
   Rocket,
   Users,
@@ -55,9 +56,10 @@ const colorClasses: Record<string, { bg: string; border: string; text: string }>
 interface TimelineItemProps {
   item: ActivityItem;
   showTime?: boolean;
+  onCreateTaskFromCommit?: (item: ActivityItem) => void;
 }
 
-export function TimelineItem({ item, showTime = true }: TimelineItemProps) {
+export function TimelineItem({ item, showTime = true, onCreateTaskFromCommit }: TimelineItemProps) {
   const isCommit = item.activityType === "commit";
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -126,20 +128,32 @@ export function TimelineItem({ item, showTime = true }: TimelineItemProps) {
           </p>
         </div>
 
-        {(hasExtraContent || hasManualContent) && (
-          <button
-            type="button"
-            onClick={() => setExpanded(!expanded)}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-slate-950/42 text-slate-400 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-[background-color,color,transform] duration-150 hover:bg-white/8 hover:text-slate-200 active:scale-[0.96]"
-            aria-label={expanded ? "Collapse details" : "Expand details"}
-          >
-            {expanded ? (
-              <ChevronDown className="h-4 w-4" />
-            ) : (
-              <ChevronRight className="h-4 w-4" />
-            )}
-          </button>
-        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {isCommit && onCreateTaskFromCommit ? (
+            <button
+              type="button"
+              onClick={() => onCreateTaskFromCommit(item)}
+              className="flex h-10 w-10 items-center justify-center rounded-xl border border-cyan-300/15 bg-cyan-500/10 text-cyan-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-[background-color,color,transform] duration-150 hover:bg-cyan-500/15 hover:text-white active:scale-[0.96]"
+              aria-label="Create task from commit"
+            >
+              <ListTodo className="h-4 w-4" />
+            </button>
+          ) : null}
+          {(hasExtraContent || hasManualContent) && (
+            <button
+              type="button"
+              onClick={() => setExpanded(!expanded)}
+              className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-slate-950/42 text-slate-400 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-[background-color,color,transform] duration-150 hover:bg-white/8 hover:text-slate-200 active:scale-[0.96]"
+              aria-label={expanded ? "Collapse details" : "Expand details"}
+            >
+              {expanded ? (
+                <ChevronDown className="h-4 w-4" />
+              ) : (
+                <ChevronRight className="h-4 w-4" />
+              )}
+            </button>
+          )}
+        </div>
       </div>
 
       {expanded && (hasExtraContent || hasManualContent) && (
