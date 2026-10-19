@@ -158,6 +158,23 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .execute(pool)
         .await?;
 
+    // Persist the experience once. Existing installations keep their Developer
+    // workflow; an empty database gets the Essentials welcome flow.
+    sqlx::query(r#"
+        INSERT OR IGNORE INTO settings (key, value, updated_at)
+        SELECT 'experience.mode', CASE WHEN
+            EXISTS(SELECT 1 FROM settings) OR EXISTS(SELECT 1 FROM weekly_tasks)
+            OR EXISTS(SELECT 1 FROM projects) OR EXISTS(SELECT 1 FROM manual_logs)
+            OR EXISTS(SELECT 1 FROM reports) OR EXISTS(SELECT 1 FROM workspaces)
+            THEN 'developer' ELSE 'essentials' END, datetime('now')
+    "#).execute(pool).await?;
+    sqlx::query(r#"
+        INSERT OR IGNORE INTO settings (key, value, updated_at)
+        SELECT 'experience.configured', CASE WHEN
+            (SELECT value FROM settings WHERE key = 'experience.mode') = 'developer'
+            THEN 'true' ELSE 'false' END, datetime('now')
+    "#).execute(pool).await?;
+
     Ok(())
 }
 

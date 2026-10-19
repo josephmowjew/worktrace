@@ -21,3 +21,8 @@ export function updateWeeklyTask(id: string, input: UpdateWeeklyTaskInput) {
 export function deleteWeeklyTask(id: string) {
   return callCommand<boolean>("delete_weekly_task", { id });
 }
+
+/** Task manager history is independent of the selected reporting week. */
+export function listTasks() {
+  return callCommand<WeeklyTask[]>("list_tasks");
+}

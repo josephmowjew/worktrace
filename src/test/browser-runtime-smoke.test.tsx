@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MutationObserver, onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import type { ReactNode } from "react";
 import { AppLayout } from "../components/layout/AppLayout";
@@ -11,7 +11,7 @@ import { FrictionPage } from "../pages/FrictionPage";
 import { ToastProvider } from "../components/ui/ToastProvider";
 import { SpeechProvider } from "../components/ui/SpeechProvider";
 import { WorkTraceCommandError } from "../lib/api/client";
-import { shouldRetryQueryError } from "../app/providers";
+import { createAppQueryClient, shouldRetryQueryError } from "../app/providers";
 import { RepositorySyncProvider } from "../features/repositorySync/RepositorySyncProvider";
 
 vi.mock("@tauri-apps/api/window", () => ({
@@ -112,6 +112,20 @@ function renderWithProviders(node: ReactNode) {
 }
 
 describe("browser-only runtime smoke", () => {
+  it("reads and saves local data while the device is offline", async () => {
+    const client = createAppQueryClient();
+    const wasOnline = onlineManager.isOnline();
+    onlineManager.setOnline(false);
+    try {
+      await expect(client.fetchQuery({ queryKey: ["offline-tasks"], queryFn: async () => ["Task"] })).resolves.toEqual(["Task"]);
+      const save = new MutationObserver(client, { mutationFn: async (title: string) => ({ title }) });
+      await expect(save.mutate("Task")).resolves.toEqual({ title: "Task" });
+    } finally {
+      onlineManager.setOnline(wasOnline);
+      client.clear();
+    }
+  });
+
   it("renders AppLayout without crashing", async () => {
     const { container } = renderWithProviders(<AppLayout><div>child</div></AppLayout>);
     await waitFor(() => expect(container).toBeTruthy());

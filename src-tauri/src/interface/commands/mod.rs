@@ -166,6 +166,7 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         task_attachments::get_task_attachment_preview,
         voice::transcribe_voice_command,
         weekly_tasks::list_weekly_tasks,
+        weekly_tasks::list_tasks,
         weekly_tasks::create_weekly_task,
         weekly_tasks::update_weekly_task,
         weekly_tasks::delete_weekly_task,

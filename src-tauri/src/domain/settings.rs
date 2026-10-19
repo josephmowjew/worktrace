@@ -3,6 +3,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
+    #[serde(default = "legacy_experience_mode")]
+    pub experience_mode: String,
+    #[serde(default = "legacy_experience_configured")]
+    pub experience_configured: bool,
+    #[serde(default)]
+    pub enabled_features: Vec<String>,
     pub name: String,
     pub email: String,
     pub use_gravatar_profile_image: bool,
@@ -105,6 +111,9 @@ pub struct SettingsImportResult {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateSettingsInput {
+    pub experience_mode: Option<String>,
+    pub experience_configured: Option<bool>,
+    pub enabled_features: Option<Vec<String>>,
     pub name: Option<String>,
     pub email: Option<String>,
     pub use_gravatar_profile_image: Option<bool>,
@@ -179,8 +188,11 @@ pub struct UpdateSettingsInput {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            name: "John Developer".to_string(),
-            email: "johndev@worktrace.app".to_string(),
+            experience_mode: "essentials".to_string(),
+            experience_configured: false,
+            enabled_features: Vec::new(),
+            name: String::new(),
+            email: String::new(),
             use_gravatar_profile_image: false,
             default_manager_name: String::new(),
             git_author_email: String::new(),
@@ -207,14 +219,14 @@ impl Default for Settings {
             github_username: String::new(),
             github_connected_at: String::new(),
             github_last_validated_at: String::new(),
-            announcements_enabled: true,
+            announcements_enabled: false,
             announcement_volume: 0.8,
             announcement_voice: String::new(),
             announce_focus_events: true,
             announce_nudges: true,
             announce_sync_results: true,
             announce_task_changes: true,
-            voice_commands_enabled: true,
+            voice_commands_enabled: false,
             voice_command_mode: "push_to_talk".to_string(),
             voice_command_confirm_before_action: true,
             voice_transcription_provider: "local_whisper".to_string(),
@@ -260,4 +272,11 @@ impl Default for Settings {
             onboarding_completed_at: String::new(),
         }
     }
+}
+
+fn legacy_experience_mode() -> String {
+    "developer".to_string()
+}
+fn legacy_experience_configured() -> bool {
+    true
 }

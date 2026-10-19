@@ -5874,6 +5874,16 @@ impl<'a> WeeklyTaskRepository<'a> {
         Self { pool }
     }
 
+    pub async fn list_all(&self) -> Result<Vec<WeeklyTask>, sqlx::Error> {
+        let rows = sqlx::query(r#"
+            SELECT weekly_tasks.*, projects.name AS project_name
+            FROM weekly_tasks LEFT JOIN projects ON projects.id = weekly_tasks.project_id
+            ORDER BY CASE weekly_tasks.status WHEN 'blocked' THEN 0 WHEN 'in_progress' THEN 1 WHEN 'todo' THEN 2 ELSE 3 END,
+                     weekly_tasks.target_date IS NULL, weekly_tasks.target_date, weekly_tasks.created_at DESC
+        "#).fetch_all(self.pool).await?;
+        Ok(rows.into_iter().map(weekly_task_from_row).collect())
+    }
+
     pub async fn list(&self, input: ListWeeklyTasksInput) -> Result<Vec<WeeklyTask>, sqlx::Error> {
         let rows = sqlx::query(
             r#"
@@ -7708,6 +7718,25 @@ impl<'a> SettingsRepository<'a> {
             .fetch_all(self.pool)
             .await?;
 
+        // A saved pre-experience installation keeps its original Developer workflow.
+        // Empty databases use the new Essentials first-run flow. No user data is rewritten.
+        let has_mode = rows.iter().any(|row| row.get::<String, _>("key") == "experience.mode");
+        if !has_mode {
+            let has_work: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM weekly_tasks) OR EXISTS(SELECT 1 FROM projects) OR EXISTS(SELECT 1 FROM manual_logs) OR EXISTS(SELECT 1 FROM reports) OR EXISTS(SELECT 1 FROM workspaces)")
+                .fetch_one(self.pool).await?;
+            if !rows.is_empty() || has_work {
+                settings.experience_mode = "developer".to_string();
+                settings.experience_configured = true;
+            }
+        }
+
+        if settings.experience_mode == "developer" || rows.iter().any(|row| row.get::<String, _>("key") == "experience.mode" && row.get::<String, _>("value") == "developer") {
+            // Preserve the original defaults on legacy Developer installations.
+            // Explicit saved preferences below always take precedence.
+            settings.announcements_enabled = true;
+            settings.voice_commands_enabled = true;
+        }
+
         for row in rows {
             let key: String = row.get("key");
             let value: String = row.get("value");
@@ -7719,6 +7748,10 @@ impl<'a> SettingsRepository<'a> {
 
     pub async fn update(&self, input: UpdateSettingsInput) -> Result<Settings, sqlx::Error> {
         let mut settings = self.get().await?;
+
+        if let Some(value) = input.experience_mode { settings.experience_mode = value; }
+        if let Some(value) = input.experience_configured { settings.experience_configured = value; }
+        if let Some(value) = input.enabled_features { settings.enabled_features = value; }
 
         if let Some(value) = input.name {
             settings.name = value;
@@ -8309,6 +8342,9 @@ impl<'a> SettingsRepository<'a> {
                 .unwrap_or_else(|_| "[]".to_string()),
         )
         .await?;
+        self.upsert("experience.mode", &settings.experience_mode).await?;
+        self.upsert("experience.configured", if settings.experience_configured { "true" } else { "false" }).await?;
+        self.upsert("experience.features", &serde_json::to_string(&settings.enabled_features).unwrap_or_else(|_| "[]".to_string())).await?;
         self.upsert("onboarding.completed_at", &settings.onboarding_completed_at)
             .await?;
 
@@ -9265,6 +9301,9 @@ fn default_weekly_task_inclusion(task_type: &WeeklyTaskType) -> bool {
 
 fn apply_setting(settings: &mut Settings, key: &str, value: String) {
     match key {
+        "experience.mode" => settings.experience_mode = value,
+        "experience.configured" => settings.experience_configured = value == "true",
+        "experience.features" => settings.enabled_features = serde_json::from_str(&value).unwrap_or_default(),
         "profile.name" => settings.name = value,
         "profile.email" => settings.email = value,
         "profile.use_gravatar_profile_image" => {
@@ -12236,5 +12275,108 @@ mod tests {
             repository.get().await.expect("get settings").week_starts_on,
             "sunday"
         );
+    }
+}
+
+
+#[cfg(test)]
+mod experience_tests {
+    use super::*;
+    use crate::application::settings::SettingsService;
+    use crate::infrastructure::database::migrations::run_migrations;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        pool
+    }
+    fn task(title: &str, week: &str) -> CreateWeeklyTaskInput {
+        CreateWeeklyTaskInput {
+            project_id: None, task_type: crate::domain::weekly_task::WeeklyTaskType::PlannedWork,
+            status: None, title: title.to_string(), details: Some("Existing notes".to_string()),
+            week_start_date: week.to_string(), target_date: None, completed_at: None,
+            priority: None, included_in_report: Some(true), progress_percent: None, estimated_minutes: Some(30),
+        }
+    }
+    #[tokio::test]
+    async fn fresh_install_stays_essentials_until_a_choice_is_saved() {
+        let pool = pool().await;
+        let repository = SettingsRepository::new(&pool);
+        let settings = repository.get().await.unwrap();
+        assert_eq!(settings.experience_mode, "essentials");
+        assert!(!settings.experience_configured);
+        assert!(settings.enabled_features.is_empty());
+        assert!(!settings.voice_commands_enabled);
+        repository.update(UpdateSettingsInput { theme: Some("light".to_string()), ..Default::default() }).await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        assert!(!repository.get().await.unwrap().experience_configured);
+    }
+    #[tokio::test]
+    async fn legacy_install_migrates_to_developer_without_changing_work() {
+        let pool = pool().await;
+        let task_repository = WeeklyTaskRepository::new(&pool);
+        let existing = task_repository.create(task("Existing work", "2024-01-01")).await.unwrap();
+        sqlx::query("DELETE FROM settings WHERE key LIKE 'experience.%'").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO settings(key, value, updated_at) VALUES('git.author_email','person@example.com','2026-01-01')").execute(&pool).await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        let repository = SettingsRepository::new(&pool);
+        let settings = repository.get().await.unwrap();
+        assert_eq!(settings.experience_mode, "developer");
+        assert!(settings.experience_configured);
+        assert_eq!(settings.git_author_email, "person@example.com");
+        assert!(settings.voice_commands_enabled);
+        repository.update(UpdateSettingsInput { experience_mode: Some("essentials".to_string()), enabled_features: Some(vec!["reports".to_string()]), ..Default::default() }).await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        let reloaded = repository.get().await.unwrap();
+        assert_eq!(reloaded.experience_mode, "essentials");
+        assert_eq!(reloaded.enabled_features, vec!["reports"]);
+        assert_eq!(reloaded.git_author_email, "person@example.com");
+        let preserved = task_repository.find(&existing.id).await.unwrap().unwrap();
+        assert_eq!(preserved.details, existing.details);
+        assert_eq!(preserved.estimated_minutes, Some(30));
+        assert!(preserved.included_in_report);
+    }
+    #[tokio::test]
+    async fn task_manager_lists_history_future_and_archived_project_tasks() {
+        let pool = pool().await;
+        let repository = WeeklyTaskRepository::new(&pool);
+        let old = repository.create(task("Old unfinished", "2020-01-01")).await.unwrap();
+        let mut done = task("Old completed", "2021-01-01");
+        done.status = Some(crate::domain::weekly_task::WeeklyTaskStatus::Completed);
+        let done = repository.create(done).await.unwrap();
+        let future = repository.create(task("Future task", "2030-01-01")).await.unwrap();
+        sqlx::query("INSERT INTO projects(id, name, status, created_at, updated_at) VALUES('archived','Old project','archived','2020-01-01','2020-01-01')").execute(&pool).await.unwrap();
+        let mut linked = task("Archived project work", "2020-01-01");
+        linked.project_id = Some("archived".to_string());
+        let linked = repository.create(linked).await.unwrap();
+        let all = repository.list_all().await.unwrap();
+        for id in [&old.id, &done.id, &future.id, &linked.id] { assert!(all.iter().any(|task| &task.id == id)); }
+        assert_eq!(all.len(), 4);
+    }
+    #[tokio::test]
+    async fn experience_preferences_round_trip_and_legacy_exports_keep_developer() {
+        let pool = pool().await;
+        let repository = SettingsRepository::new(&pool);
+        SettingsService::update(&repository, UpdateSettingsInput { experience_mode: Some("essentials".to_string()), experience_configured: Some(true), enabled_features: Some(vec!["journal".to_string(), "focus".to_string()]), ..Default::default() }).await.unwrap();
+        let exported = SettingsService::export(&repository).await.unwrap();
+        let payload = serde_json::to_string(&exported).unwrap();
+        let imported = SettingsService::import(&repository, payload).await.unwrap();
+        assert_eq!(imported.settings.experience_mode, "essentials");
+        assert!(imported.settings.experience_configured);
+        assert_eq!(imported.settings.enabled_features, vec!["journal", "focus"]);
+        let mut legacy = serde_json::to_value(exported).unwrap();
+        for key in ["experienceMode", "experienceConfigured", "enabledFeatures"] { legacy["settings"].as_object_mut().unwrap().remove(key); }
+        let imported = SettingsService::import(&repository, legacy.to_string()).await.unwrap();
+        assert_eq!(imported.settings.experience_mode, "developer");
+        assert!(imported.settings.experience_configured);
+    }
+    #[tokio::test]
+    async fn unsupported_experience_preferences_are_rejected_without_a_write() {
+        let pool = pool().await;
+        let repository = SettingsRepository::new(&pool);
+        assert!(SettingsService::update(&repository, UpdateSettingsInput { experience_mode: Some("unknown".to_string()), ..Default::default() }).await.is_err());
+        assert!(SettingsService::update(&repository, UpdateSettingsInput { enabled_features: Some(vec!["unknown".to_string()]), ..Default::default() }).await.is_err());
+        assert_eq!(repository.get().await.unwrap().experience_mode, "essentials");
     }
 }

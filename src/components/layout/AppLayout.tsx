@@ -1,31 +1,19 @@
 import {
-  Activity,
-  BarChart3,
   CalendarDays,
   Download,
   FileJson,
   Focus,
-  Home,
-  BookOpen,
-  ClipboardEdit,
-  DatabaseBackup,
-  FolderKanban,
-  LayoutDashboard,
-  Settings,
-  ListChecks,
-  ListTodo,
   ArrowLeft,
   Upload,
-  ExternalLink,
   HelpCircle,
-  Gauge,
   RefreshCw,
   ArrowUpCircle,
   Mic,
   Square,
+  ChevronRight,
 } from "lucide-react";
 import type { PropsWithChildren } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit, listen } from "@tauri-apps/api/event";
@@ -45,7 +33,10 @@ import {
   installAppUpdate,
 } from "../../lib/api/appUpdates";
 import { useWeekRange } from "../../hooks/useWeekRange";
+import { useExperience } from "../../features/experience/useExperience";
 import { TitleBar } from "./TitleBar";
+import { WorkspaceNavigation, workspaceRoute } from "./WorkspaceNavigation";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { useToast } from "../ui/ToastProvider";
 import { CommandPalette, createBaseCommandActions } from "../ui/CommandPalette";
 import { CloseButton } from "../ui/CloseButton";
@@ -58,29 +49,18 @@ import {
   syncAnnouncement,
   syncStartedAnnouncement,
 } from "../../lib/announcements";
-import { appSignature } from "../../lib/appSignature";
 import { gravatarUrl } from "../../lib/gravatar";
 import { isRepositorySyncInProgressError, useRepositorySync } from "../../features/repositorySync/RepositorySyncProvider";
-
-const navItems = [
-  { label: "Today", href: "/", icon: Home },
-  { label: "Weekly Plan", href: "/weekly-plan", icon: ListChecks },
-  { label: "Manual Log", href: "/manual-log", icon: ClipboardEdit },
-  { label: "Activity Timeline", href: "/activity", icon: Activity },
-  { label: "Reports", href: "/reports", icon: BarChart3 },
-  { label: "Repositories", href: "/projects", icon: FolderKanban },
-  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  { label: "Friction", href: "/friction", icon: Gauge },
-  { label: "Backup", href: "/backup", icon: DatabaseBackup },
-  { label: "Guide", href: "/guide", icon: BookOpen },
-  { label: "Settings", href: "/settings", icon: Settings },
-];
 
 export function AppLayout({ children }: PropsWithChildren) {
   const queryClient = useQueryClient();
   const toast = useToast();
+  const experience = useExperience();
   const speech = useSpeech();
   const navigate = useNavigate();
+  const location = useLocation();
+  const route = workspaceRoute(location.pathname);
+  const [isNavigationOpen, setIsNavigationOpen] = useState(() => typeof window.matchMedia !== "function" || window.matchMedia("(min-width: 901px)").matches);
   const repositorySync = useRepositorySync();
   const importInputRef = useRef<HTMLInputElement>(null);
   const voiceCommandHandlerRef = useRef<() => void>(() => {});
@@ -103,6 +83,7 @@ export function AppLayout({ children }: PropsWithChildren) {
   const projectsQuery = useQuery({
     queryKey: ["projects"],
     queryFn: listProjects,
+    enabled: experience.isDeveloper && settingsQuery.isSuccess,
     staleTime: 60_000,
   });
   const activeFocusQuery = useQuery({
@@ -122,10 +103,12 @@ export function AppLayout({ children }: PropsWithChildren) {
   const sparcForceStatusQuery = useQuery({
     queryKey: ["sparcForceIntegrationStatus"],
     queryFn: getSparcForceIntegrationStatus,
+    enabled: experience.isDeveloper && Boolean(settingsQuery.data?.sparcForceAddonEnabled),
     staleTime: 60_000,
   });
   const activityQuery = useQuery({
     queryKey: ["activity", weekRange.from, weekRange.to],
+    enabled: experience.isDeveloper,
     queryFn: () =>
       listActivity({
         from: weekRange.from,
@@ -243,6 +226,18 @@ export function AppLayout({ children }: PropsWithChildren) {
   const activityItems = activityQuery.data?.flatMap((day) => day.items) ?? [];
   const commitCount = activityItems.filter((item) => item.activityType === "commit").length;
   const manualCount = activityItems.length - commitCount;
+  const isDesktopRuntime = Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+
+  useEscapeKey(() => { setIsHelpMenuOpen(false); setIsWhatsNewOpen(false); }, isHelpMenuOpen || isWhatsNewOpen);
+  useEscapeKey(() => setIsNavigationOpen(false), isNavigationOpen && typeof window.matchMedia === "function" && window.matchMedia("(max-width: 900px)").matches);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(min-width: 901px)");
+    const onResize = () => setIsNavigationOpen(media.matches);
+    media.addEventListener("change", onResize);
+    return () => media.removeEventListener("change", onResize);
+  }, []);
   const hasSyncableProjects =
     projectsQuery.data?.some(
       (project) => project.status === "active" && Boolean(project.repoPath),
@@ -265,7 +260,7 @@ export function AppLayout({ children }: PropsWithChildren) {
     ];
   }, [checkForUpdateMutation.data, releaseNotesQuery.data?.releases]);
   const activeFocusSession = activeFocusQuery.data ?? null;
-  const isFocusModeActive = Boolean(activeFocusSession);
+  const isFocusModeActive = experience.isDeveloper && Boolean(activeFocusSession);
 
   function openProjectsWorkspaceScan() {
     navigate("/projects", { state: { openWorkspaceScan: true } });
@@ -341,6 +336,14 @@ export function AppLayout({ children }: PropsWithChildren) {
   }
 
   function runPowerCommand(query: string) {
+    if (!experience.isDeveloper) {
+      const command = query.trim().toLowerCase();
+      if (command.startsWith("task:")) { navigate("/tasks", { state: { powerCommand: query.trim() } }); return true; }
+      if (command === "report") { navigate("/reports"); return true; }
+      if (command.startsWith("log:")) { navigate("/manual-log"); return true; }
+      if (command.startsWith("focus:")) { navigate(experience.hasFeature("focus") ? "/" : "/settings", { state: { openFocus: true } }); return true; }
+      if (command === "sync") { toast.info("Developer tool", "Switch to Developer in Settings to sync repositories."); return true; }
+    }
     const normalized = query.trim().toLowerCase();
     if (normalized === "sync") {
       void runRepositorySync();
@@ -462,6 +465,8 @@ export function AppLayout({ children }: PropsWithChildren) {
     () => [
       ...createBaseCommandActions({
         projects: projectsQuery.data ?? [],
+        isDeveloper: experience.isDeveloper,
+        enabledFeatures: experience.settings?.enabledFeatures ?? [],
         navigate: (path, state) => navigate(path, state === undefined ? undefined : { state }),
         onSync: () => void runRepositorySync(),
         onScanRepos: () => void runRepositorySync({ onSettled: openProjectsWorkspaceScan }),
@@ -493,6 +498,8 @@ export function AppLayout({ children }: PropsWithChildren) {
       },
     ],
     [
+      experience.isDeveloper,
+      experience.settings?.enabledFeatures,
       exportSettingsMutation,
       navigate,
       projectsQuery.data,
@@ -512,6 +519,10 @@ export function AppLayout({ children }: PropsWithChildren) {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "b" && !(event.target instanceof HTMLElement && event.target.closest("input, textarea, [contenteditable=true]"))) {
+        event.preventDefault();
+        setIsNavigationOpen((open) => !open);
+      }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setIsCommandPaletteOpen((isOpen) => !isOpen);
@@ -575,7 +586,7 @@ export function AppLayout({ children }: PropsWithChildren) {
   }, [navigate, queryClient, repositorySync, settingsQuery.data?.gitAuthorEmail]);
 
   useEffect(() => {
-    if (!hasSyncableProjects) {
+    if (!experience.isDeveloper || !hasSyncableProjects) {
       return;
     }
 
@@ -589,10 +600,10 @@ export function AppLayout({ children }: PropsWithChildren) {
     );
 
     return () => window.clearInterval(syncInterval);
-  }, [hasSyncableProjects, repositorySync.isSyncing, repositorySync, settingsQuery.data?.gitAuthorEmail]);
+  }, [experience.isDeveloper, hasSyncableProjects, repositorySync.isSyncing, repositorySync, settingsQuery.data?.gitAuthorEmail]);
 
   useEffect(() => {
-    if (!sparcForceAvailable || !sparcForceStatusQuery.data?.connected) {
+    if (!experience.isDeveloper || !sparcForceAvailable || !sparcForceStatusQuery.data?.connected) {
       return;
     }
 
@@ -606,7 +617,7 @@ export function AppLayout({ children }: PropsWithChildren) {
     );
 
     return () => window.clearInterval(syncInterval);
-  }, [commandSparcForceSyncMutation, sparcForceAvailable, sparcForceStatusQuery.data?.connected]);
+  }, [experience.isDeveloper, commandSparcForceSyncMutation, sparcForceAvailable, sparcForceStatusQuery.data?.connected]);
 
   useEffect(() => {
     if (!isWhatsNewOpen || checkForUpdateMutation.isPending || checkForUpdateMutation.data) {
@@ -622,176 +633,38 @@ export function AppLayout({ children }: PropsWithChildren) {
         isFocusModeActive ? "wt-focus-mode-active" : ""
       }`}
     >
-      <div
-        className="fixed inset-0"
-        style={{
-          background:
-            "linear-gradient(135deg, var(--wt-bg) 0%, var(--wt-bg-elevated) 52%, var(--wt-bg) 100%)",
-        }}
-      />
+      <a className="wt-skip-link" href="#workspace-content">Skip to content</a>
       <div className="relative flex h-screen flex-col overflow-hidden">
-        <TitleBar />
+        <TitleBar
+          onCommand={() => setIsCommandPaletteOpen(true)}
+          onToggleNavigation={() => setIsNavigationOpen((open) => !open)}
+          navigationOpen={isNavigationOpen}
+        />
         <div className="flex min-h-0 flex-1 overflow-hidden">
-          <aside className="wt-focus-muted m-2 mt-0 hidden min-h-0 w-[236px] shrink-0 flex-col rounded-lg border border-[var(--wt-border)] bg-[var(--wt-shell)] p-3 shadow-[var(--wt-panel-shadow)] lg:flex">
-            <div className="mb-5 rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface)] p-3 shadow-[var(--wt-control-shadow)]">
-              <div className="flex items-center gap-2.5">
-                <img
-                  src="/worktrace-icon.svg"
-                  alt=""
-                  className="h-10 w-10 rounded-xl object-contain shadow-sm"
-                  draggable={false}
-                />
-                <div>
-                  <p className="text-base font-semibold tracking-tight">WorkTrace</p>
-                  <p className="text-[10px] text-[var(--wt-text-muted)]">Track. Focus. Deliver.</p>
-                </div>
+          <WorkspaceNavigation
+            isOpen={isNavigationOpen}
+            onClose={() => setIsNavigationOpen(false)}
+            onNavigate={() => { if (window.innerWidth <= 900) setIsNavigationOpen(false); }}
+            onWidget={() => widgetMutation.mutate()}
+            widgetPending={widgetMutation.isPending}
+            name={settings?.name && settings.name !== "John Developer" ? settings.name : "Local workspace"}
+            avatar={<ProfileAvatar imageUrl={profileImageUrl} name={settings?.name && settings.name !== "John Developer" ? settings.name : "WorkTrace"} email={settings?.email || ""} />}
+          />
+          <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--wt-bg)]">
+            <header className="wt-workspace-toolbar wt-focus-muted">
+              <div className="flex min-w-0 items-center gap-2 text-xs">
+                {isWidgetWindow ? <button type="button" className="wt-shell-icon" aria-label="Back to todos" onClick={() => navigate("/widget")}><ArrowLeft size={15} /></button> : null}
+                <span className="hidden text-[var(--wt-text-muted)] sm:inline">{route.section}</span>
+                <ChevronRight size={12} className="hidden text-[var(--wt-text-faint)] sm:block" />
+                <span className="truncate font-medium text-[var(--wt-text-strong)]">{route.label}</span>
               </div>
-              <div className="mt-3 h-1.5 rounded-full bg-[var(--wt-surface-muted)]">
-                <div className="h-full w-2/3 rounded-full bg-blue-500" />
-              </div>
-            </div>
-
-            <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
-              {navItems.map((item) => (
-                <NavLink
-                  key={item.href}
-                  to={item.href}
-                  end={item.href === "/"}
-                  className={({ isActive }) =>
-                    [
-                      "group relative flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-semibold transition-all duration-150",
-                      isActive
-                        ? "bg-[var(--wt-selected)] text-[var(--wt-accent-text)] shadow-[var(--wt-control-shadow)]"
-                        : "text-[var(--wt-text-muted)] hover:bg-[var(--wt-surface-hover)] hover:text-[var(--wt-text-strong)]",
-                    ].join(" ")
-                  }
-                >
-                  {({ isActive }) => (
-                    <>
-                      {isActive ? (
-                        <span className="absolute inset-y-2 left-0 w-1 rounded-r-full bg-blue-500" />
-                      ) : null}
-                      <item.icon
-                        className={[
-                          "h-4 w-4",
-                          isActive ? "text-[var(--wt-accent-text)]" : "text-[var(--wt-text-faint)]",
-                        ].join(" ")}
-                      />
-                      {item.label}
-                    </>
-                  )}
-                </NavLink>
-              ))}
-            </nav>
-
-            <div className="mt-3 overflow-hidden rounded-lg border border-blue-500/15 bg-[var(--wt-accent-soft)] p-3 shadow-[var(--wt-control-shadow)]">
-              <div className="mb-3 flex items-center gap-1.5 text-xs text-[var(--wt-accent-text)]">
-                <Activity className="h-3.5 w-3.5" />
-                This Week
-              </div>
-              <p className="text-2xl font-semibold">{activityItems.length}</p>
-              <p className="mt-0.5 text-xs text-[var(--wt-text-muted)]">
-                {commitCount} commits / {manualCount} manual
-              </p>
-              {hasSyncableProjects ? (
-                <p className="mt-1 text-[10px] text-[var(--wt-accent-text)]">
-                  Auto-sync every 5 min
-                </p>
-              ) : null}
-              <div className="mt-4 grid h-12 grid-cols-7 items-end gap-1">
-                {[35, 62, 48, 76, 52, 28, 42].map((height, index) => (
-                  <span
-                    key={index}
-                    className="rounded-t bg-blue-400/70"
-                    style={{ height: `${height}%` }}
-                  />
-                ))}
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => widgetMutation.mutate()}
-              disabled={widgetMutation.isPending}
-              className="mt-3 flex w-full min-h-10 items-center justify-center gap-2 rounded-xl border border-blue-500/18 bg-[var(--wt-selected)] px-3 py-2.5 text-xs font-semibold text-[var(--wt-accent-text)] shadow-[var(--wt-control-shadow)] transition-[background-color,border-color,transform] duration-150 hover:border-blue-500/30 hover:bg-[var(--wt-accent-soft)] active:scale-[0.96] disabled:scale-100 disabled:opacity-60"
-            >
-              <ListTodo className="h-4 w-4" />
-              {widgetMutation.isPending ? "Opening..." : "Todo Widget"}
-            </button>
-
-            <a
-              href={appSignature.developerProfileUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-[var(--wt-border)] bg-[var(--wt-surface)] px-3 py-2 text-[10px] text-[var(--wt-text-muted)] transition-[background-color,border-color,color] duration-150 hover:border-blue-500/20 hover:bg-[var(--wt-surface-hover)] hover:text-[var(--wt-accent-text)]"
-            >
-              <span className="min-w-0">
-                <span className="block truncate font-semibold text-[var(--wt-text-strong)]">
-                  {appSignature.developerCredit}
-                </span>
-                <span className="block truncate">GitHub profile</span>
-              </span>
-              <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-            </a>
-          </aside>
-
-          <main className="flex min-w-0 flex-1 flex-col overflow-hidden px-3 py-3 md:px-4 md:py-4">
-            {isWidgetWindow ? (
-              <div className="mb-3 flex shrink-0 items-center justify-between gap-2 rounded-2xl border border-blue-300/20 bg-blue-500/15 p-2 shadow-lg shadow-blue-950/20 backdrop-blur-xl">
-                <button
-                  type="button"
-                  onClick={() => navigate("/widget")}
-                  className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-500"
-                >
-                  <ArrowLeft className="h-4 w-4" />
-                  Back to Todos
-                </button>
-                <p className="truncate pr-2 text-[11px] text-blue-100/75">
-                  You are browsing from the floating widget.
-                </p>
-              </div>
-            ) : null}
-
-            <nav className="wt-focus-muted mb-3 flex shrink-0 gap-2 overflow-x-auto rounded-lg border border-[var(--wt-border)] bg-[var(--wt-surface)] p-2 shadow-[var(--wt-control-shadow)] lg:hidden">
-              {navItems.map((item) => (
-                <NavLink
-                  key={item.href}
-                  to={item.href}
-                  end={item.href === "/"}
-                  aria-label={item.label}
-                  title={item.label}
-                  className={({ isActive }) =>
-                    [
-                      "flex h-10 min-w-10 items-center justify-center rounded-md border px-3 text-xs font-semibold transition",
-                      isActive
-                        ? "border-blue-500/30 bg-blue-600 text-white shadow-[var(--wt-primary-shadow)]"
-                        : "border-[var(--wt-border)] bg-[var(--wt-input)] text-[var(--wt-text-muted)] hover:bg-[var(--wt-surface-hover)] hover:text-[var(--wt-text-strong)]",
-                    ].join(" ")
-                  }
-                >
-                  <item.icon className="h-4 w-4" />
-                  <span className="ml-2 hidden sm:inline">{item.label}</span>
-                </NavLink>
-              ))}
-            </nav>
-            <header className="wt-focus-muted mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
-              <div className="wt-control flex items-center gap-2.5 rounded-xl px-3 py-2 text-xs text-[var(--wt-text-muted)]">
-                <CalendarDays className="h-4 w-4 text-[var(--wt-accent-text)]" />
-                {weekRange.label}
-              </div>
-
-              <div className="flex items-center gap-3">
+              <div className="flex shrink-0 items-center gap-2">
+                {experience.isDeveloper ? <span className="hidden items-center gap-2 text-[11px] text-[var(--wt-text-muted)] md:flex"><CalendarDays size={13} />{weekRange.label}</span> : null}
+                {speech.isVoiceCommandAvailable ? <button type="button" className="wt-shell-icon" onClick={() => void handleVoiceCommand()} disabled={speech.status === "transcribing"} aria-label={speech.status === "listening" ? "Stop voice capture" : "Voice capture"} title="Voice capture (Ctrl + Shift + M)">{speech.status === "listening" ? <Square size={15} /> : <Mic size={15} />}</button> : null}
                 <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setIsHelpMenuOpen((open) => !open)}
-                    className="wt-control inline-flex min-h-10 items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold"
-                  >
-                    <HelpCircle className="h-4 w-4" />
-                    Help
-                  </button>
+                  <button type="button" className="wt-shell-icon" aria-label="Help and updates" aria-expanded={isHelpMenuOpen} onClick={() => setIsHelpMenuOpen((open) => !open)}><HelpCircle size={15} /></button>
                   {isHelpMenuOpen ? (
-                    <div className="absolute right-0 z-20 mt-2 w-72 rounded-xl border border-[var(--wt-border)] bg-[var(--wt-surface)] p-2 shadow-[var(--wt-panel-shadow)]">
+                    <div className="absolute right-0 z-20 mt-2 w-64 rounded-xl border border-[var(--wt-border)] bg-[var(--wt-surface)] p-2 shadow-[var(--wt-panel-shadow)]">
                       <p className="rounded-lg px-2 py-1.5 text-[11px] text-[var(--wt-text-muted)]">
                         Current version: <span className="font-semibold text-[var(--wt-text-strong)]">{appVersionQuery.data?.version ?? "Unavailable"}</span>
                       </p>
@@ -833,61 +706,19 @@ export function AppLayout({ children }: PropsWithChildren) {
                     </div>
                   ) : null}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => widgetMutation.mutate()}
-                  disabled={widgetMutation.isPending}
-                  className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-blue-500/18 bg-[var(--wt-selected)] px-3 py-2 text-xs font-semibold text-[var(--wt-accent-text)] shadow-[var(--wt-control-shadow)] transition-[background-color,border-color,transform] duration-150 hover:border-blue-500/30 hover:bg-[var(--wt-accent-soft)] active:scale-[0.96] disabled:scale-100 disabled:opacity-60"
-                >
-                  <ListTodo className="h-4 w-4" />
-                  Widget
-                </button>
-                {speech.isVoiceCommandAvailable ? (
-                  <button
-                    type="button"
-                    onClick={() => void handleVoiceCommand()}
-                    disabled={speech.status === "transcribing"}
-                    title="Voice capture (Ctrl + Shift + M)"
-                    className={[
-                      "inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold shadow-[var(--wt-control-shadow)] transition-[background-color,border-color,transform] duration-150 active:scale-[0.96] disabled:scale-100 disabled:opacity-60",
-                      speech.status === "listening"
-                        ? "border-red-500/25 bg-red-500/10 text-red-100 hover:bg-red-500/15"
-                        : "border-cyan-500/20 bg-cyan-500/10 text-cyan-100 hover:border-cyan-400/30 hover:bg-cyan-500/15",
-                    ].join(" ")}
-                  >
-                    {speech.status === "listening" ? (
-                      <Square className="h-4 w-4" />
-                    ) : (
-                      <Mic className="h-4 w-4" />
-                    )}
-                    {speech.status === "listening"
-                      ? "Stop"
-                      : speech.status === "transcribing"
-                        ? "Transcribing"
-                        : "Voice"}
-                  </button>
-                ) : null}
-                <div className="wt-control flex items-center gap-2 rounded-xl px-3 py-2">
-                  <ProfileAvatar
-                    imageUrl={profileImageUrl}
-                    name={settings?.name ?? "John Developer"}
-                    email={settings?.email ?? "johndev@worktrace.app"}
-                  />
-                  <div className="min-w-0">
-                    <p className="truncate text-xs font-medium">{settings?.name ?? "John Developer"}</p>
-                    <p className="truncate text-[10px] text-[var(--wt-text-muted)]">
-                      {settings?.email ?? "johndev@worktrace.app"}
-                    </p>
-                  </div>
-                </div>
               </div>
             </header>
-
-            <section className="wt-focus-page min-h-0 flex-1 overflow-y-auto overflow-x-hidden pr-1">
-              <div className="mx-auto w-full max-w-[1680px] pb-6">{children}</div>
+            <section id="workspace-content" tabIndex={-1} className="wt-focus-page wt-workspace-content min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+              <div className="mx-auto w-full max-w-[1600px]">{children}</div>
             </section>
           </main>
         </div>
+        <footer className="wt-status-bar">
+          <span className="flex items-center gap-1.5"><span className="wt-status-dot" />{isDesktopRuntime ? "Local workspace" : "Browser preview"}</span>
+          {experience.isDeveloper ? <span className="hidden sm:inline">{activityQuery.isSuccess ? `${commitCount} commits · ${manualCount} logs this week` : "Activity unavailable"}</span> : <span className="hidden sm:inline">Essentials</span>}
+          {experience.isDeveloper ? <span className="ml-auto flex items-center gap-1.5"><RefreshCw size={11} className={repositorySync.isSyncing ? "animate-spin" : ""} />{repositorySync.isSyncing ? "Syncing repositories…" : projectsQuery.isError ? "Repositories unavailable" : hasSyncableProjects ? "Auto-sync every 5 min" : "No syncable repositories"}</span> : <span className="ml-auto">{isDesktopRuntime ? "Saved on this device" : "Desktop app required to save"}</span>}
+          <span className="hidden md:inline">{appVersionQuery.data?.version ? `v${appVersionQuery.data.version}` : "WorkTrace"}</span>
+        </footer>
       </div>
       {activeFocusSession ? (
         <ImmersiveFocusBar

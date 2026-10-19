@@ -148,6 +148,30 @@ pub enum SettingsServiceError {
 }
 
 fn validate_update(input: &UpdateSettingsInput) -> Result<(), SettingsServiceError> {
+    if input
+        .experience_mode
+        .as_deref()
+        .map(|mode| !["essentials", "developer"].contains(&mode))
+        .unwrap_or(false)
+    {
+        return Err(SettingsServiceError::Validation(
+            "Choose Essentials or Developer.".to_string(),
+        ));
+    }
+    if input
+        .enabled_features
+        .as_ref()
+        .map(|features| {
+            features
+                .iter()
+                .any(|feature| !["reports", "journal", "focus"].contains(&feature.as_str()))
+        })
+        .unwrap_or(false)
+    {
+        return Err(SettingsServiceError::Validation(
+            "This optional feature is not supported.".to_string(),
+        ));
+    }
     if let Some(email) = &input.email {
         validate_email_like("Email address", email)?;
     }
@@ -424,6 +448,15 @@ fn validate_backup_location_path(location: &str) -> BackupLocationValidation {
 }
 
 fn merge_settings(mut settings: Settings, input: &UpdateSettingsInput) -> Settings {
+    if let Some(value) = &input.experience_mode {
+        settings.experience_mode = value.clone();
+    }
+    if let Some(value) = input.experience_configured {
+        settings.experience_configured = value;
+    }
+    if let Some(value) = &input.enabled_features {
+        settings.enabled_features = value.clone();
+    }
     if let Some(value) = &input.name {
         settings.name = value.clone();
     }
@@ -675,6 +708,9 @@ fn validate_email_like(label: &str, value: &str) -> Result<(), SettingsServiceEr
 
 fn update_input_from_settings(settings: Settings) -> UpdateSettingsInput {
     UpdateSettingsInput {
+        experience_mode: Some(settings.experience_mode),
+        experience_configured: Some(settings.experience_configured),
+        enabled_features: Some(settings.enabled_features),
         name: Some(settings.name),
         email: Some(settings.email),
         use_gravatar_profile_image: Some(settings.use_gravatar_profile_image),

@@ -20,6 +20,7 @@ import { DatePicker } from "../components/ui/DatePicker";
 import { FrictionInsightPanel } from "../components/ui/FrictionInsightPanel";
 import { Panel } from "../components/ui/Panel";
 import { Select } from "../components/ui/Select";
+import { useExperience } from "../features/experience/useExperience";
 import { useToast } from "../components/ui/ToastProvider";
 import { getProjectGitFocus, listGitRefs, listGitWorktrees, listProjects } from "../lib/api/projects";
 import { getFrictionInsights } from "../lib/api/friction";
@@ -44,6 +45,7 @@ import { useReportsWorkspace } from "./reportsWorkspace";
 export function ReportsPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
+  const experience = useExperience();
   const {
     startDate,
     setStartDate,
@@ -97,6 +99,7 @@ export function ReportsPage() {
   const projectsQuery = useQuery({
     queryKey: ["projects"],
     queryFn: listProjects,
+    enabled: experience.isDeveloper,
   });
   const settingsQuery = useQuery({
     queryKey: ["settings"],
@@ -109,23 +112,25 @@ export function ReportsPage() {
   const reportAiStatusQuery = useQuery({
     queryKey: ["reportAiStatus"],
     queryFn: getReportAiStatus,
+    enabled: experience.isDeveloper,
   });
   const gitRefsQuery = useQuery({
     queryKey: ["gitRefs", selectedProjectId],
     queryFn: () => listGitRefs(selectedProjectId),
-    enabled: selectedProjectId !== "all",
+    enabled: experience.isDeveloper && selectedProjectId !== "all",
   });
   const gitWorktreesQuery = useQuery({
     queryKey: ["gitWorktrees", selectedProjectId],
     queryFn: () => listGitWorktrees(selectedProjectId),
-    enabled: selectedProjectId !== "all",
+    enabled: experience.isDeveloper && selectedProjectId !== "all",
   });
   const projectGitFocusQuery = useQuery({
     queryKey: ["projectGitFocus", selectedProjectId],
     queryFn: () => getProjectGitFocus(selectedProjectId),
-    enabled: selectedProjectId !== "all",
+    enabled: experience.isDeveloper && selectedProjectId !== "all",
   });
   const frictionInsightsQuery = useQuery({
+    enabled: experience.isDeveloper,
     queryKey: ["frictionInsights", startDate, endDate, selectedProjectId, selectedClassification, "reports"],
     queryFn: () =>
       getFrictionInsights({
@@ -187,12 +192,12 @@ export function ReportsPage() {
         endDate,
         recipientName:
           recipientName.trim() || settingsQuery.data?.defaultManagerName || null,
-        projectIds: selectedProjectId === "all" ? null : [selectedProjectId],
-        classification: selectedClassificationValue,
-        gitRefs: reportGitRefs,
-        worktreePaths: reportWorktreePaths,
-        useProjectGitFocus,
-        includeCommits,
+        projectIds: !experience.isDeveloper || selectedProjectId === "all" ? null : [selectedProjectId],
+        classification: experience.isDeveloper ? selectedClassificationValue : null,
+        gitRefs: experience.isDeveloper ? reportGitRefs : null,
+        worktreePaths: experience.isDeveloper ? reportWorktreePaths : null,
+        useProjectGitFocus: experience.isDeveloper && useProjectGitFocus,
+        includeCommits: experience.isDeveloper && includeCommits,
         includeManualLogs,
         includeWeeklyTasks,
         includeHidden,
@@ -392,11 +397,13 @@ export function ReportsPage() {
   return (
     <div className="space-y-3">
       <ReportsHero
+        isDeveloper={experience.isDeveloper}
         generatedCount={reportsQuery.data?.length ?? 0}
         reportReadyItems={content.trim() ? contentStats.lines : 0}
         lastGenerated={reportsQuery.data?.[0]}
       />
 
+      {experience.isDeveloper ? (
       <FrictionInsightPanel
         title="Report Friction"
         insights={(frictionInsightsQuery.data ?? []).filter((insight) =>
@@ -407,13 +414,13 @@ export function ReportsPage() {
         limit={3}
         compact
       />
+      ) : null}
 
-      <div className="grid min-h-0 gap-3 2xl:grid-cols-[360px_minmax(0,1fr)_310px]">
+      <div className="grid min-h-0 items-start gap-4 xl:grid-cols-[300px_minmax(0,1fr)] 2xl:grid-cols-[300px_minmax(0,1fr)_280px]">
       <Panel className="relative overflow-visible rounded-xl bg-slate-950/62 p-0 shadow-xl shadow-slate-950/20">
-        <div className="absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/35 to-transparent" />
         <div className="relative p-4">
           <div className="mb-4">
-            <div className="mb-3 inline-flex items-center gap-2 rounded-md border border-cyan-300/20 bg-cyan-300/8 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-200">
+            <div className="mb-2 inline-flex items-center gap-2 text-[11px] text-[var(--wt-text-muted)]">
               <Sparkles className="h-3.5 w-3.5" />
               Markdown builder
             </div>
@@ -430,14 +437,15 @@ export function ReportsPage() {
             <Field label="End Date">
               <DatePicker value={endDate} onChange={setEndDate} />
             </Field>
-            <Field label="Recipient / Manager">
+            <Field label={experience.isDeveloper ? "Recipient / Manager" : "Prepared for (optional)"}>
               <input
                 value={recipientName}
                 onChange={(event) => setRecipientName(event.currentTarget.value)}
                 className={inputClass}
-                placeholder={settingsQuery.data?.defaultManagerName || "Manager"}
+                placeholder={settingsQuery.data?.defaultManagerName || (experience.isDeveloper ? "Manager" : "Name, if needed")}
               />
             </Field>
+            {experience.isDeveloper ? <>
             <Field label="Included Projects">
               <Select
                 value={selectedProjectId}
@@ -497,13 +505,16 @@ export function ReportsPage() {
               }}
             />
 
+            </> : null}
+
             <div className="grid gap-2">
-              <Toggle label="Include commits" checked={includeCommits} onChange={setIncludeCommits} />
-              <Toggle label="Include manual logs" checked={includeManualLogs} onChange={setIncludeManualLogs} />
-              <Toggle label="Include weekly plan" checked={includeWeeklyTasks} onChange={setIncludeWeeklyTasks} />
-              <Toggle label="Include hidden items" checked={includeHidden} onChange={setIncludeHidden} />
+              {experience.isDeveloper ? <Toggle label="Include commits" checked={includeCommits} onChange={setIncludeCommits} /> : null}
+              <Toggle label={experience.isDeveloper ? "Include manual logs" : "Include work journal"} checked={includeManualLogs} onChange={setIncludeManualLogs} />
+              <Toggle label={experience.isDeveloper ? "Include weekly plan" : "Include tasks"} checked={includeWeeklyTasks} onChange={setIncludeWeeklyTasks} />
+              <Toggle label={experience.isDeveloper ? "Include hidden items" : "Include previously excluded items"} checked={includeHidden} onChange={setIncludeHidden} />
             </div>
 
+            {experience.isDeveloper ? (
             <div className="rounded-xl border border-cyan-300/15 bg-cyan-300/[0.045] p-3">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
@@ -534,6 +545,8 @@ export function ReportsPage() {
               </p>
             </div>
 
+            ) : <p className="text-[11px] leading-5 text-[var(--wt-text-muted)]">Reports use items marked for reporting. Enable previously excluded items to also use tasks you captured before turning reports on.</p>}
+
             {generateMutation.isError ? (
               <div className="rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-xs text-red-100">
                 {generateMutation.error instanceof Error
@@ -556,11 +569,10 @@ export function ReportsPage() {
       </Panel>
 
       <Panel className="relative min-h-[680px] overflow-hidden rounded-xl bg-slate-950/68 p-0 shadow-xl shadow-slate-950/20">
-        <div className="absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-blue-300/45 to-transparent" />
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/8 px-5 py-4">
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-lg font-semibold text-white">Live Preview</h2>
+              <h2 className="text-lg font-semibold text-white">Report draft</h2>
               <Badge tone={content.trim() ? "green" : "slate"}>
                 {content.trim() ? "Editable" : "Draft"}
               </Badge>
@@ -568,6 +580,7 @@ export function ReportsPage() {
             <p className="mt-1 text-xs text-slate-500">{title}</p>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
+            {experience.isDeveloper ? <>
             <Button onClick={() => readinessMutation.mutate()} disabled={readinessMutation.isPending}>
               <Sparkles className="h-4 w-4" />
               {readinessMutation.isPending ? "Analyzing..." : "Analyze"}
@@ -588,6 +601,7 @@ export function ReportsPage() {
                 {cancelPolishMutation.isPending || polishCancelled ? "Cancelling..." : "Cancel"}
               </Button>
             ) : null}
+            </> : null}
             <Button onClick={copyReport} disabled={!content.trim()}>
               {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
               {copied ? "Copied" : "Copy"}
@@ -609,8 +623,8 @@ export function ReportsPage() {
 
         <div className="grid gap-3 border-b border-white/8 px-5 py-3 sm:grid-cols-3">
           <PreviewStat label="Range" value={`${compactDate(startDate)} - ${compactDate(endDate)}`} />
-          <PreviewStat label="Audience" value={recipientName.trim() || settingsQuery.data?.defaultManagerName || "Manager"} />
-          <PreviewStat label="Sources" value={selectedSourceLabel} />
+          <PreviewStat label="Audience" value={recipientName.trim() || settingsQuery.data?.defaultManagerName || (experience.isDeveloper ? "Manager" : "Personal")} />
+          <PreviewStat label="Sources" value={experience.isDeveloper ? selectedSourceLabel : "Tasks & journal"} />
         </div>
 
         <div className="p-5">
@@ -660,7 +674,7 @@ export function ReportsPage() {
           <textarea
             value={content}
             onChange={(event) => setContent(event.currentTarget.value)}
-            className="min-h-[510px] w-full resize-y rounded-xl border border-white/10 bg-[#050b16]/88 p-5 font-mono text-sm leading-7 text-slate-200 shadow-inner shadow-black/25 outline-none transition placeholder:text-slate-600 focus:border-blue-300/50 focus:ring-2 focus:ring-blue-500/15"
+            className="min-h-[510px] w-full resize-y rounded-xl border border-white/10 bg-[var(--wt-input)] p-5 font-mono text-sm leading-7 text-slate-200 shadow-inner shadow-black/25 outline-none transition placeholder:text-slate-600 focus:border-blue-300/50 focus:ring-2 focus:ring-blue-500/15"
             placeholder="Generate a report, then edit the Markdown here."
           />
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-[11px] text-slate-500">
@@ -675,8 +689,7 @@ export function ReportsPage() {
         </div>
       </Panel>
 
-      <Panel className="relative h-fit overflow-hidden rounded-xl bg-slate-950/60 p-0 shadow-xl shadow-slate-950/20">
-        <div className="absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-teal-300/35 to-transparent" />
+      <Panel className="relative h-fit overflow-hidden rounded-xl bg-slate-950/60 p-0 xl:col-span-2 2xl:col-span-1">
         <div className="relative p-4">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
@@ -686,6 +699,7 @@ export function ReportsPage() {
             <History className="h-4 w-4 text-cyan-300" />
           </div>
 
+          {experience.isDeveloper ? (
           <div className="mb-4 space-y-3 rounded-xl border border-white/10 bg-slate-950/45 p-3">
             <h3 className="text-sm font-semibold text-white">Online AI Keys</h3>
             <ProviderKeyRow
@@ -727,6 +741,8 @@ export function ReportsPage() {
             />
           </div>
 
+          ) : null}
+
           {reportsQuery.isLoading ? (
             <div className="grid gap-2">
               {[0, 1, 2].map((item) => (
@@ -749,7 +765,7 @@ export function ReportsPage() {
             </div>
           ) : (
             <div className="rounded-xl border border-dashed border-white/10 bg-slate-950/35 p-5 text-xs leading-6 text-slate-400">
-              Saved report history will appear here after you save generated Markdown.
+              Saved reports will appear here after you save your first update.
             </div>
           )}
         </div>
@@ -760,26 +776,27 @@ export function ReportsPage() {
 }
 
 function ReportsHero({
+  isDeveloper,
   generatedCount,
   reportReadyItems,
   lastGenerated,
 }: {
+  isDeveloper: boolean;
   generatedCount: number;
   reportReadyItems: number;
   lastGenerated?: ReportSummary;
 }) {
   return (
-    <Panel className="relative overflow-hidden rounded-xl bg-slate-950/50 p-0 shadow-xl shadow-slate-950/15">
-      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-blue-300/0 via-blue-300/35 to-cyan-300/0" />
-      <div className="relative flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+    <header className="wt-page-header">
+      <div className="relative flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-blue-300/20 bg-blue-500/15 text-blue-200">
+          <span className="grid h-8 w-8 shrink-0 place-items-center text-[var(--wt-text-muted)]">
             <FileText className="h-4 w-4" />
           </span>
           <div className="min-w-0">
             <h1 className="text-lg font-semibold tracking-tight text-white">Reports</h1>
             <p className="truncate text-xs text-slate-400">
-              Weekly Markdown from commits, manual logs, and planned work.
+              {isDeveloper ? "Weekly Markdown from commits, manual logs, and planned work." : "Weekly updates from your tasks and work journal."}
             </p>
           </div>
         </div>
@@ -794,7 +811,7 @@ function ReportsHero({
           />
         </div>
       </div>
-    </Panel>
+    </header>
   );
 }
 

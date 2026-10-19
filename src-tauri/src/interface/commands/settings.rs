@@ -1,4 +1,4 @@
-use tauri::State;
+use tauri::{Emitter, State};
 
 use crate::application::settings::{SettingsService, SettingsServiceError};
 use crate::domain::settings::{
@@ -20,13 +20,17 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<AppResult<Settin
 
 #[tauri::command]
 pub async fn update_settings(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     input: UpdateSettingsInput,
 ) -> Result<AppResult<Settings>, String> {
     let repository = SettingsRepository::new(state.database.pool());
 
     Ok(match SettingsService::update(&repository, input).await {
-        Ok(settings) => AppResult::ok(settings),
+        Ok(settings) => {
+            let _ = app.emit("experience://changed", ());
+            AppResult::ok(settings)
+        }
         Err(SettingsServiceError::Validation(message)) => {
             AppResult::err("VALIDATION_ERROR", message)
         }
@@ -99,13 +103,17 @@ pub async fn export_settings_to_file(
 
 #[tauri::command]
 pub async fn import_settings(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     payload: String,
 ) -> Result<AppResult<SettingsImportResult>, String> {
     let repository = SettingsRepository::new(state.database.pool());
 
     Ok(match SettingsService::import(&repository, payload).await {
-        Ok(result) => AppResult::ok(result),
+        Ok(result) => {
+            let _ = app.emit("experience://changed", ());
+            AppResult::ok(result)
+        }
         Err(SettingsServiceError::Validation(message)) => {
             AppResult::err("VALIDATION_ERROR", message)
         }

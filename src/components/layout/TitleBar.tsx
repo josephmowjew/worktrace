@@ -1,9 +1,8 @@
-import { Minus, Square, X } from "lucide-react";
+import { Minus, PanelLeft, Search, Square, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { appSignature } from "../../lib/appSignature";
 
-export function TitleBar() {
+export function TitleBar({ onCommand, onToggleNavigation, navigationOpen }: { onCommand: () => void; onToggleNavigation: () => void; navigationOpen: boolean }) {
   const [isMacOS, setIsMacOS] = useState(false);
 
   useEffect(() => {
@@ -11,15 +10,15 @@ export function TitleBar() {
   }, []);
 
   const handleMinimize = () => {
-    getCurrentWindow().minimize();
+    if ("__TAURI_INTERNALS__" in window) void getCurrentWindow().minimize();
   };
 
   const handleMaximize = () => {
-    getCurrentWindow().toggleMaximize();
+    if ("__TAURI_INTERNALS__" in window) void getCurrentWindow().toggleMaximize();
   };
 
   const handleClose = () => {
-    getCurrentWindow().close();
+    if ("__TAURI_INTERNALS__" in window) void getCurrentWindow().close();
   };
 
   const controls = isMacOS
@@ -36,25 +35,23 @@ export function TitleBar() {
 
   return (
     <div
-      className="relative z-50 flex h-9 items-center justify-between border-b border-[var(--wt-border)] bg-[var(--wt-surface-strong)]"
+      className="wt-titlebar"
       data-tauri-drag-region
     >
-      <div className="flex items-center gap-2 pl-4" data-tauri-drag-region>
-        <img src="/worktrace-icon.svg" alt="" className="h-5 w-5 rounded-md" draggable={false} />
-        <span className="text-xs font-medium text-[var(--wt-text-strong)]" data-tauri-drag-region>
-          WorkTrace
-        </span>
-        <span className="hidden text-[10px] text-[var(--wt-text-faint)] sm:inline" data-tauri-drag-region>
-          {appSignature.developerCredit}
-        </span>
+      <div className="flex min-w-0 items-center gap-2 pl-2" data-tauri-drag-region>
+        <button type="button" className="wt-shell-icon" onClick={onToggleNavigation} aria-label="Toggle sidebar" aria-controls="workspace-navigation" aria-expanded={navigationOpen} title="Toggle sidebar (Ctrl+B)"><PanelLeft size={16} strokeWidth={1.6} /></button>
+        <span className="hidden text-xs font-medium text-[var(--wt-text-muted)] sm:inline" data-tauri-drag-region>WorkTrace</span>
       </div>
-
+      <button type="button" className="wt-command-trigger" onClick={onCommand} aria-label="Search commands and navigate" aria-keyshortcuts="Control+k Meta+k">
+        <Search size={13} /><span>Search or jump to…</span><kbd>Ctrl K</kbd>
+      </button>
       <div className="flex h-full items-center">
         {controls.map((control) => (
           <button
             key={control.label}
             onClick={control.action}
-            className={`flex h-9 w-12 items-center justify-center text-[var(--wt-text-muted)] transition-colors ${control.color}`}
+            className={`flex h-10 w-10 items-center justify-center text-[var(--wt-text-muted)] transition-colors ${control.color}`}
+            aria-label={control.label}
             title={control.label}
           >
             <control.icon className="h-3.5 w-3.5" />

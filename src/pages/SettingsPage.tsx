@@ -12,10 +12,12 @@ import {
   siWakatime,
 } from "simple-icons";
 import { useForm } from "react-hook-form";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { z } from "zod";
+import { useExperience } from "../features/experience/useExperience";
+import { EssentialsSettings, ExperiencePreferences } from "../features/experience/ExperiencePreferences";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { CloseButton } from "../components/ui/CloseButton";
@@ -195,6 +197,16 @@ const settingsTabs: { id: SettingsTab; label: string }[] = [
 ];
 
 export function SettingsPage() {
+  const experience = useExperience();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [advanced, setAdvanced] = useState(false);
+  const requestedTab = (location.state as { openSettingsTab?: string } | null)?.openSettingsTab;
+  if (!experience.isDeveloper && !advanced && !requestedTab) return <EssentialsSettings onAdvanced={(tab) => { setAdvanced(true); if (tab) navigate("/settings", { replace: true, state: { openSettingsTab: tab } }); }} />;
+  return <div className="space-y-6"><ExperiencePreferences />{!experience.isDeveloper ? <Button size="sm" variant="ghost" onClick={() => { setAdvanced(false); navigate("/settings", { replace: true, state: null }); }}>Back to simple settings</Button> : null}<AdvancedSettingsPage /></div>;
+}
+
+function AdvancedSettingsPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
   const speech = useSpeech();
@@ -1029,14 +1041,14 @@ export function SettingsPage() {
         }
       />
 
-      <Panel className="p-2">
+      <div>
         <SegmentedTabs
           items={settingsTabs}
           value={activeTab}
           onChange={setActiveTab}
           fullWidth
         />
-      </Panel>
+      </div>
 
       <form
         id="settings-form"
@@ -1051,7 +1063,7 @@ export function SettingsPage() {
                 <User className="h-4 w-4 text-cyan-300" />
                 Profile
               </div>
-              <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
+              <div className="grid items-start gap-6 lg:grid-cols-[180px_minmax(0,1fr)]">
                 <ProfileImagePreview
                   name={profileName}
                   email={profileEmail}
@@ -1060,7 +1072,7 @@ export function SettingsPage() {
                     form.setValue("useGravatarProfileImage", checked, { shouldDirty: true })
                   }
                 />
-                <div className="grid gap-4 md:grid-cols-2">
+                <div className="grid content-start gap-5 md:grid-cols-2">
                   <Field label="Full Name" error={form.formState.errors.name?.message}>
                     <input
                       className={inputClass}
@@ -1763,7 +1775,7 @@ export function SettingsPage() {
 
           {activeTab === "integrations" ? (
           <Panel className="p-0">
-            <div className="border-b border-[var(--wt-border)] bg-[linear-gradient(90deg,color-mix(in_oklch,var(--wt-accent)_10%,transparent),color-mix(in_oklch,oklch(0.7_0.12_190)_8%,transparent),transparent)] px-5 py-5">
+            <div className="border-b border-[var(--wt-border)] bg-[var(--wt-surface)] px-5 py-5">
               <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_240px_280px_240px] xl:items-center">
                 <div className="flex items-center gap-5">
                   <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-full border border-blue-300/10 bg-blue-400/10 shadow-lg shadow-blue-500/10">
@@ -1974,7 +1986,7 @@ export function SettingsPage() {
 
         {activeTab === "work" ? (
         <div className="space-y-4">
-          <Panel className="border-blue-300/15 bg-gradient-to-r from-[#08162f] via-[#0a1a38] to-[#09162f] p-6">
+          <Panel className="border-blue-300/15 bg-[var(--wt-surface)] p-6">
             <div className="mb-5 flex items-start gap-3">
               <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-blue-300/20 bg-blue-500/14">
                 <CalendarDays className="h-5 w-5 text-cyan-200" />
@@ -1996,7 +2008,7 @@ export function SettingsPage() {
                   className={[
                     "flex items-center justify-between rounded-xl border px-4 py-3 text-base font-medium transition-all",
                     selectedWorkingDays.includes(day.value)
-                      ? "border-blue-300/45 bg-blue-500/20 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_10px_22px_rgba(37,99,235,0.18)]"
+                      ? "border-blue-300/45 bg-blue-500/20 text-white shadow-none"
                       : "border-white/12 bg-slate-950/45 text-slate-400 hover:border-white/20 hover:bg-white/8 hover:text-slate-200",
                   ].join(" ")}
                 >
@@ -2047,7 +2059,7 @@ export function SettingsPage() {
                     className={[
                       "rounded-xl border px-4 py-3 text-left text-sm font-semibold transition-[background-color,border-color,color,transform,box-shadow] duration-150 active:scale-[0.98]",
                       selectedWeekStart === day.value
-                        ? "border-cyan-300/45 bg-cyan-500/16 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.1)]"
+                        ? "border-cyan-300/45 bg-cyan-500/16 text-white shadow-none"
                         : "border-white/12 bg-slate-950/45 text-slate-400 hover:border-white/20 hover:bg-white/8 hover:text-slate-200",
                     ].join(" ")}
                   >
@@ -2063,7 +2075,7 @@ export function SettingsPage() {
             </div>
           </Panel>
 
-          <Panel className="border-blue-300/15 bg-gradient-to-r from-[#08162f] via-[#0a1a38] to-[#09162f] p-6">
+          <Panel className="border-blue-300/15 bg-[var(--wt-surface)] p-6">
             <div className="mb-5 flex items-start gap-3">
               <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-blue-300/20 bg-blue-500/14">
                 <Clock3 className="h-5 w-5 text-cyan-200" />
@@ -2094,7 +2106,7 @@ export function SettingsPage() {
             </Field>
           </Panel>
 
-          <Panel className="border-blue-300/15 bg-gradient-to-r from-[#08162f] via-[#0a1a38] to-[#09162f] p-6">
+          <Panel className="border-blue-300/15 bg-[var(--wt-surface)] p-6">
             <div className="flex flex-wrap items-center justify-between gap-5">
               <div className="min-w-[240px] flex-1">
                 <div className="mb-2 flex items-center gap-3">
@@ -2164,7 +2176,7 @@ function IntegrationMetric({
   tone: "blue" | "cyan" | "green";
 }) {
   return (
-    <div className="rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface)] p-4 shadow-sm shadow-[rgb(var(--wt-shadow)/0.08)]">
+    <div className="rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface)] p-4 shadow-sm shadow-none">
       <div className="text-2xl font-semibold text-[var(--wt-text-strong)]">{value}</div>
       <div className="mt-1 text-xs font-semibold text-[var(--wt-text)]">{label}</div>
       <div className="mt-1 flex items-center gap-2 text-xs text-[var(--wt-text-muted)]">
@@ -2265,7 +2277,7 @@ function IntegrationCard({
   disabledDanger?: boolean;
 }) {
   return (
-    <div className="relative min-h-[142px] rounded-2xl border border-[var(--wt-border)] bg-[linear-gradient(135deg,color-mix(in_oklch,var(--wt-accent)_8%,var(--wt-surface)),var(--wt-surface)_48%,var(--wt-surface-strong))] p-4 shadow-lg shadow-[rgb(var(--wt-shadow)/0.12)]">
+    <div className="relative min-h-[142px] rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface)] p-4 shadow-lg shadow-none">
       <button
         type="button"
         className="absolute right-4 top-4 rounded-lg p-1 text-[var(--wt-text-muted)] outline-none transition hover:bg-[var(--wt-surface-muted)] hover:text-[var(--wt-text-strong)] focus-visible:ring-2 focus-visible:ring-blue-400/45"
@@ -2275,7 +2287,7 @@ function IntegrationCard({
         <MoreHorizontal className="h-4 w-4" />
       </button>
       <div className="flex gap-4 pr-7">
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface-muted)] shadow-lg shadow-[rgb(var(--wt-shadow)/0.12)]">
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface-muted)] shadow-lg shadow-none">
           {icon}
         </div>
         <div className="min-w-0">
@@ -2467,7 +2479,7 @@ function IntegrationSetupPanel({
     listModelsMutation.isPending;
 
   return (
-    <div className="mt-5 rounded-2xl border border-blue-300/20 bg-[radial-gradient(circle_at_top_left,rgba(37,99,235,0.16),transparent_36%),linear-gradient(135deg,rgba(15,23,42,0.94),rgba(2,12,27,0.96))] p-5 shadow-2xl shadow-blue-950/30">
+    <div className="mt-5 rounded-2xl border border-blue-300/20 bg-[var(--wt-surface)] p-5 shadow-2xl shadow-blue-950/30">
       <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-2xl font-bold leading-tight text-white">
@@ -2632,7 +2644,7 @@ function IntegrationSetupPanel({
       {activePanel === "sparcForce" ? (
         <div className="grid gap-4">
           {sparcForceStatus ? (
-            <div className="grid gap-4 rounded-xl border border-blue-300/20 bg-[linear-gradient(135deg,rgba(30,64,175,0.22),rgba(15,23,42,0.6))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_18px_48px_rgba(15,23,42,0.28)] lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+            <div className="grid gap-4 rounded-xl border border-blue-300/20 bg-[var(--wt-surface)] p-4 shadow-none lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
               <div className="grid gap-3 text-xs text-slate-400 sm:grid-cols-2 xl:grid-cols-4">
                 <StatusLine
                   icon={
@@ -2640,8 +2652,8 @@ function IntegrationSetupPanel({
                       className={[
                         "h-3 w-3 rounded-full",
                         sparcForceStatus.connected
-                          ? "bg-emerald-300 shadow-[0_0_18px_rgba(52,211,153,0.65)]"
-                          : "bg-slate-500 shadow-[0_0_14px_rgba(148,163,184,0.28)]",
+                          ? "bg-emerald-300 shadow-none"
+                          : "bg-slate-500 shadow-none",
                       ].join(" ")}
                     />
                   }
@@ -2684,7 +2696,7 @@ function IntegrationSetupPanel({
           ) : null}
 
           <details
-            className="group rounded-xl border border-white/10 bg-slate-950/42 px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
+            className="group rounded-xl border border-white/10 bg-slate-950/42 px-4 py-3 shadow-none"
             open={!sparcForceStatus?.connected || sparcForceOtpRequired}
           >
             <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-slate-100">
@@ -3407,7 +3419,7 @@ function SparcForceImportedExplorer({
 
   return (
     <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(23rem,0.78fr)_minmax(0,1.22fr)]">
-      <div className="flex min-h-[42rem] min-w-0 flex-col rounded-xl border border-blue-300/15 bg-[linear-gradient(180deg,rgba(15,30,58,0.82),rgba(5,13,30,0.9))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_20px_60px_rgba(0,0,0,0.18)] xl:max-h-[calc(100vh-10rem)]">
+      <div className="flex min-h-[42rem] min-w-0 flex-col rounded-xl border border-blue-300/15 bg-[var(--wt-surface)] p-4 shadow-none xl:max-h-[calc(100vh-10rem)]">
         <div className="flex flex-wrap items-center gap-2">
           {sparcForceImportedTabs.map((tab) => {
             const count = sparcForceCountForKind(counts, tab.id);
@@ -3419,7 +3431,7 @@ function SparcForceImportedExplorer({
                 className={[
                   "inline-flex min-h-10 items-center gap-2 rounded-lg border px-4 text-sm font-semibold transition-transform duration-150 active:scale-[0.96]",
                   selected
-                    ? "border-blue-300/45 bg-blue-500/20 text-white shadow-[0_0_0_1px_rgba(96,165,250,0.08),0_16px_36px_rgba(37,99,235,0.16)]"
+                    ? "border-blue-300/45 bg-blue-500/20 text-white shadow-none"
                     : "border-white/8 bg-slate-950/45 text-slate-400 hover:border-blue-300/25 hover:text-slate-100",
                 ].join(" ")}
                 onClick={() => {
@@ -3476,7 +3488,7 @@ function SparcForceImportedExplorer({
                       className={[
                         "inline-flex min-h-10 items-center justify-center gap-2 rounded-lg px-3 text-xs font-bold transition-[background-color,color,box-shadow,transform] duration-150 active:scale-[0.96]",
                         selected
-                          ? "bg-blue-500/22 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_10px_24px_rgba(37,99,235,0.14)]"
+                          ? "bg-blue-500/22 text-white shadow-none"
                           : "text-slate-400 hover:bg-white/6 hover:text-slate-100",
                       ].join(" ")}
                       onClick={() => setOwnershipFilter(filter.id)}
@@ -3541,7 +3553,7 @@ function SparcForceImportedExplorer({
                   className={[
                     "grid gap-3 rounded-lg border p-3.5 text-left transition-[background-color,border-color,box-shadow,transform] duration-150 active:scale-[0.99]",
                     selected
-                      ? "border-blue-300/55 bg-blue-500/14 shadow-[0_0_0_1px_rgba(96,165,250,0.12),0_18px_44px_rgba(37,99,235,0.16)]"
+                      ? "border-blue-300/55 bg-blue-500/14 shadow-none"
                       : "border-white/8 bg-slate-950/48 hover:border-blue-300/25 hover:bg-slate-900/70 hover:shadow-lg hover:shadow-black/10",
                   ].join(" ")}
                   onClick={() => setSelectedKey(sparcForceImportedKey(item))}
@@ -3647,7 +3659,7 @@ function SparcForceImportedDetails({
   return (
     <div
       className={[
-        "rounded-xl border border-blue-300/15 bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.16),transparent_34%),linear-gradient(180deg,rgba(15,30,58,0.72),rgba(5,13,30,0.92))] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_20px_60px_rgba(0,0,0,0.18)]",
+        "rounded-xl border border-blue-300/15 bg-[var(--wt-surface)] p-5 shadow-none",
         compact ? "" : "xl:min-h-[42rem]",
       ].join(" ")}
     >
@@ -3689,7 +3701,7 @@ function SparcForceImportedDetails({
 
       <div className="mt-5 grid gap-3 md:grid-cols-2">
         {detailRows.map(([label, value]) => (
-          <div key={label} className="flex min-h-[4.15rem] gap-3 rounded-lg border border-white/8 bg-slate-950/42 px-3 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+          <div key={label} className="flex min-h-[4.15rem] gap-3 rounded-lg border border-white/8 bg-slate-950/42 px-3 py-3 shadow-none">
             <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-500/12 text-blue-200">
               {sparcForceDetailIcon(label)}
             </span>
@@ -3767,7 +3779,7 @@ function SparcForceTaskImportReview({
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/72 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-3xl rounded-2xl border border-blue-300/20 bg-[radial-gradient(circle_at_top_left,rgba(37,99,235,0.2),transparent_34%),linear-gradient(180deg,rgba(15,30,58,0.98),rgba(4,11,26,0.98))] p-5 shadow-2xl shadow-black/45">
+      <div className="w-full max-w-3xl rounded-2xl border border-blue-300/20 bg-[var(--wt-surface)] p-5 shadow-2xl shadow-black/45">
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/8 pb-4">
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-blue-200/70">
@@ -4521,7 +4533,7 @@ function ProfileImagePreview({
 
   return (
     <div className="flex items-center gap-4 rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface)] p-4 lg:block">
-      <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-full border border-blue-500/20 bg-[var(--wt-accent-soft)] shadow-[var(--wt-control-shadow)] lg:mx-auto lg:h-24 lg:w-24">
+      <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-full border border-blue-500/20 bg-[var(--wt-accent-soft)] shadow-none lg:mx-auto lg:h-24 lg:w-24">
         {imageUrl && !imageFailed ? (
           <img
             src={imageUrl}

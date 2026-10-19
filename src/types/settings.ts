@@ -1,6 +1,12 @@
 export type ThemePreference = "dark" | "light" | "system";
 
+export type ExperienceMode = "essentials" | "developer";
+export type OptionalFeature = "reports" | "journal" | "focus";
+
 export type Settings = {
+  experienceMode: ExperienceMode;
+  experienceConfigured: boolean;
+  enabledFeatures: OptionalFeature[];
   name: string;
   email: string;
   useGravatarProfileImage: boolean;

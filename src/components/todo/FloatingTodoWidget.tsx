@@ -22,10 +22,13 @@ import {
   createWeeklyTask,
   deleteWeeklyTask,
   listWeeklyTasks,
+  listTasks,
   updateWeeklyTask,
 } from "../../lib/api/weeklyTasks";
 import { weeklyTaskQueryRoots } from "../../lib/api/queryKeys";
 import { todoAnnouncement, taskUpdateAnnouncement } from "../../lib/announcements";
+import { useExperience } from "../../features/experience/useExperience";
+import { showMainWindow } from "../../lib/api/windows";
 import { useWeekRange } from "../../hooks/useWeekRange";
 import type { WeeklyTask, WeeklyTaskStatus } from "../../types/weeklyTask";
 import { useSpeech } from "../ui/SpeechProvider";
@@ -34,6 +37,7 @@ import { useToast } from "../ui/ToastProvider";
 const visibleStatuses: WeeklyTaskStatus[] = ["blocked", "in_progress", "todo", "completed"];
 
 export function FloatingTodoWidget() {
+  const experience = useExperience();
   const queryClient = useQueryClient();
   const toast = useToast();
   const speech = useSpeech();
@@ -42,6 +46,8 @@ export function FloatingTodoWidget() {
   const [isPinned, setIsPinned] = useState(true);
   const [isWidgetFocused, setIsWidgetFocused] = useState(false);
   const [view, setView] = useState<"todos" | "plan">("todos");
+
+  useEffect(() => { if (!experience.isDeveloper) setView("todos"); }, [experience.isDeveloper]);
 
   useEffect(() => {
     document.documentElement.classList.add("todo-widget-window");
@@ -54,6 +60,7 @@ export function FloatingTodoWidget() {
   }, []);
 
   useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
     const appWindow = getCurrentWindow();
     let isMounted = true;
     let unlistenFocus: (() => void) | undefined;
@@ -89,21 +96,21 @@ export function FloatingTodoWidget() {
   }, []);
 
   const tasksQuery = useQuery({
-    queryKey: ["weeklyTasks", "widget", weekRange.from, weekRange.to],
-    queryFn: () =>
+    queryKey: ["weeklyTasks", "widget", experience.mode, weekRange.from, weekRange.to],
+    queryFn: () => experience.isDeveloper ?
       listWeeklyTasks({
         weekStartDate: weekRange.from,
         weekEndDate: weekRange.to,
-      }),
+      }) : listTasks(),
     refetchInterval: 60_000,
   });
 
   const tasks = useMemo(
     () =>
       (tasksQuery.data ?? [])
-        .filter((task) => visibleStatuses.includes(task.status))
+        .filter((task) => visibleStatuses.includes(task.status) && (experience.isDeveloper || task.status !== "completed" || task.completedAt?.slice(0, 10) === today()))
         .sort(sortWidgetTasks),
-    [tasksQuery.data],
+    [tasksQuery.data, experience.isDeveloper],
   );
   const allTasks = useMemo(
     () => (tasksQuery.data ?? []).slice().sort(sortWidgetTasks),
@@ -139,7 +146,7 @@ export function FloatingTodoWidget() {
         status: "todo",
         weekStartDate: weekRange.from,
         priority: "normal",
-        includedInReport: false,
+        includedInReport: !experience.isDeveloper && experience.hasFeature("reports"),
       }),
     onSuccess: async (task) => {
       setTitle("");
@@ -158,7 +165,7 @@ export function FloatingTodoWidget() {
     mutationFn: ({ task, status }: { task: WeeklyTask; status: WeeklyTaskStatus }) =>
       updateWeeklyTask(task.id, {
         status,
-        completedAt: status === "completed" || status === "dropped" ? today() : null,
+        completedAt: status === "completed" || status === "dropped" ? today() : "",
         progressPercent:
           status === "in_progress" && (task.progressPercent === null || task.progressPercent === undefined)
             ? 0
@@ -217,7 +224,7 @@ export function FloatingTodoWidget() {
   return (
     <div className="group/widget min-h-screen overflow-hidden bg-transparent p-2 text-slate-100">
       <div
-        className={`flex h-[calc(100vh-1rem)] min-h-[224px] flex-col overflow-hidden rounded-[24px] border transition-[background-color,border-color,box-shadow,opacity,backdrop-filter] duration-200 ease-out hover:border-white/12 hover:bg-slate-950/90 hover:opacity-100 hover:shadow-2xl hover:shadow-black/40 hover:backdrop-blur-xl focus-within:border-white/12 focus-within:bg-slate-950/90 focus-within:opacity-100 focus-within:shadow-2xl focus-within:shadow-black/40 focus-within:backdrop-blur-xl ${
+        className={`flex h-[calc(100vh-1rem)] min-h-[224px] flex-col overflow-hidden rounded-xl border transition-[background-color,border-color,box-shadow,opacity,backdrop-filter] duration-200 ease-out hover:border-white/12 hover:bg-slate-950/90 hover:opacity-100 hover:shadow-2xl hover:shadow-black/40 hover:backdrop-blur-xl focus-within:border-white/12 focus-within:bg-slate-950/90 focus-within:opacity-100 focus-within:shadow-2xl focus-within:shadow-black/40 focus-within:backdrop-blur-xl ${
           isWidgetFocused
             ? "border-white/12 bg-slate-950/90 opacity-100 shadow-2xl shadow-black/40 backdrop-blur-xl"
             : "border-white/[0.03] bg-slate-950/[0.03] opacity-30 shadow-none backdrop-blur-0"
@@ -234,9 +241,9 @@ export function FloatingTodoWidget() {
               </div>
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold text-white">
-                  {view === "todos" ? "WorkTrace Todos" : "Weekly Plan"}
+                  {!experience.isDeveloper ? "My tasks" : view === "todos" ? "WorkTrace Todos" : "Weekly Plan"}
                 </p>
-                <p className="truncate text-[10px] text-slate-500">{weekRange.label}</p>
+                <p className="truncate text-[10px] text-slate-500">{experience.isDeveloper ? weekRange.label : "One thing at a time"}</p>
               </div>
             </div>
           </div>
@@ -343,7 +350,7 @@ export function FloatingTodoWidget() {
             <WidgetEmpty
               icon={<Circle className="h-5 w-5" />}
               title="Nothing open"
-              message="Add a todo here or plan more work from Weekly Plan."
+              message={experience.isDeveloper ? "Add a todo here or plan more work from Weekly Plan." : "Add a task above. A title is all you need."}
             />
           ) : (
             <div className="space-y-2">
@@ -366,10 +373,10 @@ export function FloatingTodoWidget() {
         <footer className="flex shrink-0 items-center justify-between gap-2 border-t border-white/8 px-3 py-2">
           <button
             type="button"
-            onClick={() => setView(view === "todos" ? "plan" : "todos")}
+            onClick={() => experience.isDeveloper ? setView(view === "todos" ? "plan" : "todos") : void showMainWindow().catch((error) => toast.error("Open failed", toMessage(error)))}
             className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] font-semibold text-blue-200 transition hover:bg-blue-500/10"
           >
-            {view === "todos" ? (
+            {!experience.isDeveloper ? "Open WorkTrace" : view === "todos" ? (
               <>
                 <ListChecks className="h-3.5 w-3.5" />
                 Weekly Plan

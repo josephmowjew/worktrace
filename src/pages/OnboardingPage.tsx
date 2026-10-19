@@ -37,7 +37,7 @@ export function OnboardingPage() {
   const toast = useToast();
   const queryClient = useQueryClient();
   const repositorySync = useRepositorySync();
-  const { progress, settingsQuery, projectsQuery, isLoading, weekRange } = useOnboardingProgress();
+  const { progress, settingsQuery, projectsQuery, isLoading } = useOnboardingProgress();
 
   const onboardingMutation = useMutation({
     mutationFn: updateSettings,
@@ -146,10 +146,11 @@ export function OnboardingPage() {
       <PageHeader
         icon={Sparkles}
         eyebrow="First run"
-        title="Set up your reporting trail"
-        description={`${weekRange.label} / local evidence stays on this machine`}
+        title="Set up development tracking"
+        description="Connect your work when you are ready. Tasks work without any setup."
         actions={
           <>
+            <Button variant="primary" onClick={() => navigate("/tasks", { state: { openTask: true } })}>Add your first task</Button>
             <Button
               variant="ghost"
               onClick={leaveOnboarding}
@@ -336,7 +337,7 @@ function StepRow({
       className={[
         "grid w-full grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-3 rounded-xl border p-3 text-left transition-[background-color,border-color,box-shadow,transform] duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/55 disabled:cursor-not-allowed disabled:opacity-55",
         active
-          ? "border-blue-400/35 bg-blue-500/10 shadow-[0_12px_32px_rgba(37,99,235,0.14)]"
+          ? "border-blue-400/35 bg-blue-500/10 shadow-none"
           : "border-[var(--wt-border)] bg-[var(--wt-surface-muted)] hover:border-blue-400/25",
       ].join(" ")}
     >
