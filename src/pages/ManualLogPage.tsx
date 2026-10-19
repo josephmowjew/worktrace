@@ -615,26 +615,16 @@ function ManualLogHero({
   totalMinutes: number;
 }) {
   return (
-    <header className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <button
-          type="button"
-          className="inline-flex h-11 items-center gap-3 rounded-xl border border-[var(--wt-border)] bg-[var(--wt-input)] px-4 text-sm font-semibold text-[var(--wt-text-strong)] shadow-[var(--wt-control-shadow)] transition-[background-color,border-color,color,transform] duration-150 hover:border-blue-500/25 hover:bg-[var(--wt-surface-hover)] active:scale-[0.96]"
-        >
-          <CalendarDays className="h-4 w-4 text-[var(--wt-text-muted)]" />
-          <span>{weekLabel}</span>
-          <ChevronRight className="h-4 w-4 text-[var(--wt-text-muted)]" />
-        </button>
-
-        <div className="flex flex-wrap items-center gap-5">
+    <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--wt-border)] pb-4">
+      <div className="min-w-0">
+        <h1 className="text-xl font-semibold text-[var(--wt-text-strong)]">Manual log</h1>
+        <p className="mt-1.5 text-xs text-[var(--wt-text-muted)]">Capture non-code work for your weekly report. <span className="ml-2">{weekLabel}</span></p>
+      </div>
+        <div className="flex flex-wrap items-center gap-4">
           <HeroStat label="Total logs" value={totalLogs.toString()} tone="blue" />
           <HeroStat label="Included in report" value={includedCount.toString()} tone="green" />
           <HeroStat label="This week" value={formatMinutes(totalMinutes)} tone="orange" />
         </div>
-      </div>
-      <p className="max-w-3xl text-sm leading-6 text-[var(--wt-text-muted)]">
-        Capture meetings, planning, testing, support, reviews, and other non-code work for {weekLabel}.
-      </p>
     </header>
   );
 }
@@ -649,21 +639,21 @@ function HeroStat({
   tone: IconTone;
 }) {
   const toneClass: Record<IconTone, string> = {
-    blue: "bg-blue-500 text-blue-200 shadow-[0_0_18px_rgb(59_130_246/0.38)]",
-    cyan: "bg-cyan-500 text-cyan-100 shadow-[0_0_18px_rgb(6_182_212/0.32)]",
-    green: "bg-emerald-500 text-emerald-100 shadow-[0_0_18px_rgb(16_185_129/0.32)]",
-    purple: "bg-violet-500 text-violet-100 shadow-[0_0_18px_rgb(139_92_246/0.32)]",
-    orange: "bg-orange-500 text-orange-100 shadow-[0_0_18px_rgb(249_115_22/0.32)]",
-    amber: "bg-amber-500 text-amber-100 shadow-[0_0_18px_rgb(245_158_11/0.32)]",
-    rose: "bg-rose-500 text-rose-100 shadow-[0_0_18px_rgb(244_63_94/0.32)]",
-    slate: "bg-slate-500 text-slate-100 shadow-[0_0_18px_rgb(100_116_139/0.24)]",
+    blue: "bg-blue-500 text-blue-200 shadow-none",
+    cyan: "bg-cyan-500 text-cyan-100 shadow-none",
+    green: "bg-emerald-500 text-emerald-100 shadow-none",
+    purple: "bg-violet-500 text-violet-100 shadow-none",
+    orange: "bg-orange-500 text-orange-100 shadow-none",
+    amber: "bg-amber-500 text-amber-100 shadow-none",
+    rose: "bg-rose-500 text-rose-100 shadow-none",
+    slate: "bg-slate-500 text-slate-100 shadow-none",
   };
 
   return (
-    <div className="flex items-center gap-2.5 border-r border-[var(--wt-border)] pr-5 last:border-r-0 last:pr-0">
-      <span className={`h-2.5 w-8 rounded-full ${toneClass[tone]}`} />
+    <div className="flex items-center gap-2 border-r border-[var(--wt-border)] pr-4 last:border-r-0 last:pr-0">
+      <span className={`h-2 w-2 rounded-full ${toneClass[tone]}`} />
       <span className="text-sm font-semibold tabular-nums text-[var(--wt-text-strong)]">{value}</span>
-      <span className="text-sm text-[var(--wt-text-muted)]">{label}</span>
+      <span className="text-xs text-[var(--wt-text-muted)]">{label}</span>
     </div>
   );
 }
@@ -710,12 +700,12 @@ function ManualLogRow({
               </>
             ) : null}
           </div>
-          <p className="mt-4 max-w-[44rem] text-base font-semibold leading-7 text-[var(--wt-text-strong)]">
+          <p className="mt-3 line-clamp-2 max-w-[44rem] text-sm font-semibold leading-6 text-[var(--wt-text-strong)]">
             {log.summary}
           </p>
         </div>
 
-        <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 flex-wrap items-center gap-2.5">
             <span className="inline-flex items-center gap-1.5 text-sm tabular-nums text-[var(--wt-text-muted)]">
               <Clock3 className="h-4 w-4" />

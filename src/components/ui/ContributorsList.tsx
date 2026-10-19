@@ -1,18 +1,5 @@
 import type { TopContributor } from "../../types/project";
 
-const avatarColors = [
-  "from-blue-500 to-blue-600",
-  "from-emerald-500 to-emerald-600",
-  "from-violet-500 to-violet-600",
-  "from-orange-500 to-orange-600",
-  "from-pink-500 to-pink-600",
-  "from-cyan-500 to-cyan-600",
-];
-
-function getAvatarColor(index: number): string {
-  return avatarColors[index % avatarColors.length];
-}
-
 function getInitials(name: string): string {
   return name
     .split(" ")
@@ -39,13 +26,13 @@ export function ContributorsList({
 
   return (
     <div className="space-y-3">
-      {contributors.map((contributor, index) => (
+      {contributors.map((contributor) => (
         <div
           key={contributor.authorName}
           className="flex items-center gap-3 rounded-xl border border-white/8 bg-slate-950/35 p-2.5"
         >
           <div
-            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br ${getAvatarColor(index)} text-xs font-semibold text-white`}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[var(--wt-border)] bg-[var(--wt-surface-muted)] text-xs font-medium text-[var(--wt-text-strong)]"
           >
             {getInitials(contributor.authorName)}
           </div>

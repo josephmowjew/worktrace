@@ -30,8 +30,8 @@ const sizeClasses: Record<SelectSize, {
   check: string;
 }> = {
   sm: {
-    trigger: "h-8 min-w-[100px] px-2.5 text-xs rounded-xl",
-    dropdown: "rounded-xl p-1.5",
+    trigger: "h-8 min-w-[100px] px-2.5 text-xs rounded-md",
+    dropdown: "rounded-md p-1.5",
     option: "px-2 py-2 text-xs rounded-lg gap-2",
     iconWrapper: "h-6 w-6 rounded-lg shrink-0",
     icon: "h-3 w-3",
@@ -39,19 +39,19 @@ const sizeClasses: Record<SelectSize, {
     check: "h-3.5 w-3.5 shrink-0",
   },
   md: {
-    trigger: "h-10 min-w-[140px] px-3 text-sm rounded-xl",
-    dropdown: "rounded-2xl p-2",
-    option: "px-3 py-2.5 text-sm rounded-xl gap-3",
-    iconWrapper: "h-8 w-8 rounded-xl shrink-0",
+    trigger: "h-10 min-w-[140px] px-3 text-sm rounded-md",
+    dropdown: "rounded-lg p-2",
+    option: "px-3 py-2.5 text-sm rounded-md gap-3",
+    iconWrapper: "h-8 w-8 rounded-md shrink-0",
     icon: "h-4 w-4",
     chevron: "h-4 w-4 shrink-0",
     check: "h-4 w-4 shrink-0",
   },
   lg: {
-    trigger: "h-12 min-w-[180px] px-4 text-base rounded-2xl",
-    dropdown: "rounded-2xl p-2.5",
-    option: "px-4 py-3 text-base rounded-xl gap-3",
-    iconWrapper: "h-9 w-9 rounded-xl shrink-0",
+    trigger: "h-12 min-w-[180px] px-4 text-base rounded-lg",
+    dropdown: "rounded-lg p-2.5",
+    option: "px-4 py-3 text-base rounded-md gap-3",
+    iconWrapper: "h-9 w-9 rounded-md shrink-0",
     icon: "h-5 w-5",
     chevron: "h-5 w-5 shrink-0",
     check: "h-5 w-5 shrink-0",
@@ -182,7 +182,7 @@ export function Select<T extends string = string>({
   const dropdown = isOpen && (
     <div
       ref={dropdownRef}
-      className={`fixed z-[9999] max-h-64 overflow-y-auto border border-[var(--wt-border)] bg-[var(--wt-surface)] shadow-[var(--wt-panel-shadow)] ${classes.dropdown}`}
+      className={`fixed z-[9999] max-h-64 overflow-y-auto border border-[var(--wt-border)] bg-[var(--wt-surface)] shadow-[var(--wt-popover-shadow)] ${classes.dropdown}`}
       style={{
         top: position.direction === "down" ? `${position.top}px` : undefined,
         bottom: position.direction === "up" ? `calc(100vh - ${position.top}px)` : undefined,

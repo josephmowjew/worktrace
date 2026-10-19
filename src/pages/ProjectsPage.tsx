@@ -121,7 +121,7 @@ export function ProjectsPage() {
       if (viewMode !== "projects") {
         return;
       }
-      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "k") {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "f") {
         return;
       }
 
@@ -1157,7 +1157,6 @@ export function ProjectsPage() {
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-4">
           <Panel className="relative overflow-visible p-3">
-            <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/45 to-transparent" />
             <div className="grid gap-3 xl:grid-cols-[minmax(360px,1fr)_auto] xl:items-end">
               <FastFindSearch
                 inputRef={repositorySearchRef}

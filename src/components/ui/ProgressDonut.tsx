@@ -21,10 +21,10 @@ export function ProgressDonut({
   const center = size / 2;
 
   const segments = [
-    { value: done, color: "#10b981", label: "Done" },
-    { value: inProgress, color: "#8b5cf6", label: "In Progress" },
-    { value: planned, color: "#3b82f6", label: "Planned" },
-    { value: carryForward, color: "#f97316", label: "Carry Forward" },
+    { value: done, color: "var(--wt-success)", label: "Done" },
+    { value: inProgress, color: "var(--wt-text-muted)", label: "In Progress" },
+    { value: planned, color: "var(--wt-border-strong)", label: "Planned" },
+    { value: carryForward, color: "var(--wt-warning)", label: "Carry Forward" },
   ].filter((s) => s.value > 0);
 
   let cumulativeOffset = 0;

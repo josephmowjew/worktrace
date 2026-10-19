@@ -79,12 +79,16 @@ export function FrictionInsightPanel({
     navigate(insight.actionTarget);
   }
 
+  if (compact && !isLoading && visible.length === 0) {
+    return <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 py-1 text-xs text-[var(--wt-text-muted)]"><Gauge size={13} /><h2 className="font-medium">{title}</h2><span>{emptyText}</span></div>;
+  }
+
   return (
     <Panel className={compact ? "border-white/10 bg-slate-950/45 p-3" : undefined}>
       <div className="mb-3 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Gauge className="h-4 w-4 text-orange-200" />
-          <h2 className={compact ? "text-xs font-semibold uppercase tracking-[0.12em] text-blue-200" : "text-sm font-semibold text-white"}>
+          <h2 className={compact ? "text-xs font-semibold text-[var(--wt-text-strong)]" : "text-sm font-semibold text-white"}>
             {title}
           </h2>
         </div>

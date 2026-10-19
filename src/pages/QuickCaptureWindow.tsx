@@ -347,7 +347,7 @@ export function QuickCaptureWindow() {
 
   return (
     <main className="flex h-screen min-h-0 overflow-hidden bg-slate-950/95 p-1.5 text-slate-100 sm:p-3">
-      <section className="flex min-h-0 w-full flex-col overflow-hidden rounded-2xl border border-cyan-200/15 bg-[#071122]/95 shadow-[0_24px_80px_rgba(0,0,0,0.45)]">
+      <section className="flex min-h-0 w-full flex-col overflow-hidden rounded-2xl border border-cyan-200/15 bg-[var(--wt-surface-strong)] shadow-none">
         <div data-tauri-drag-region className="flex shrink-0 items-center justify-between border-b border-white/8 px-4 py-3">
           <div data-tauri-drag-region className="flex items-center gap-2">
             <span className="grid h-8 w-8 place-items-center rounded-xl border border-cyan-300/20 bg-cyan-500/10 text-cyan-200">
@@ -430,7 +430,7 @@ export function QuickCaptureWindow() {
               aria-pressed={mode === "manual_log"}
               className={`inline-flex min-h-9 items-center justify-center gap-2 rounded-lg px-3 text-xs font-semibold transition-[background-color,color,transform] duration-150 active:scale-[0.96] ${
                 mode === "manual_log"
-                  ? "bg-cyan-500/15 text-cyan-100 shadow-[0_10px_28px_rgba(8,145,178,0.12)]"
+                  ? "bg-cyan-500/15 text-cyan-100 shadow-none"
                   : "text-slate-500 hover:bg-white/[0.04] hover:text-slate-200"
               }`}
             >
@@ -443,7 +443,7 @@ export function QuickCaptureWindow() {
               aria-pressed={mode === "task"}
               className={`inline-flex min-h-9 items-center justify-center gap-2 rounded-lg px-3 text-xs font-semibold transition-[background-color,color,transform] duration-150 active:scale-[0.96] ${
                 mode === "task"
-                  ? "bg-blue-500/15 text-blue-100 shadow-[0_10px_28px_rgba(37,99,235,0.12)]"
+                  ? "bg-blue-500/15 text-blue-100 shadow-none"
                   : "text-slate-500 hover:bg-white/[0.04] hover:text-slate-200"
               }`}
             >
@@ -571,7 +571,7 @@ export function QuickCaptureWindow() {
           ) : null}
         </div>
 
-        <div className="flex shrink-0 items-center justify-between gap-3 border-t border-white/8 bg-[#071122]/98 px-4 py-3">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-t border-white/8 bg-[var(--wt-surface-strong)] px-4 py-3">
           <p className="min-w-0 text-[11px] leading-4 text-slate-500">
             {mode === "task"
               ? projectId

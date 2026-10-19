@@ -817,7 +817,7 @@ function ProjectWorkItemRow({
   return (
     <article
       className={[
-        "rounded-2xl border bg-slate-950/45 shadow-[0_14px_42px_rgba(2,6,23,0.24),inset_0_1px_0_rgba(255,255,255,0.045)] transition-[background-color,border-color,box-shadow,transform] duration-150",
+        "rounded-2xl border bg-slate-950/45 shadow-none transition-[background-color,border-color,box-shadow,transform] duration-150",
         isSelected ? "border-cyan-300/35 ring-1 ring-cyan-300/20" : "border-cyan-200/12 hover:border-cyan-200/22 hover:bg-slate-950/52",
       ].join(" ")}
     >

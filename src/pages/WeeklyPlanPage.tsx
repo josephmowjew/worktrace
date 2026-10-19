@@ -197,7 +197,7 @@ export function WeeklyPlanPage() {
 
   useEffect(() => {
     function handleSearchShortcut(event: KeyboardEvent) {
-      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "k") {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "f") {
         return;
       }
 
@@ -538,34 +538,28 @@ export function WeeklyPlanPage() {
 
   return (
     <div className="space-y-4">
-      <Panel className="relative overflow-hidden p-0">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_16%_28%,rgba(56,189,248,0.18),transparent_26%),radial-gradient(circle_at_72%_12%,rgba(37,99,235,0.18),transparent_24%)]" />
-        <div className="relative flex flex-wrap items-center justify-between gap-4 px-5 py-4">
+      <header className="wt-page-header">
+        <div className="relative flex flex-wrap items-center justify-between gap-4">
           <div>
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-cyan-300/15 bg-cyan-300/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
-              <ListChecks className="h-3.5 w-3.5" />
-              Weekly Plan
-            </div>
-            <h1 className="text-2xl font-semibold tracking-tight text-white">
+            <h1 className="text-xl font-semibold tracking-tight text-white">
               Weekly Plan
             </h1>
-            <p className="mt-1 max-w-2xl text-sm text-slate-400">
+            <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-400">
               Plan work, track blockers, carry unfinished items forward, and choose
               what lands in the weekly report.
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
             <MiniStat label="Open" value={planned.length.toString()} dotColor="bg-blue-400" />
             <MiniStat label="In Progress" value={inProgress.length.toString()} dotColor="bg-violet-400" />
             <MiniStat label="Done" value={done.length.toString()} dotColor="bg-emerald-400" />
             <MiniStat label="Carry Forward" value={carryForward.length.toString()} dotColor="bg-orange-400" />
           </div>
         </div>
-      </Panel>
+      </header>
 
       <Panel className="relative overflow-visible p-3">
-        <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/45 to-transparent" />
         <div className="grid gap-3 xl:grid-cols-[minmax(320px,1fr)_auto] xl:items-end">
           <WeeklyPlanSearch
             inputRef={searchInputRef}
@@ -861,13 +855,13 @@ function MiniStat({
   dotColor: string;
 }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-slate-950/50 px-4 py-3 text-center shadow-xl shadow-black/10">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+    <div className="flex items-center gap-2 text-xs">
+      <p className="text-xs text-[var(--wt-text-muted)]">
         {label}
       </p>
-      <div className="mt-1 flex items-center justify-center gap-1.5">
+      <div className="flex items-center gap-1.5">
         <div className={`h-1.5 w-1.5 rounded-full ${dotColor}`} />
-        <p className="text-2xl font-semibold text-white">{value}</p>
+        <p className="text-sm font-semibold text-[var(--wt-text-strong)]">{value}</p>
       </div>
     </div>
   );

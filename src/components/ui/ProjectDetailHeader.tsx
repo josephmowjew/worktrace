@@ -51,7 +51,6 @@ export function ProjectDetailHeader({
 
   return (
     <Panel className="relative overflow-hidden p-0">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_16%_28%,rgba(56,189,248,0.18),transparent_26%),radial-gradient(circle_at_72%_12%,rgba(37,99,235,0.18),transparent_24%)]" />
       <div className="relative">
         <div className="flex items-center gap-3 border-b border-white/8 px-5 py-3">
           <button

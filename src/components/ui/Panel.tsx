@@ -6,7 +6,7 @@ export const Panel = forwardRef<HTMLDivElement, PropsWithChildren<{ className?: 
     return (
       <div
         ref={ref}
-        className={`wt-panel rounded-2xl p-4 ${className}`}
+        className={`wt-panel rounded-lg p-4 ${className}`}
       >
         {children}
       </div>

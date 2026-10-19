@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { CloseButton } from "./CloseButton";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { Panel } from "./Panel";
 
 const sizeClasses = {
@@ -24,8 +25,10 @@ export function ModalShell({
   size?: keyof typeof sizeClasses;
   className?: string;
 }) {
+  useEscapeKey(onClose);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--wt-overlay)] p-4 backdrop-blur-sm">
+    <div role="dialog" aria-modal="true" aria-label={title} className="wt-modal-overlay fixed inset-0 z-50 flex items-center justify-center bg-[var(--wt-overlay)] p-4 ">
       <Panel className={`relative flex max-h-[92vh] w-full ${sizeClasses[size]} flex-col overflow-hidden p-0 ${className}`}>
         <div className="flex shrink-0 items-center justify-between gap-4 border-b border-[var(--wt-border)] px-5 py-4">
           <div className="min-w-0">

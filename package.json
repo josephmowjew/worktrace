@@ -22,6 +22,7 @@
     "check:command-parity": "node ./scripts/check-command-parity.mjs"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
     "@hookform/resolvers": "^5.2.2",
     "@tailwindcss/vite": "^4.3.0",
     "@tanstack/react-query": "^5.100.10",

@@ -6,7 +6,6 @@ import {
   BarChart3,
   CalendarDays,
   Code2,
-  Command,
   FileText,
   FolderKanban,
   ListChecks,
@@ -87,17 +86,17 @@ function DashboardStatCard({
 
   return (
     <div
-      className={`group relative overflow-hidden rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface)] p-5 shadow-[var(--wt-panel-shadow)] transition-[border-color,background-color,box-shadow] duration-150 ${toneClasses.border}`}
+      className={`group relative px-5 py-4 transition-[background-color] duration-150 ${toneClasses.border}`}
     >
-      <div className="relative flex items-center gap-4">
+      <div className="relative flex items-start gap-3">
         <div
-          className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border ${toneClasses.icon}`}
+          className={`flex h-6 w-6 shrink-0 items-center justify-center ${toneClasses.icon}`}
         >
-          <Icon className="h-6 w-6" />
+          <Icon className="h-4 w-4" />
         </div>
         <div className="min-w-0">
-          <p className="text-sm font-medium text-[var(--wt-text-strong)]">{label}</p>
-          <p className="mt-1 text-3xl font-semibold tracking-tight text-[var(--wt-text-strong)] tabular-nums">
+          <p className="text-xs font-medium text-[var(--wt-text-muted)]">{label}</p>
+          <p className="mt-1 text-2xl font-semibold tracking-tight text-[var(--wt-text-strong)] tabular-nums">
             {value}
           </p>
           <p className="mt-1 flex items-center gap-1 text-xs text-[var(--wt-text-muted)] tabular-nums">
@@ -309,9 +308,7 @@ export function DashboardPage() {
               onChange={(event) => setSearchQuery(event.currentTarget.value)}
               className="min-w-0 flex-1 bg-transparent text-sm text-[var(--wt-text-strong)] placeholder:text-[var(--wt-text-faint)] focus:outline-none"
             />
-            <span className="hidden items-center gap-1 rounded-md border border-[var(--wt-border)] bg-[var(--wt-surface-muted)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--wt-text-muted)] sm:inline-flex">
-              <Command className="h-3 w-3" /> K
-            </span>
+
           </div>
           <Button
             variant="primary"
@@ -328,7 +325,7 @@ export function DashboardPage() {
         }
       />
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-4">
+      <div className="wt-summary-strip grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
         <DashboardStatCard
           icon={FolderKanban}
           label="Active Projects"

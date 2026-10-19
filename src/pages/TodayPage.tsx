@@ -797,17 +797,16 @@ export function TodayPage() {
         />
       ) : null}
 
-      <div className="wt-focus-muted flex flex-wrap items-center justify-between gap-4">
+      <div className="wt-page-header wt-focus-muted flex flex-wrap items-center justify-between gap-4">
         <div className="flex min-w-0 flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight text-white">Today</h1>
-          <span className="inline-flex h-9 items-center gap-2 rounded-lg border border-white/10 bg-slate-950/45 px-3 text-xs font-medium text-slate-200 tabular-nums">
+          <h1 className="text-xl font-semibold tracking-tight text-[var(--wt-text-strong)]">Today</h1>
+          <span className="inline-flex h-7 items-center gap-2 text-[var(--wt-text-muted)] text-xs font-medium text-slate-200 tabular-nums">
             <CalendarDays className="h-3.5 w-3.5 text-slate-500" />
             {today.label}
           </span>
-          <span className="text-xs font-medium text-slate-400">+ {weekRange.label}</span>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button onClick={() => setTaskModalOpen(true)} size="sm">
+          <Button variant="primary" onClick={() => setTaskModalOpen(true)} size="sm">
             <Plus className="h-4 w-4" />
             New Task
           </Button>
@@ -820,15 +819,11 @@ export function TodayPage() {
             {repositorySync.isSyncing ? "Syncing..." : "Sync Repos"}
           </Button>
           <span className="mx-1 h-8 w-px bg-white/10" />
-          <Button variant="primary" onClick={() => setReviewOpen(true)} size="sm">
+          <Button onClick={() => setReviewOpen(true)} size="sm">
             <ListChecks className="h-4 w-4" />
             End of Day Review
           </Button>
-          <Button onClick={() => navigate("/reports")} size="sm">
-            <FileText className="h-4 w-4" />
-            Reports
-          </Button>
-          <Button onClick={() => setReportPrepOpen(true)} size="sm">
+          <Button variant="ghost" onClick={() => setReportPrepOpen(true)} size="sm">
             <FileText className="h-4 w-4" />
             Prep Report
           </Button>
@@ -846,7 +841,7 @@ export function TodayPage() {
         />
       ) : null}
 
-      <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_300px]">
         <div className="wt-focus-muted space-y-4">
           <TodayCommandCenterPanel
             todayDate={today.date}
@@ -906,7 +901,7 @@ export function TodayPage() {
             onOpenBackgroundSettings={() => navigate("/settings")}
           />
 
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <div className="wt-summary-strip grid-cols-2 sm:grid-cols-5">
             <TodayStat icon={Target} label="Planned Today" value={planned.length.toString()} detail="open tasks" />
             <TodayStat icon={Activity} label="In Progress" value={inProgress.length.toString()} detail="tasks" />
             <TodayStat icon={AlertTriangle} label="Blockers" value={blockers.length.toString()} detail={blockers.length === 1 ? "task" : "tasks"} tone="amber" />
@@ -1155,18 +1150,18 @@ function TodayStat({
     amber: "border-amber-400/25 bg-amber-500/12 text-amber-200",
   }[tone];
   return (
-    <Panel className="border-white/10 bg-slate-950/55 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
+    <div className="px-3 py-4">
       <div className="flex items-start gap-3">
-        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border ${toneClass}`}>
+        <span className={`hidden ${toneClass}`}>
           <Icon className="h-4 w-4" />
         </span>
         <div>
-          <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-400">{label}</p>
-          <p className="mt-2 text-2xl font-semibold leading-none text-white tabular-nums">{value}</p>
+          <p className="text-[11px] font-medium text-slate-400">{label}</p>
+          <p className="mt-1.5 text-xl font-semibold leading-none text-white tabular-nums">{value}</p>
           <p className="mt-1 text-xs text-slate-400">{detail}</p>
         </div>
       </div>
-    </Panel>
+    </div>
   );
 }
 
@@ -1183,7 +1178,7 @@ function OnboardingEntryPanel({
     <Panel className="border-blue-500/15 bg-[var(--wt-surface)] p-0">
       <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
         <div>
-          <div className="mb-2 inline-flex items-center gap-2 rounded-md border border-blue-500/15 bg-blue-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-blue-200">
+          <div className="mb-2 inline-flex items-center gap-2 rounded-md border border-blue-500/15 bg-blue-500/10 px-2.5 py-1 text-[10px] font-semibold tracking-normal text-blue-200">
             <Sparkles className="h-3.5 w-3.5" />
             First run
           </div>
@@ -1235,7 +1230,7 @@ function OnboardingSetupPanel({
       <div className="p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="mb-2 inline-flex items-center gap-2 rounded-md border border-blue-500/15 bg-blue-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-blue-200">
+            <div className="mb-2 inline-flex items-center gap-2 rounded-md border border-blue-500/15 bg-blue-500/10 px-2.5 py-1 text-[10px] font-semibold tracking-normal text-blue-200">
               <ListChecks className="h-3.5 w-3.5" />
               Setup workspace
             </div>
@@ -1356,14 +1351,14 @@ function TodayCommandCenterPanel({
   );
 
   return (
-    <Panel className="overflow-hidden border-white/10 bg-[linear-gradient(135deg,rgba(8,20,39,0.96),rgba(6,18,35,0.82))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+    <Panel className="overflow-hidden border-white/10 bg-[var(--wt-surface)] p-4 shadow-none">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-cyan-200">
+          <div className="mb-2 flex items-center gap-2 text-xs font-semibold tracking-normal text-cyan-200">
             <Sparkles className="h-3.5 w-3.5" />
-            Today Command Center
+            Today priorities
           </div>
-          <h2 className="max-w-2xl text-xl font-semibold leading-7 text-white sm:text-2xl">{mainFocus}</h2>
+          <h2 className="max-w-2xl text-lg font-semibold leading-7 text-[var(--wt-text-strong)] sm:text-xl">{mainFocus}</h2>
           <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
             <span className="inline-flex items-center gap-1.5">
               <BriefcaseBusiness className="h-3.5 w-3.5 text-slate-500" />
@@ -1393,7 +1388,7 @@ function TodayCommandCenterPanel({
             <div className="rounded-xl border border-cyan-300/15 bg-cyan-300/[0.045] p-3">
               <div className="mb-2 flex items-center gap-2">
                 <ArrowRight className="h-4 w-4 text-cyan-200" />
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-cyan-100">Next suggested action</p>
+                <p className="text-xs font-semibold tracking-normal text-cyan-100">Next suggested action</p>
               </div>
               <p className="text-sm font-medium leading-6 text-slate-100">{nextSuggestedAction}</p>
               {suggestedTask?.projectName ? (
@@ -1404,7 +1399,7 @@ function TodayCommandCenterPanel({
             <div className="rounded-xl border border-white/10 bg-slate-950/35 p-3">
               <div className="mb-3 flex items-center justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Set Today&apos;s Focus</p>
+                  <p className="text-xs font-semibold tracking-normal text-slate-400">Set Today&apos;s Focus</p>
                   <p className="mt-1 text-xs text-slate-500">
                     {completedPriorityCount > 0
                       ? `${completedPriorityCount} complete, ${Math.max(totalPriorityCount - completedPriorityCount, 0)} still open`
@@ -1417,7 +1412,7 @@ function TodayCommandCenterPanel({
               </div>
               <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-slate-900 ring-1 ring-white/8">
                 <div
-                  className="h-full rounded-full bg-emerald-300 shadow-[0_0_18px_rgba(110,231,183,0.28)] transition-[width] duration-200 ease-out"
+                  className="h-full rounded-full bg-emerald-300 shadow-none transition-[width] duration-200 ease-out"
                   style={{ width: `${priorityCompletionPercent}%` }}
                 />
               </div>
@@ -1433,7 +1428,7 @@ function TodayCommandCenterPanel({
                       key={index}
                     className={`grid grid-cols-[28px_minmax(0,1fr)_86px_72px] items-center gap-2 rounded-xl px-2 py-2 transition-[background-color,border-color,box-shadow] duration-150 ease-out ${
                         isDone
-                          ? "border border-emerald-300/20 bg-emerald-500/[0.075] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+                          ? "border border-emerald-300/20 bg-emerald-500/[0.075] shadow-none"
                           : isNext
                             ? "border border-cyan-300/20 bg-cyan-300/[0.055]"
                             : "border border-white/8 bg-slate-950/35"
@@ -1510,7 +1505,7 @@ function TodayCommandCenterPanel({
           <div className="space-y-3">
             <div className="rounded-xl border border-white/10 bg-white/[0.025] p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Background access</p>
+                <p className="text-xs font-semibold tracking-normal text-slate-400">Background access</p>
                 <Monitor className="h-4 w-4 text-slate-500" />
               </div>
               <p className="text-sm font-semibold text-slate-100">
@@ -1532,7 +1527,7 @@ function TodayCommandCenterPanel({
 
             <div className="rounded-xl border border-white/10 bg-white/[0.025] p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Current active project</p>
+                <p className="text-xs font-semibold tracking-normal text-slate-400">Current active project</p>
                 <Layers3 className="h-4 w-4 text-slate-500" />
               </div>
               <p className="truncate text-sm font-semibold text-slate-100">{activeProject}</p>
@@ -1543,7 +1538,7 @@ function TodayCommandCenterPanel({
 
             <div className="rounded-xl border border-white/10 bg-white/[0.025] p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Upcoming meetings</p>
+                <p className="text-xs font-semibold tracking-normal text-slate-400">Upcoming meetings</p>
                 <CalendarClock className="h-4 w-4 text-slate-500" />
               </div>
               <div className="space-y-2">
@@ -1567,7 +1562,7 @@ function TodayCommandCenterPanel({
 
             <div className="rounded-xl border border-white/10 bg-white/[0.025] p-3">
               <div className="mb-2 flex items-center justify-between">
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Top priorities</p>
+                <p className="text-xs font-semibold tracking-normal text-slate-400">Top priorities</p>
                 <CheckCheck className="h-4 w-4 text-slate-500" />
               </div>
               <div className="space-y-2">
@@ -1631,7 +1626,7 @@ function MissionMetric({
           <Icon className="h-4 w-4" />
         </span>
         <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</p>
+          <p className="text-xs font-semibold tracking-normal text-slate-500">{label}</p>
           <p className="mt-1 truncate text-sm font-semibold text-slate-100">{value}</p>
           <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{detail}</p>
         </div>
@@ -1702,11 +1697,11 @@ function TodayFocusPanel({
   }, [target]);
 
   return (
-    <Panel className={`wt-focus-primary border-emerald-300/15 bg-[linear-gradient(180deg,rgba(8,33,38,0.72),rgba(6,18,35,0.92))] p-4 ${
-      activeSession ? "shadow-[0_24px_72px_rgba(6,95,70,0.26),inset_0_1px_0_rgba(255,255,255,0.08)]" : ""
+    <Panel className={`wt-focus-primary border-emerald-300/15 bg-[var(--wt-surface)] p-4 ${
+      activeSession ? "shadow-none" : ""
     }`}>
       <div className="mb-4 flex items-center justify-between gap-3">
-        <h2 className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-300">Focus Session</h2>
+        <h2 className="text-xs font-semibold tracking-normal text-[var(--wt-text-strong)]">Focus Session</h2>
         <Badge tone={activeSession ? "green" : "slate"}>{activeSession ? "Active" : "Idle"}</Badge>
       </div>
 
@@ -1791,7 +1786,7 @@ function CompactCarryoverAssistant({
   return (
     <Panel className="border-white/10 bg-slate-950/45 p-3">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-blue-200">Carryover Assistant</h2>
+        <h2 className="text-xs font-semibold tracking-normal text-blue-200">Carryover Assistant</h2>
         <Badge tone={tasks.length > 0 ? "blue" : "slate"}>{tasks.length} items</Badge>
       </div>
       <div className="space-y-2">
@@ -1840,7 +1835,7 @@ function TodayNudgeStrip({
   return (
     <Panel className="border-white/10 bg-slate-950/45 p-3">
       <div className="mb-3 flex items-center gap-2">
-        <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-blue-200">Nudges</h2>
+        <h2 className="text-xs font-semibold tracking-normal text-blue-200">Nudges</h2>
         <Badge tone="slate">{nudges.length}</Badge>
       </div>
       {nudges.length > 0 ? (
@@ -2025,7 +2020,7 @@ function TaskPanel({
   return (
     <Panel className="border-white/10 bg-slate-950/45 p-3">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-blue-200">{title}</h2>
+        <h2 className="text-xs font-semibold tracking-normal text-blue-200">{title}</h2>
         <Badge tone="slate">{tasks.length} {tasks.length === 1 ? "task" : "tasks"}</Badge>
       </div>
       <div className="space-y-2">
@@ -2081,7 +2076,7 @@ function TodayActivityPanel({
   return (
     <Panel className="border-white/10 bg-slate-950/45 p-3">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-blue-200">Today Activity</h2>
+        <h2 className="text-xs font-semibold tracking-normal text-blue-200">Today Activity</h2>
         <Badge tone={activityItems.length > 0 ? "green" : "slate"}>{activityItems.length} items</Badge>
       </div>
       <div className="space-y-2">

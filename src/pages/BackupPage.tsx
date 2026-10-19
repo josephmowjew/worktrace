@@ -240,16 +240,15 @@ export function BackupPage() {
 
   return (
     <div className="space-y-4">
-      <Panel className="relative overflow-hidden p-0">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_16%_25%,rgba(20,184,166,0.2),transparent_28%),radial-gradient(circle_at_82%_10%,rgba(59,130,246,0.16),transparent_25%)]" />
-        <div className="relative flex flex-wrap items-center justify-between gap-4 px-5 py-4">
+      <header className="wt-page-header">
+        <div className="relative flex flex-wrap items-center justify-between gap-4">
           <div>
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-cyan-300/15 bg-cyan-300/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
+            <div className="mb-1 inline-flex items-center gap-2 text-[11px] text-[var(--wt-text-muted)]">
               <DatabaseBackup className="h-3.5 w-3.5" />
               Data backup
             </div>
-            <h1 className="text-2xl font-semibold tracking-tight text-white">Backup Plan</h1>
-            <p className="mt-1 max-w-3xl text-sm text-slate-400">
+            <h1 className="text-xl font-semibold tracking-tight text-white">Backup Plan</h1>
+            <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-400">
               Configure when backups should happen, where backups are stored, and how the online backup option is being evaluated.
             </p>
           </div>
@@ -258,7 +257,7 @@ export function BackupPage() {
             {status.label}
           </Badge>
         </div>
-      </Panel>
+      </header>
 
       <form
         className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]"

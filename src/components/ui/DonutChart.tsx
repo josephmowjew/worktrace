@@ -1,17 +1,17 @@
 import type { CategoryDistribution } from "../../types/project";
 
 const categoryColors: Record<string, string> = {
-  Backend: "#8b5cf6",
-  Frontend: "#3b82f6",
-  Marketing: "#ec4899",
-  Tools: "#06b6d4",
-  Service: "#f59e0b",
-  Company: "#3b82f6",
-  Client: "#10b981",
-  Internal: "#64748b",
-  Personal: "#a855f7",
-  "Manual Only": "#f97316",
-  Other: "#475569",
+  Backend: "oklch(0.910 0.004 265)",
+  Frontend: "oklch(0.863 0.004 265)",
+  Marketing: "oklch(0.816 0.004 265)",
+  Tools: "oklch(0.769 0.004 265)",
+  Service: "oklch(0.722 0.004 265)",
+  Company: "oklch(0.863 0.004 265)",
+  Client: "oklch(0.675 0.004 265)",
+  Internal: "oklch(0.628 0.004 265)",
+  Personal: "oklch(0.581 0.004 265)",
+  "Manual Only": "oklch(0.534 0.004 265)",
+  Other: "oklch(0.487 0.004 265)",
 };
 
 function getCategoryColor(category: string): string {

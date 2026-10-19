@@ -174,11 +174,10 @@ export function ProjectFormPanel({
 
   return (
     <Panel className="relative overflow-hidden border-blue-300/20 bg-blue-500/5">
-      <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 via-transparent to-cyan-500/10 opacity-50" />
       <div className="relative">
         <div className="flex items-start justify-between gap-3 border-b border-white/8 px-5 py-4">
           <div>
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-blue-300/15 bg-blue-300/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-blue-200">
+            <div className="mb-1 inline-flex items-center gap-2 text-[11px] text-[var(--wt-text-muted)]">
               <FolderKanban className="h-3.5 w-3.5" />
               {isEditing ? "Edit Repository" : "Add Repository"}
             </div>

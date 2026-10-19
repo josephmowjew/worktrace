@@ -5,10 +5,8 @@ import {
   LayoutGrid,
   ListTodo,
   Search,
-  SlidersHorizontal,
   User,
   X,
-  Zap,
 } from "lucide-react";
 import type { ReactNode, RefObject } from "react";
 
@@ -43,7 +41,7 @@ export function FastFindSearch({
   emptyMessage,
   moreLabel,
   scopeLabel = "Local",
-  shortcutLabel = "Ctrl + K",
+  shortcutLabel = "Ctrl + F",
   className = "",
   sideControls,
 }: {
@@ -77,9 +75,8 @@ export function FastFindSearch({
   return (
     <div className={`grid gap-3 ${className}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="inline-flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--wt-accent-text)]">
-          <Zap className="h-3.5 w-3.5" />
-          Fast Find
+        <div className="inline-flex items-center gap-2 text-xs font-medium text-[var(--wt-text-muted)]">
+          Search
         </div>
         <div className="inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[11px] font-semibold text-[var(--wt-text)]">
           <span className={`h-1.5 w-1.5 rounded-full ${isSearching ? "bg-emerald-500" : "bg-blue-500"}`} />
@@ -92,18 +89,18 @@ export function FastFindSearch({
 
       <div className="relative">
         <div className="group relative max-w-4xl">
-          <div className="pointer-events-none absolute inset-y-0 left-5 flex items-center">
-            <Search className="h-5 w-5 text-[var(--wt-text-muted)] transition-colors group-focus-within:text-[var(--wt-accent-text)]" />
+          <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center">
+            <Search className="h-4 w-4 text-[var(--wt-text-muted)] transition-colors group-focus-within:text-[var(--wt-accent-text)]" />
           </div>
           <input
             ref={inputRef}
             value={value}
             onChange={(event) => onChange(event.currentTarget.value)}
             placeholder={placeholder}
-            className="h-14 w-full rounded-[1.35rem] border border-[var(--wt-border)] bg-[var(--wt-input)] px-14 pr-32 text-base font-medium text-[var(--wt-text-strong)] shadow-[var(--wt-control-shadow)] outline-none transition-[background-color,border-color,box-shadow,color] placeholder:text-[var(--wt-text-faint)] hover:border-blue-500/25 focus:border-blue-500/45 focus:ring-2 focus:ring-blue-500/15"
+            className="h-9 w-full rounded-md border border-[var(--wt-border)] bg-[var(--wt-input)] pl-9 pr-28 text-xs font-medium text-[var(--wt-text-strong)] shadow-[var(--wt-control-shadow)] outline-none transition-[background-color,border-color,box-shadow,color] placeholder:text-[var(--wt-text-faint)] hover:border-blue-500/25 focus:border-blue-500/45 focus:ring-2 focus:ring-blue-500/15"
             aria-label="Fast find search"
           />
-          <div className="absolute inset-y-0 right-3 flex items-center gap-2">
+          <div className="absolute inset-y-0 right-2 flex items-center gap-2">
             <span className="hidden rounded-lg border border-[var(--wt-border)] bg-[var(--wt-surface-muted)] px-2 py-1 text-[11px] font-semibold text-[var(--wt-text-muted)] shadow-sm md:inline-flex">
               {shortcutLabel}
             </span>
@@ -140,8 +137,7 @@ export function FastFindSearch({
         </div>
 
         {sideControls ?? (
-          <div className="inline-flex h-9 items-center gap-2 rounded-xl border border-[var(--wt-border)] bg-[var(--wt-input)] px-3 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--wt-accent-text)] shadow-sm">
-            <SlidersHorizontal className="h-3.5 w-3.5" />
+          <div className="inline-flex items-center gap-2 px-1 text-[10px] text-[var(--wt-text-muted)]">
             {scopeLabel}
           </div>
         )}
@@ -162,7 +158,7 @@ function FastFindSearchChip({
       onClick={onClick}
       aria-pressed={active}
       className={[
-        "inline-flex h-9 items-center gap-2 rounded-xl border px-3 text-xs font-semibold transition-[background-color,border-color,color,box-shadow,transform] active:scale-[0.96]",
+        "inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-[11px] font-medium transition-[background-color,border-color,color,box-shadow,transform] active:scale-[0.96]",
         active
           ? "border-blue-500/30 bg-[var(--wt-selected)] text-[var(--wt-accent-text)] shadow-[var(--wt-control-shadow)]"
           : "border-[var(--wt-border)] bg-[var(--wt-input)] text-[var(--wt-text-muted)] hover:border-blue-500/25 hover:bg-[var(--wt-accent-soft)] hover:text-[var(--wt-accent-text)]",
@@ -188,7 +184,7 @@ function FastFindPreview({
   moreLabel?: string;
 }) {
   return (
-    <div className="absolute left-0 top-[calc(100%+0.75rem)] z-30 w-full max-w-2xl overflow-hidden rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface)] shadow-[var(--wt-panel-shadow)]">
+    <div className="absolute left-0 top-[calc(100%+0.75rem)] z-30 w-full max-w-2xl overflow-hidden rounded-2xl border border-[var(--wt-border)] bg-[var(--wt-surface)] shadow-[var(--wt-popover-shadow)]">
       <div className="border-b border-[var(--wt-border)] px-4 py-2.5 text-xs font-semibold text-[var(--wt-text-muted)]">
         {visibleCount > 0 ? title : "No matches"}
       </div>

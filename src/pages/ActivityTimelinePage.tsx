@@ -509,7 +509,7 @@ export function ActivityTimelinePage() {
         description="Track commits, meetings, reviews, testing, and deployments across your projects."
         actions={
           <>
-            <div className="flex h-12 items-center rounded-xl border border-blue-200/10 bg-slate-950/42 px-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+            <div className="flex h-12 items-center rounded-xl border border-blue-200/10 bg-slate-950/42 px-1 shadow-none">
               <button
                 onClick={handlePrevWeek}
                 className="flex h-10 w-10 items-center justify-center rounded-lg text-slate-400 transition-[background-color,color,transform] duration-150 hover:bg-white/10 hover:text-slate-200 active:scale-[0.96]"
@@ -537,7 +537,7 @@ export function ActivityTimelinePage() {
                 placeholder="Search projects, tasks, commits..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-12 w-full rounded-xl border border-blue-200/10 bg-slate-950/45 pl-11 pr-14 text-sm text-slate-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] outline-none transition-[border-color,box-shadow,background-color] duration-150 placeholder:text-slate-500 focus:border-blue-300/45 focus:bg-slate-950/60 focus:ring-2 focus:ring-blue-500/15"
+                className="h-12 w-full rounded-xl border border-blue-200/10 bg-slate-950/45 pl-11 pr-14 text-sm text-slate-200 shadow-none outline-none transition-[border-color,box-shadow,background-color] duration-150 placeholder:text-slate-500 focus:border-blue-300/45 focus:bg-slate-950/60 focus:ring-2 focus:ring-blue-500/15"
               />
               <span className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded-md border border-white/8 bg-white/5 px-2 py-1 text-[10px] font-semibold text-slate-500 sm:block">
                 Cmd K
@@ -549,7 +549,7 @@ export function ActivityTimelinePage() {
                 variant="primary"
                 onClick={() => void handleSyncRepositories("auto")}
                 disabled={repositorySync.isSyncing || smartOrganizeMutation.isPending}
-                className="h-12 rounded-r-none px-5 shadow-[0_16px_34px_rgba(37,99,235,0.32)] transition-[background-color,box-shadow,transform] active:scale-[0.96]"
+                className="h-12 rounded-r-none px-5 shadow-none transition-[background-color,box-shadow,transform] active:scale-[0.96]"
               >
                 <RefreshCw
                   className={`h-4 w-4 ${repositorySync.isSyncing ? "animate-spin" : ""}`}
@@ -560,14 +560,14 @@ export function ActivityTimelinePage() {
                 type="button"
                 onClick={() => setSyncMenuOpen((open) => !open)}
                 disabled={repositorySync.isSyncing || smartOrganizeMutation.isPending}
-                className="flex h-12 w-11 items-center justify-center rounded-r-xl border-l border-white/15 bg-blue-600 text-white shadow-[0_16px_34px_rgba(37,99,235,0.32)] transition-[background-color,transform] hover:bg-blue-500 active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex h-12 w-11 items-center justify-center rounded-r-xl border-l border-white/15 bg-blue-600 text-white shadow-none transition-[background-color,transform] hover:bg-blue-500 active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-50"
                 aria-label="Sync options"
                 aria-expanded={syncMenuOpen}
               >
                 <ChevronDown className="h-4 w-4" />
               </button>
               {syncMenuOpen ? (
-                <div className="absolute right-0 top-[calc(100%+8px)] z-30 w-48 rounded-xl border border-blue-200/12 bg-slate-950/95 p-1.5 text-sm text-slate-200 shadow-[0_18px_48px_rgba(2,6,23,0.45)] backdrop-blur">
+                <div className="absolute right-0 top-[calc(100%+8px)] z-30 w-48 rounded-xl border border-blue-200/12 bg-slate-950/95 p-1.5 text-sm text-slate-200 shadow-none backdrop-blur">
                   <button
                     type="button"
                     onClick={() => {
@@ -586,7 +586,7 @@ export function ActivityTimelinePage() {
         }
       />
 
-      <Panel className="rounded-[18px] border-blue-200/10 bg-slate-950/38 p-3 shadow-[0_16px_52px_rgba(2,6,23,0.28),inset_0_1px_0_rgba(255,255,255,0.04)]">
+      <Panel className="rounded-[18px] border-blue-200/10 bg-slate-950/38 p-3 shadow-none">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex flex-wrap gap-2">
             {activityFilters.map((filter) => {
@@ -597,9 +597,9 @@ export function ActivityTimelinePage() {
                   type="button"
                   onClick={() => setActivityType(filter.value)}
                   className={[
-                    "inline-flex min-h-10 items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-[background-color,border-color,color,box-shadow,transform] duration-150 active:scale-[0.96]",
+                    "inline-flex min-h-10 items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium shadow-none transition-[background-color,border-color,color,box-shadow,transform] duration-150 active:scale-[0.96]",
                     activityType === filter.value
-                      ? "border-blue-300/30 bg-blue-500 text-white shadow-[0_12px_28px_rgba(37,99,235,0.28),inset_0_1px_0_rgba(255,255,255,0.18)]"
+                      ? "border-blue-300/30 bg-blue-500 text-white shadow-none"
                       : "border-white/10 bg-slate-950/35 text-slate-400 hover:border-blue-200/18 hover:bg-white/8 hover:text-slate-200",
                   ].join(" ")}
                 >
@@ -624,14 +624,14 @@ export function ActivityTimelinePage() {
             size="sm"
           />
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            <div className="flex h-10 rounded-xl border border-white/10 bg-slate-950/35 p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+            <div className="flex h-10 rounded-xl border border-white/10 bg-slate-950/35 p-1 shadow-none">
               <button
                 type="button"
                 onClick={() => setViewMode("timeline")}
                 className={[
                   "inline-flex items-center gap-2 rounded-lg px-3 text-xs font-semibold transition-[background-color,color,transform] duration-150 active:scale-[0.96]",
                   viewMode === "timeline"
-                    ? "bg-blue-500 text-white shadow-[0_8px_18px_rgba(37,99,235,0.22)]"
+                    ? "bg-blue-500 text-white shadow-none"
                     : "text-slate-400 hover:bg-white/8 hover:text-slate-200",
                 ].join(" ")}
                 aria-pressed={viewMode === "timeline"}
@@ -645,7 +645,7 @@ export function ActivityTimelinePage() {
                 className={[
                   "inline-flex items-center gap-2 rounded-lg px-3 text-xs font-semibold transition-[background-color,color,transform] duration-150 active:scale-[0.96]",
                   viewMode === "story"
-                    ? "bg-cyan-500 text-slate-950 shadow-[0_8px_18px_rgba(6,182,212,0.18)]"
+                    ? "bg-cyan-500 text-slate-950 shadow-none"
                     : "text-slate-400 hover:bg-white/8 hover:text-slate-200",
                 ].join(" ")}
                 aria-pressed={viewMode === "story"}
@@ -738,7 +738,7 @@ export function ActivityTimelinePage() {
             </div>
           ) : null}
 
-          <Panel className="min-h-[520px] overflow-hidden rounded-[18px] border-blue-200/10 bg-slate-950/36 p-5 shadow-[0_24px_70px_rgba(2,6,23,0.34),inset_0_1px_0_rgba(255,255,255,0.045)]">
+          <Panel className="min-h-[520px] overflow-hidden rounded-[18px] border-blue-200/10 bg-slate-950/36 p-5 shadow-none">
             {activityQuery.isLoading || activityGroupsQuery.isLoading || (activityType === "all" && tasksQuery.isLoading) ? (
               <TimelineSkeleton />
             ) : activityQuery.isError || tasksQuery.isError ? (
@@ -782,7 +782,7 @@ export function ActivityTimelinePage() {
         </div>
 
         <div className="space-y-4">
-          <Panel className="rounded-[18px] border-blue-200/10 bg-slate-950/40 shadow-[0_18px_54px_rgba(2,6,23,0.28),inset_0_1px_0_rgba(255,255,255,0.04)]">
+          <Panel className="rounded-[18px] border-blue-200/10 bg-slate-950/40 shadow-none">
             {summaryQuery.isLoading ? (
               <SummarySkeleton />
             ) : summaryQuery.data ? (
@@ -790,7 +790,7 @@ export function ActivityTimelinePage() {
             ) : null}
           </Panel>
 
-          <Panel className="rounded-[18px] border-blue-200/10 bg-slate-950/40 shadow-[0_18px_54px_rgba(2,6,23,0.28),inset_0_1px_0_rgba(255,255,255,0.04)]">
+          <Panel className="rounded-[18px] border-blue-200/10 bg-slate-950/40 shadow-none">
             {heatmapQuery.isLoading ? (
               <HeatmapSkeleton />
             ) : heatmapQuery.data ? (
@@ -798,7 +798,7 @@ export function ActivityTimelinePage() {
             ) : null}
           </Panel>
 
-          <Panel className="rounded-[18px] border-blue-200/10 bg-slate-950/40 shadow-[0_18px_54px_rgba(2,6,23,0.28),inset_0_1px_0_rgba(255,255,255,0.04)]">
+          <Panel className="rounded-[18px] border-blue-200/10 bg-slate-950/40 shadow-none">
             {highlightsQuery.isLoading ? (
               <HighlightsSkeleton />
             ) : highlightsQuery.data ? (
@@ -861,7 +861,7 @@ function MixedTimelineDay({
       <div className="mb-5 flex items-center gap-4">
         <div className="h-px flex-1 bg-blue-200/10" />
         <div className="flex items-center gap-3">
-          <span className="flex h-6 w-6 items-center justify-center rounded-lg border border-blue-300/20 bg-blue-500/10 text-blue-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+          <span className="flex h-6 w-6 items-center justify-center rounded-lg border border-blue-300/20 bg-blue-500/10 text-blue-300 shadow-none">
             <CalendarDays className="h-3.5 w-3.5" />
           </span>
           <span className="text-sm font-semibold text-slate-100">{formatDayLabel(day.date)}</span>
@@ -876,7 +876,7 @@ function MixedTimelineDay({
         <div className="space-y-3">
           {day.items.map((entry) => (
             <div key={`${entry.kind}-${entry.id}`} className="relative">
-              <div className="pointer-events-none absolute -left-[72px] top-9 z-20 h-4 w-4 -translate-x-1/2 rounded-full border border-blue-100/40 bg-blue-500 shadow-[0_0_0_6px_rgba(15,23,42,0.92),0_0_26px_rgba(59,130,246,0.42)] max-sm:hidden" />
+              <div className="pointer-events-none absolute -left-[72px] top-9 z-20 h-4 w-4 -translate-x-1/2 rounded-full border border-blue-100/40 bg-blue-500 shadow-none max-sm:hidden" />
               {entry.kind === "activity" ? (
                 <TimelineItem item={entry.item} onCreateTaskFromCommit={onCreateTaskFromCommit} />
               ) : entry.kind === "group" ? (
@@ -906,13 +906,13 @@ function TaskTimelineItem({
   onView: () => void;
 }) {
   return (
-    <article className="group relative z-10 rounded-2xl border border-blue-100/8 bg-slate-950/36 shadow-[0_14px_40px_rgba(2,6,23,0.22),inset_0_1px_0_rgba(255,255,255,0.04)] transition-[background-color,border-color,box-shadow,transform] duration-150 hover:border-blue-200/16 hover:bg-slate-950/48 hover:shadow-[0_18px_48px_rgba(2,6,23,0.3),inset_0_1px_0_rgba(255,255,255,0.055)]">
+    <article className="group relative z-10 rounded-2xl border border-blue-100/8 bg-slate-950/36 shadow-none transition-[background-color,border-color,box-shadow,transform] duration-150 hover:border-blue-200/16 hover:bg-slate-950/48 hover:shadow-none">
       <button type="button" onClick={onView} className="flex w-full items-start gap-4 p-4 text-left">
         <span className="absolute left-0 mt-1 w-16 -translate-x-[56px] text-left text-sm tabular-nums text-slate-400 max-sm:static max-sm:w-auto max-sm:translate-x-0 max-sm:text-xs">
           {formatActivityTime(occurredAt)}
         </span>
 
-        <div className="relative z-10 flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-cyan-300/15 bg-cyan-500/10 text-cyan-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+        <div className="relative z-10 flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-cyan-300/15 bg-cyan-500/10 text-cyan-200 shadow-none">
           <ListChecks className="h-5 w-5 shrink-0 stroke-[2.35]" />
         </div>
 

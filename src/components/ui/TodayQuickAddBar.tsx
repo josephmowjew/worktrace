@@ -62,7 +62,7 @@ export function TodayQuickAddBar({
   return (
     <Panel className="border-white/10 bg-slate-950/45 p-3">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-blue-200">Quick Add Task</h2>
+        <h2 className="text-xs font-semibold text-blue-200">Quick Add Task</h2>
       </div>
       <div className="space-y-3">
         <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-white/10 bg-slate-950/55 px-3">
@@ -80,7 +80,7 @@ export function TodayQuickAddBar({
             className="h-11 min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-slate-500"
           />
         </div>
-        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_120px_150px_auto]">
+        <div className="grid grid-cols-2 gap-2">
           <Select
             value={projectId}
             onChange={setProjectId}
@@ -100,7 +100,7 @@ export function TodayQuickAddBar({
               type="date"
               value={targetDate}
               onChange={(event) => setTargetDate(event.target.value)}
-              className="min-w-0 bg-transparent text-xs outline-none"
+              className="min-w-0 w-full bg-transparent text-xs outline-none"
             />
           </label>
           <Button onClick={submit} disabled={isPending || !title.trim()} className="h-8 px-3 text-xs">

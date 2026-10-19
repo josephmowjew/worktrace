@@ -31,27 +31,9 @@ const categoryIcons: Record<string, LucideIcon> = {
   "Manual Only": Mail,
 };
 
-const categoryColors: Record<string, string> = {
-  Backend: "from-violet-500/20 to-violet-600/20 border-violet-300/20 text-violet-200",
-  Frontend: "from-blue-500/20 to-blue-600/20 border-blue-300/20 text-blue-200",
-  Marketing: "from-pink-500/20 to-pink-600/20 border-pink-300/20 text-pink-200",
-  Tools: "from-cyan-500/20 to-cyan-600/20 border-cyan-300/20 text-cyan-200",
-  Service: "from-amber-500/20 to-amber-600/20 border-amber-300/20 text-amber-200",
-  Company: "from-blue-500/20 to-blue-600/20 border-blue-300/20 text-blue-200",
-  Client: "from-emerald-500/20 to-emerald-600/20 border-emerald-300/20 text-emerald-200",
-  Internal: "from-slate-500/20 to-slate-600/20 border-slate-300/20 text-slate-200",
-  Personal: "from-purple-500/20 to-purple-600/20 border-purple-300/20 text-purple-200",
-  "Manual Only": "from-orange-500/20 to-orange-600/20 border-orange-300/20 text-orange-200",
-};
-
 function getCategoryIcon(projectType?: string | null): LucideIcon {
   if (!projectType) return Package;
   return categoryIcons[projectType] || Package;
-}
-
-function getCategoryColor(projectType?: string | null): string {
-  if (!projectType) return categoryColors["Company"];
-  return categoryColors[projectType] || categoryColors["Company"];
 }
 
 function parseDateWithTimezone(dateString: string): Date {
@@ -109,20 +91,18 @@ export function ProjectCard({
 }) {
   const navigate = useNavigate();
   const Icon = getCategoryIcon(project.projectType);
-  const colorClass = getCategoryColor(project.projectType);
   const commitsThisWeek = stats?.commitsThisWeek ?? 0;
   const hoursTracked = stats?.hoursTracked ?? 0;
   const lastSync = stats?.lastSync;
 
   return (
     <Panel className="group relative overflow-hidden p-0 transition-all duration-200 hover:border-blue-300/25 hover:shadow-blue-500/10">
-      <div className="absolute inset-0 bg-gradient-to-br opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
 
       <div className="relative p-4">
         <div className="flex min-w-0 items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">
             <div
-              className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border bg-gradient-to-br ${colorClass}`}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-[var(--wt-border)] bg-[var(--wt-surface-muted)] text-[var(--wt-text-muted)]"
             >
               <Icon className="h-5 w-5" />
             </div>
