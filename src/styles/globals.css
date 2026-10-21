@@ -784,3 +784,23 @@ body { font-size: 13px; line-height: 1.5; }
   .wt-task-editor { margin-left: 0; padding: 14px; }
   .wt-welcome h1 { font-size: 26px; }
 }
+/* Progressive developer workflows */
+.wt-disclosure { border-top: 1px solid var(--wt-border); padding-block: 10px; }
+.wt-disclosure-trigger { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; text-align: left; color: var(--wt-text); font-size: 12px; font-weight: 500; }
+.wt-disclosure-trigger:hover { color: var(--wt-text-strong); }
+.wt-disclosure-trigger svg { flex-shrink: 0; transition: transform 150ms ease-out; }
+.wt-action-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 80; display: grid; gap: 2px; width: 240px; max-width: calc(100vw - 32px); padding: 6px; border: 1px solid var(--wt-border-strong); border-radius: 7px; background: var(--wt-surface-strong); box-shadow: var(--wt-popover-shadow); }
+.wt-action-menu > button { justify-content: flex-start; width: 100%; height: auto; min-height: 34px; white-space: normal; text-align: left; }
+.wt-filter-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid var(--wt-border); border-radius: 5px; font-size: 11px; color: var(--wt-text-muted); }
+.wt-filter-chip:hover { color: var(--wt-text-strong); background: var(--wt-selected); }
+.wt-workflow-tabs { display: flex; gap: 20px; border-bottom: 1px solid var(--wt-border); }
+.wt-workflow-tabs a { padding: 9px 2px; color: var(--wt-text-muted); font-size: 12px; }
+.wt-workflow-tabs a[aria-current="page"] { border-bottom: 1px solid var(--wt-text-strong); color: var(--wt-text-strong); }
+.wt-work-item-row { display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--wt-border); padding: 2px 8px; }
+.wt-work-item-row:hover { background: var(--wt-surface-muted); }
+.wt-side-panel-overlay { position: fixed; inset: 0; z-index: 11000; }
+.wt-side-panel { position: absolute; inset: 0 0 0 auto; display: flex; flex-direction: column; width: min(680px, 100%); border-left: 1px solid var(--wt-border-strong); background: var(--wt-bg); box-shadow: var(--wt-popover-shadow); }
+@media (max-width: 640px) { .wt-disclosure-trigger { flex-wrap: wrap; } .wt-disclosure-trigger > span:last-child { font-size: 11px; } }
+.wt-disclosure-trigger { flex: 1; min-width: 130px; }
+.wt-task-composer .wt-disclosure { border-top: 0; padding-block: 0; }
+.wt-task-composer .wt-disclosure-trigger { min-height: 24px; }

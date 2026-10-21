@@ -21,6 +21,7 @@ type StoryTimelineProps = {
   days: MixedTimelineDay[];
   onViewTask: (task: WeeklyTask) => void;
   onEditGroup: (group: ActivityGroup) => void;
+  onInspectGroup?: (group: ActivityGroup) => void;
   onSelectTitleCandidate: (group: ActivityGroup, candidate: TitleCandidate) => void;
 };
 
@@ -28,6 +29,7 @@ export function StoryTimeline({
   days,
   onViewTask,
   onEditGroup,
+  onInspectGroup,
   onSelectTitleCandidate,
 }: StoryTimelineProps) {
   const storyDays = useMemo(() => buildStoryDays(days), [days]);
@@ -57,6 +59,7 @@ export function StoryTimeline({
           day={day}
           onViewTask={onViewTask}
           onEditGroup={onEditGroup}
+          onInspectGroup={onInspectGroup}
           onSelectTitleCandidate={onSelectTitleCandidate}
         />
       ))}
@@ -68,11 +71,13 @@ function StoryDaySection({
   day,
   onViewTask,
   onEditGroup,
+  onInspectGroup,
   onSelectTitleCandidate,
 }: {
   day: StoryDay;
   onViewTask: (task: WeeklyTask) => void;
   onEditGroup: (group: ActivityGroup) => void;
+  onInspectGroup?: (group: ActivityGroup) => void;
   onSelectTitleCandidate: (group: ActivityGroup, candidate: TitleCandidate) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -116,6 +121,7 @@ function StoryDaySection({
               entry={entry}
               onViewTask={onViewTask}
               onEditGroup={onEditGroup}
+          onInspectGroup={onInspectGroup}
               onSelectTitleCandidate={onSelectTitleCandidate}
             />
           ))}
@@ -129,17 +135,20 @@ function StoryEvidenceEntry({
   entry,
   onViewTask,
   onEditGroup,
+  onInspectGroup,
   onSelectTitleCandidate,
 }: {
   entry: TimelineEntry;
   onViewTask: (task: WeeklyTask) => void;
   onEditGroup: (group: ActivityGroup) => void;
+  onInspectGroup?: (group: ActivityGroup) => void;
   onSelectTitleCandidate: (group: ActivityGroup, candidate: TitleCandidate) => void;
 }) {
   if (entry.kind === "group") {
     return (
       <TimelineGroupItem
         group={entry.group}
+        compact={Boolean(onInspectGroup)} onInspect={onInspectGroup}
         onEdit={onEditGroup}
         onSelectTitleCandidate={onSelectTitleCandidate}
         showTime={false}

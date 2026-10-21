@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Check,
   ClipboardList,
-  CalendarDays,
   Copy,
   Download,
   FileText,
@@ -12,7 +11,10 @@ import {
   Save,
   Sparkles,
 } from "lucide-react";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import { ActionMenu } from "../components/ui/ActionMenu";
+import { Disclosure } from "../components/ui/Disclosure";
 import type { ReactNode } from "react";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -27,15 +29,12 @@ import { getFrictionInsights } from "../lib/api/friction";
 import {
   generateReport,
   analyzeReportReadiness,
-  connectReportAiProvider,
   cancelReportAiStream,
-  disconnectReportAiProvider,
   getReport,
   getReportAiStatus,
   listReports,
   polishReport,
   saveReport,
-  testReportAiProvider,
 } from "../lib/api/reports";
 import { getSettings } from "../lib/api/settings";
 import type { GitRef, GitRefFilter, GitWorktree } from "../types/project";
@@ -79,12 +78,6 @@ export function ReportsPage() {
     setCopied,
     reportAiProvider,
     setReportAiProvider,
-    openRouterKey,
-    setOpenRouterKey,
-    groqKey,
-    setGroqKey,
-    nvidiaBuildKey,
-    setNvidiaBuildKey,
     readiness,
     setReadiness,
     polishStreamStatus,
@@ -95,6 +88,7 @@ export function ReportsPage() {
     markPolishStreamCancelled,
   } = useReportsWorkspace();
   const polishCancelledRef = useRef(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -299,40 +293,6 @@ export function ReportsPage() {
       toast.error("Readiness failed", error instanceof Error ? error.message : "The report could not be analyzed.");
     },
   });
-  const connectAiMutation = useMutation({
-    mutationFn: ({ provider, apiKey }: { provider: ReportAiProvider; apiKey: string }) =>
-      connectReportAiProvider({ provider, apiKey }),
-    onSuccess: async (_, variables) => {
-      if (variables.provider === "openrouter_free") setOpenRouterKey("");
-      if (variables.provider === "groq") setGroqKey("");
-      if (variables.provider === "nvidia_build") setNvidiaBuildKey("");
-      await reportAiStatusQuery.refetch();
-      toast.success("AI provider connected");
-    },
-    onError: (error) => {
-      toast.error("Provider connect failed", error instanceof Error ? error.message : "The provider key could not be stored.");
-    },
-  });
-  const testAiMutation = useMutation({
-    mutationFn: (provider: ReportAiProvider) => testReportAiProvider({ provider }),
-    onSuccess: (message) => {
-      toast.success("Provider ready", message);
-    },
-    onError: (error) => {
-      toast.error("Provider test failed", error instanceof Error ? error.message : "The provider could not be tested.");
-    },
-  });
-  const disconnectAiMutation = useMutation({
-    mutationFn: (provider: ReportAiProvider) => disconnectReportAiProvider({ provider }),
-    onSuccess: async () => {
-      await reportAiStatusQuery.refetch();
-      toast.success("AI provider disconnected");
-    },
-    onError: (error) => {
-      toast.error("Provider disconnect failed", error instanceof Error ? error.message : "The provider could not be disconnected.");
-    },
-  });
-
   const saveMutation = useMutation({
     mutationFn: () =>
       saveReport({
@@ -361,6 +321,7 @@ export function ReportsPage() {
       setRecipientName(savedReport.recipientName ?? "");
       setContent(savedReport.content);
       setCopied(false);
+      setHistoryOpen(false);
       toast.success("Report loaded", savedReport.title);
     },
     onError: (error) => {
@@ -398,13 +359,10 @@ export function ReportsPage() {
     <div className="space-y-3">
       <ReportsHero
         isDeveloper={experience.isDeveloper}
-        generatedCount={reportsQuery.data?.length ?? 0}
-        reportReadyItems={content.trim() ? contentStats.lines : 0}
-        lastGenerated={reportsQuery.data?.[0]}
       />
 
-      {experience.isDeveloper ? (
-      <FrictionInsightPanel
+      {experience.isDeveloper && (frictionInsightsQuery.data ?? []).some((insight) => ["late_report", "stale_task", "repeated_issue", "support_mode"].includes(insight.kind)) ? (
+      <Disclosure title="Report suggestions"><FrictionInsightPanel
         title="Report Friction"
         insights={(frictionInsightsQuery.data ?? []).filter((insight) =>
           ["late_report", "stale_task", "repeated_issue", "support_mode"].includes(insight.kind),
@@ -413,31 +371,59 @@ export function ReportsPage() {
         emptyText="No report-specific friction patterns detected."
         limit={3}
         compact
-      />
+      /></Disclosure>
       ) : null}
 
-      <div className="grid min-h-0 items-start gap-4 xl:grid-cols-[300px_minmax(0,1fr)] 2xl:grid-cols-[300px_minmax(0,1fr)_280px]">
-      <Panel className="relative overflow-visible rounded-xl bg-slate-950/62 p-0 shadow-xl shadow-slate-950/20">
+      <Disclosure title="Saved reports" summary={String(reportsQuery.data?.length ?? 0)} open={historyOpen} onOpenChange={setHistoryOpen}>      <Panel className="relative h-fit overflow-hidden rounded-xl bg-slate-950/60 p-0 ">
         <div className="relative p-4">
-          <div className="mb-4">
-            <div className="mb-2 inline-flex items-center gap-2 text-[11px] text-[var(--wt-text-muted)]">
-              <Sparkles className="h-3.5 w-3.5" />
-              Markdown builder
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold text-white">Saved reports</h2>
+              <p className="mt-1 text-xs text-slate-500">Local report history</p>
             </div>
-            <h2 className="text-base font-semibold tracking-tight text-white">Report Builder</h2>
-            <p className="mt-2 text-xs leading-5 text-slate-400">
-              Configure your reporting range and choose what to include.
-            </p>
+            <History className="h-4 w-4 text-cyan-300" />
           </div>
 
+          {reportsQuery.isLoading ? (
+            <div className="grid gap-2">
+              {[0, 1, 2].map((item) => (
+                <div
+                  key={item}
+                  className="h-16 animate-pulse rounded-xl border border-white/8 bg-white/[0.03]"
+                />
+              ))}
+            </div>
+          ) : reportsQuery.isError ? <div role="alert"><p className="text-xs text-[var(--wt-danger)]">Saved reports could not be loaded.</p><Button className="mt-2" size="sm" onClick={() => void reportsQuery.refetch()}>Try again</Button></div> : reportsQuery.data && reportsQuery.data.length > 0 ? (
+            <div className="max-h-[560px] space-y-2 overflow-y-auto pr-1">
+              {reportsQuery.data.map((savedReport) => (
+                <SavedReportRow
+                  key={savedReport.id}
+                  report={savedReport}
+                  isLoading={loadMutation.isPending}
+                  onLoad={() => loadMutation.mutate(savedReport.id)}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed border-white/10 bg-slate-950/35 p-5 text-xs leading-6 text-slate-400">
+              Saved reports will appear here after you save your first update.
+            </div>
+          )}
+        </div>
+      </Panel></Disclosure>
+      <div className="space-y-5">
+      <Panel className="relative overflow-visible rounded-xl bg-slate-950/62 p-0 shadow-xl shadow-slate-950/20">
+        <div className="relative p-4">
+
           <div className="space-y-4">
-            <Field label="Start Date">
+            <div className="grid items-end gap-4 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_auto]">
+            <Field label="Start date">
               <DatePicker value={startDate} onChange={setStartDate} />
             </Field>
-            <Field label="End Date">
+            <Field label="End date">
               <DatePicker value={endDate} onChange={setEndDate} />
             </Field>
-            <Field label={experience.isDeveloper ? "Recipient / Manager" : "Prepared for (optional)"}>
+            <Field label="Prepared for (optional)">
               <input
                 value={recipientName}
                 onChange={(event) => setRecipientName(event.currentTarget.value)}
@@ -445,6 +431,18 @@ export function ReportsPage() {
                 placeholder={settingsQuery.data?.defaultManagerName || (experience.isDeveloper ? "Manager" : "Name, if needed")}
               />
             </Field>
+            <Button
+              variant={content.trim() ? "secondary" : "primary"}
+              className="px-5"
+              onClick={() => generateMutation.mutate()}
+              disabled={generateMutation.isPending || polishMutation.isPending || Boolean(activePolishStreamId)}
+            >
+              <FileText className="h-4 w-4" />
+              {generateMutation.isPending ? "Generating..." : "Generate Report"}
+            </Button>
+            </div>
+            <Disclosure title="Report options" summary={experience.isDeveloper ? selectedSourceLabel : "Tasks and journal"}>
+            <div className="grid gap-4 lg:grid-cols-2">
             {experience.isDeveloper ? <>
             <Field label="Included Projects">
               <Select
@@ -547,6 +545,8 @@ export function ReportsPage() {
 
             ) : <p className="text-[11px] leading-5 text-[var(--wt-text-muted)]">Reports use items marked for reporting. Enable previously excluded items to also use tasks you captured before turning reports on.</p>}
 
+            {experience.isDeveloper ? <Link to="/settings" state={{ openSettingsTab: "integrations" }} className="wt-text-link">Manage AI connections in Settings</Link> : null}
+            </div></Disclosure>
             {generateMutation.isError ? (
               <div className="rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-xs text-red-100">
                 {generateMutation.error instanceof Error
@@ -555,15 +555,7 @@ export function ReportsPage() {
               </div>
             ) : null}
 
-            <Button
-              variant="primary"
-              className="w-full rounded-lg bg-blue-600 py-3 shadow-blue-500/20 hover:bg-blue-500 active:bg-blue-700"
-              onClick={() => generateMutation.mutate()}
-              disabled={generateMutation.isPending}
-            >
-              <FileText className="h-4 w-4" />
-              {generateMutation.isPending ? "Generating..." : "Generate Report"}
-            </Button>
+
           </div>
         </div>
       </Panel>
@@ -580,38 +572,20 @@ export function ReportsPage() {
             <p className="mt-1 text-xs text-slate-500">{title}</p>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            {experience.isDeveloper ? <>
-            <Button onClick={() => readinessMutation.mutate()} disabled={readinessMutation.isPending}>
-              <Sparkles className="h-4 w-4" />
-              {readinessMutation.isPending ? "Analyzing..." : "Analyze"}
-            </Button>
-            <Button
-              onClick={() => polishMutation.mutate()}
-              disabled={!content.trim() || polishMutation.isPending}
-            >
-              <Sparkles className="h-4 w-4" />
-              {polishMutation.isPending ? "Polishing..." : "Polish"}
-            </Button>
-            {polishMutation.isPending || activePolishStreamId ? (
-              <Button
-                onClick={() => cancelPolishMutation.mutate()}
-                disabled={!activePolishStreamId || cancelPolishMutation.isPending || polishCancelled}
-              >
-                <X className="h-4 w-4" />
-                {cancelPolishMutation.isPending || polishCancelled ? "Cancelling..." : "Cancel"}
-              </Button>
-            ) : null}
-            </> : null}
+            <ActionMenu label="Report actions">
+              <Button variant="ghost" onClick={exportMarkdown} disabled={!content.trim()}><Download size={14} />Export Markdown</Button>
+              {experience.isDeveloper ? <>
+                <Button variant="ghost" onClick={() => readinessMutation.mutate()} disabled={readinessMutation.isPending}>{readinessMutation.isPending ? "Analyzing..." : reportAiProvider === "local_llama_cpp" ? "Analyze readiness locally" : `Analyze online (${reportAiProvider})`}</Button>
+                <Button variant="ghost" onClick={() => polishMutation.mutate()} disabled={!content.trim() || polishMutation.isPending || Boolean(activePolishStreamId)}>{reportAiProvider === "local_llama_cpp" ? "Polish locally" : `Polish online (${reportAiProvider})`}</Button>
+              </> : null}
+            </ActionMenu>
+            {polishMutation.isPending || activePolishStreamId ? <Button onClick={() => cancelPolishMutation.mutate()} disabled={!activePolishStreamId || cancelPolishMutation.isPending || polishCancelled}><X size={14} />{cancelPolishMutation.isPending || polishCancelled ? "Cancelling..." : "Cancel polish"}</Button> : null}
             <Button onClick={copyReport} disabled={!content.trim()}>
               {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
               {copied ? "Copied" : "Copy"}
             </Button>
-            <Button onClick={exportMarkdown} disabled={!content.trim()}>
-              <Download className="h-4 w-4" />
-              Export
-            </Button>
             <Button
-              variant="primary"
+              variant={content.trim() ? "primary" : "secondary"}
               onClick={() => saveMutation.mutate()}
               disabled={!content.trim() || saveMutation.isPending}
             >
@@ -621,7 +595,7 @@ export function ReportsPage() {
           </div>
         </div>
 
-        <div className="grid gap-3 border-b border-white/8 px-5 py-3 sm:grid-cols-3">
+        <div className="flex flex-wrap gap-x-6 gap-y-2 border-b border-white/8 px-5 py-3">
           <PreviewStat label="Range" value={`${compactDate(startDate)} - ${compactDate(endDate)}`} />
           <PreviewStat label="Audience" value={recipientName.trim() || settingsQuery.data?.defaultManagerName || (experience.isDeveloper ? "Manager" : "Personal")} />
           <PreviewStat label="Sources" value={experience.isDeveloper ? selectedSourceLabel : "Tasks & journal"} />
@@ -672,6 +646,7 @@ export function ReportsPage() {
           ) : null}
 
           <textarea
+            aria-label="Report draft"
             value={content}
             onChange={(event) => setContent(event.currentTarget.value)}
             className="min-h-[510px] w-full resize-y rounded-xl border border-white/10 bg-[var(--wt-input)] p-5 font-mono text-sm leading-7 text-slate-200 shadow-inner shadow-black/25 outline-none transition placeholder:text-slate-600 focus:border-blue-300/50 focus:ring-2 focus:ring-blue-500/15"
@@ -689,150 +664,14 @@ export function ReportsPage() {
         </div>
       </Panel>
 
-      <Panel className="relative h-fit overflow-hidden rounded-xl bg-slate-950/60 p-0 xl:col-span-2 2xl:col-span-1">
-        <div className="relative p-4">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <div>
-              <h2 className="text-base font-semibold text-white">Saved Reports</h2>
-              <p className="mt-1 text-xs text-slate-500">Local report history</p>
-            </div>
-            <History className="h-4 w-4 text-cyan-300" />
-          </div>
 
-          {experience.isDeveloper ? (
-          <div className="mb-4 space-y-3 rounded-xl border border-white/10 bg-slate-950/45 p-3">
-            <h3 className="text-sm font-semibold text-white">Online AI Keys</h3>
-            <ProviderKeyRow
-              label="OpenRouter"
-              provider="openrouter_free"
-              value={openRouterKey}
-              status={providerStatus(reportAiStatusQuery.data, "openrouter_free")}
-              isPending={connectAiMutation.isPending || testAiMutation.isPending || disconnectAiMutation.isPending}
-              onChange={setOpenRouterKey}
-              onConnect={() =>
-                connectAiMutation.mutate({ provider: "openrouter_free", apiKey: openRouterKey })
-              }
-              onTest={() => testAiMutation.mutate("openrouter_free")}
-              onDisconnect={() => disconnectAiMutation.mutate("openrouter_free")}
-            />
-            <ProviderKeyRow
-              label="Groq"
-              provider="groq"
-              value={groqKey}
-              status={providerStatus(reportAiStatusQuery.data, "groq")}
-              isPending={connectAiMutation.isPending || testAiMutation.isPending || disconnectAiMutation.isPending}
-              onChange={setGroqKey}
-              onConnect={() => connectAiMutation.mutate({ provider: "groq", apiKey: groqKey })}
-              onTest={() => testAiMutation.mutate("groq")}
-              onDisconnect={() => disconnectAiMutation.mutate("groq")}
-            />
-            <ProviderKeyRow
-              label="NVIDIA Build"
-              provider="nvidia_build"
-              value={nvidiaBuildKey}
-              status={providerStatus(reportAiStatusQuery.data, "nvidia_build")}
-              isPending={connectAiMutation.isPending || testAiMutation.isPending || disconnectAiMutation.isPending}
-              onChange={setNvidiaBuildKey}
-              onConnect={() =>
-                connectAiMutation.mutate({ provider: "nvidia_build", apiKey: nvidiaBuildKey })
-              }
-              onTest={() => testAiMutation.mutate("nvidia_build")}
-              onDisconnect={() => disconnectAiMutation.mutate("nvidia_build")}
-            />
-          </div>
-
-          ) : null}
-
-          {reportsQuery.isLoading ? (
-            <div className="grid gap-2">
-              {[0, 1, 2].map((item) => (
-                <div
-                  key={item}
-                  className="h-16 animate-pulse rounded-xl border border-white/8 bg-white/[0.03]"
-                />
-              ))}
-            </div>
-          ) : reportsQuery.data && reportsQuery.data.length > 0 ? (
-            <div className="max-h-[560px] space-y-2 overflow-y-auto pr-1">
-              {reportsQuery.data.map((savedReport) => (
-                <SavedReportRow
-                  key={savedReport.id}
-                  report={savedReport}
-                  isLoading={loadMutation.isPending}
-                  onLoad={() => loadMutation.mutate(savedReport.id)}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-xl border border-dashed border-white/10 bg-slate-950/35 p-5 text-xs leading-6 text-slate-400">
-              Saved reports will appear here after you save your first update.
-            </div>
-          )}
-        </div>
-      </Panel>
       </div>
     </div>
   );
 }
 
-function ReportsHero({
-  isDeveloper,
-  generatedCount,
-  reportReadyItems,
-  lastGenerated,
-}: {
-  isDeveloper: boolean;
-  generatedCount: number;
-  reportReadyItems: number;
-  lastGenerated?: ReportSummary;
-}) {
-  return (
-    <header className="wt-page-header">
-      <div className="relative flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="grid h-8 w-8 shrink-0 place-items-center text-[var(--wt-text-muted)]">
-            <FileText className="h-4 w-4" />
-          </span>
-          <div className="min-w-0">
-            <h1 className="text-lg font-semibold tracking-tight text-white">Reports</h1>
-            <p className="truncate text-xs text-slate-400">
-              {isDeveloper ? "Weekly Markdown from commits, manual logs, and planned work." : "Weekly updates from your tasks and work journal."}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
-          <HeroStat icon={ClipboardList} label="Saved" value={generatedCount.toString()} />
-          <HeroStat icon={Check} label="Draft lines" value={reportReadyItems.toString()} />
-          <HeroStat
-            icon={CalendarDays}
-            label="Last"
-            value={lastGenerated ? compactDate(lastGenerated.createdAt.slice(0, 10)) : "None"}
-          />
-        </div>
-      </div>
-    </header>
-  );
-}
-
-function HeroStat({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: React.ElementType;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="inline-flex h-9 items-center gap-2 rounded-lg border border-white/8 bg-white/[0.035] px-2.5">
-      <span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-blue-500/12 text-blue-200">
-        <Icon className="h-3.5 w-3.5" />
-      </span>
-      <span className="text-slate-500">{label}</span>
-      <span className="font-semibold text-slate-100">{value}</span>
-    </div>
-  );
+function ReportsHero({ isDeveloper }: { isDeveloper: boolean }) {
+  return <header className="wt-page-header"><h1>Reports</h1><p className="mt-2 text-sm text-[var(--wt-text-muted)]">{isDeveloper ? "Turn captured work into a clear weekly update." : "Weekly updates from your tasks and work journal."}</p></header>;
 }
 
 function SavedReportRow({
@@ -870,54 +709,6 @@ function SavedReportRow({
         </span>
       </div>
     </button>
-  );
-}
-
-function ProviderKeyRow({
-  label,
-  value,
-  status,
-  isPending,
-  onChange,
-  onConnect,
-  onTest,
-  onDisconnect,
-}: {
-  label: string;
-  provider: ReportAiProvider;
-  value: string;
-  status: string;
-  isPending: boolean;
-  onChange: (value: string) => void;
-  onConnect: () => void;
-  onTest: () => void;
-  onDisconnect: () => void;
-}) {
-  return (
-    <div className="rounded-xl border border-white/8 bg-white/[0.03] p-3">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="text-xs font-semibold text-slate-200">{label}</p>
-        <p className="truncate text-[10px] text-slate-500">{status}</p>
-      </div>
-      <input
-        type="password"
-        value={value}
-        onChange={(event) => onChange(event.currentTarget.value)}
-        className={inputClass}
-        placeholder={`${label} API key`}
-      />
-      <div className="mt-2 flex flex-wrap gap-2">
-        <Button type="button" variant="primary" disabled={!value.trim() || isPending} onClick={onConnect} className="h-8 px-2 text-xs">
-          Connect
-        </Button>
-        <Button type="button" disabled={isPending} onClick={onTest} className="h-8 px-2 text-xs">
-          Test
-        </Button>
-        <Button type="button" variant="ghost" disabled={isPending} onClick={onDisconnect} className="h-8 px-2 text-xs">
-          Disconnect
-        </Button>
-      </div>
-    </div>
   );
 }
 
@@ -1098,11 +889,9 @@ function Field({
 
 function PreviewStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-white/8 bg-slate-950/35 px-3 py-2">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-        {label}
-      </p>
-      <p className="mt-1 truncate text-sm font-semibold text-slate-100">{value}</p>
+    <div className="flex min-w-0 items-baseline gap-2 text-xs">
+      <span className="text-[var(--wt-text-muted)]">{label}</span>
+      <span className="break-words text-[var(--wt-text-secondary)]">{value}</span>
     </div>
   );
 }

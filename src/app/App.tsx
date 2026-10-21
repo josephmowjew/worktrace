@@ -18,6 +18,7 @@ import { TodayPage } from "../pages/TodayPage";
 import { WeeklyPlanPage } from "../pages/WeeklyPlanPage";
 import { ReportsWorkspaceProvider } from "../pages/reportsWorkspace";
 import { AppProviders } from "./providers";
+import { TasksWorkspace } from "../features/experience/TasksWorkspace";
 import { TaskManagerPage } from "../pages/TaskManagerPage";
 import { EssentialsCaptureWindow } from "../pages/EssentialsCaptureWindow";
 import { EssentialsJournalPage } from "../pages/EssentialsJournalPage";
@@ -59,7 +60,7 @@ function HelpPage() {
 
 function ActivityWorkspace({ children }: PropsWithChildren) {
   const experience = useExperience();
-  return <div className="space-y-5">{experience.isDeveloper ? <nav aria-label="Activity views" className="flex gap-5 border-b border-[var(--wt-border)] pb-3"><Link className="wt-text-link" to="/activity">Code activity</Link><Link className="wt-text-link" to="/manual-log">Work journal</Link></nav> : null}{children}</div>;
+  return <div className="space-y-5">{experience.isDeveloper ? <nav aria-label="Activity views" className="flex gap-5 border-b border-[var(--wt-border)] pb-3"><Link className="wt-text-link" to="/activity">Work items</Link><Link className="wt-text-link" to="/manual-log">Work journal</Link></nav> : null}{children}</div>;
 }
 
 function getTauriWindowLabel() {
@@ -104,10 +105,11 @@ export default function App() {
           path="/*"
           element={
             <AppLayout>
+              <ReportsWorkspaceProvider>
               <ExperienceEntry>
               <Routes>
                 <Route path="/" element={<HomePage />} />
-                <Route path="/tasks" element={<TaskManagerPage />} />
+                <Route path="/tasks" element={<TasksWorkspace><TaskManagerPage /></TasksWorkspace>} />
                 <Route path="/onboarding" element={<SetupPage />} />
                 <Route path="/dashboard" element={<FeatureGate title="Insights"><DashboardPage /></FeatureGate>} />
                 <Route path="/friction" element={<FeatureGate title="Insights"><FrictionPage /></FeatureGate>} />
@@ -118,14 +120,12 @@ export default function App() {
                 <Route path="/backup" element={<BackupPage />} />
                 <Route path="/manual-log" element={<FeatureGate feature="journal" title="Work journal"><ActivityWorkspace><JournalPage /></ActivityWorkspace></FeatureGate>} />
                 <Route path="/manual-log/advanced" element={<FeatureGate feature="journal" title="Work journal"><ManualLogPage /></FeatureGate>} />
-                <Route path="/weekly-plan" element={<FeatureGate title="Weekly planning"><WeeklyPlanPage /></FeatureGate>} />
+                <Route path="/weekly-plan" element={<FeatureGate title="Weekly planning"><TasksWorkspace><WeeklyPlanPage /></TasksWorkspace></FeatureGate>} />
                 <Route
                   path="/reports"
                   element={
                     <FeatureGate feature="reports" title="Reports">
-                    <ReportsWorkspaceProvider>
                       <ReportsPage />
-                    </ReportsWorkspaceProvider>
                     </FeatureGate>
                   }
                 />
@@ -134,6 +134,7 @@ export default function App() {
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
               </ExperienceEntry>
+              </ReportsWorkspaceProvider>
             </AppLayout>
           }
         />

@@ -1,17 +1,33 @@
-import { CheckCircle2, ChevronDown, ChevronRight, Edit3, GitCommitVertical } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronRight, Edit3, GitCommitVertical, ListTodo } from "lucide-react";
 import { useState } from "react";
+import type { ActivityItem } from "../../types/activity";
 import type { ActivityGroup, TitleCandidate, TitleRationale } from "../../types/activityGroup";
 import { TimelineItem } from "./TimelineItem";
 
 type TimelineGroupItemProps = {
   group: ActivityGroup;
   onEdit: (group: ActivityGroup) => void;
+  onCreateTaskFromCommit?: (item: ActivityItem) => void;
+  onCreateTaskFromGroup?: (group: ActivityGroup) => void;
   onSelectTitleCandidate?: (group: ActivityGroup, candidate: TitleCandidate) => void;
   showTime?: boolean;
+  compact?: boolean;
+  onInspect?: (group: ActivityGroup) => void;
+  defaultExpanded?: boolean;
 };
 
-export function TimelineGroupItem({ group, onEdit, onSelectTitleCandidate, showTime = true }: TimelineGroupItemProps) {
-  const [expanded, setExpanded] = useState(false);
+export function TimelineGroupItem({
+  group,
+  onEdit,
+  onCreateTaskFromCommit,
+  onCreateTaskFromGroup,
+  onSelectTitleCandidate,
+  showTime = true,
+  compact = false,
+  onInspect,
+  defaultExpanded = false,
+}: TimelineGroupItemProps) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const [showNaming, setShowNaming] = useState(false);
   const firstTime = group.items[0]?.occurredAt ?? group.startDate;
   const activities = group.items
@@ -21,6 +37,15 @@ export function TimelineGroupItem({ group, onEdit, onSelectTitleCandidate, showT
   const titleCandidates = safeTitleCandidates(group.titleCandidatesJson)
     .filter((candidate) => candidate.title !== group.title)
     .slice(0, 4);
+
+  if (compact) return <article className="wt-work-item-row">
+    {showTime ? <time className="absolute -left-14 text-xs text-[var(--wt-text-muted)] max-sm:hidden">{formatActivityTime(firstTime)}</time> : null}
+    <button type="button" className="min-w-0 flex-1 py-3 text-left" onClick={() => onInspect?.(group)} aria-label={`Open work item: ${group.title}`}>
+      <span className="block text-sm font-medium text-[var(--wt-text-strong)]">{group.title}</span>
+      <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[var(--wt-text-muted)]"><span>{group.projectName ?? "Workspace"}</span><span>{group.items.length} {group.items.length === 1 ? "commit" : "commits"}</span>{group.reviewStatus === "needs_review" ? <span className="text-[var(--wt-warning)]">Needs review</span> : null}{!group.includedInReport ? <span>Excluded from report</span> : null}</span>
+      {group.summary ? <span className="mt-2 block line-clamp-2 text-xs text-[var(--wt-text-muted)]">{group.summary.replace(/\n/g, " ")}</span> : null}
+    </button><button type="button" className="wt-shell-icon" aria-label={`Details for ${group.title}`} onClick={() => onInspect?.(group)}><ChevronRight size={15} /></button>
+  </article>;
 
   return (
     <article className="group relative z-10 rounded-2xl border border-cyan-200/12 bg-slate-950/42 shadow-[0_14px_42px_rgba(2,6,23,0.26),inset_0_1px_0_rgba(255,255,255,0.045)] transition-[background-color,border-color,box-shadow,transform] duration-150 hover:border-cyan-200/22 hover:bg-slate-950/52">
@@ -144,6 +169,16 @@ export function TimelineGroupItem({ group, onEdit, onSelectTitleCandidate, showT
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
+          {onCreateTaskFromGroup ? (
+            <button
+              type="button"
+              onClick={() => onCreateTaskFromGroup(group)}
+              className="flex h-10 w-10 items-center justify-center rounded-xl border border-cyan-300/15 bg-cyan-500/10 text-cyan-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-[background-color,color,transform] duration-150 hover:bg-cyan-500/15 hover:text-white active:scale-[0.96]"
+              aria-label="Create task from work item"
+            >
+              <ListTodo className="h-4 w-4" />
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => onEdit(group)}
@@ -178,7 +213,14 @@ export function TimelineGroupItem({ group, onEdit, onSelectTitleCandidate, showT
             </div>
           ) : null}
           {activities.length ? (
-            activities.map((item) => <TimelineItem key={item.id} item={item} showTime={false} />)
+            activities.map((item) => (
+              <TimelineItem
+                key={item.id}
+                item={item}
+                showTime={false}
+                onCreateTaskFromCommit={onCreateTaskFromCommit}
+              />
+            ))
           ) : (
             <div className="rounded-lg border border-white/8 bg-white/[0.03] p-3 text-xs text-slate-400">
               Source commits are no longer available.

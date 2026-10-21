@@ -104,6 +104,8 @@ export function ReportsWorkspaceProvider({ children }: PropsWithChildren) {
   }, [content, endDate, report, startDate, weekRange]);
 
   useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    let disposed = false;
     let unlisten: (() => void) | undefined;
 
     listen<ReportAiStreamPayload>("report_ai_stream", (event) => {
@@ -158,10 +160,11 @@ export function ReportsWorkspaceProvider({ children }: PropsWithChildren) {
         setActivePolishStreamId(null);
       }
     }).then((cleanup) => {
-      unlisten = cleanup;
-    });
+      if (disposed) cleanup(); else unlisten = cleanup;
+    }).catch(() => {});
 
     return () => {
+      disposed = true;
       unlisten?.();
     };
   }, []);

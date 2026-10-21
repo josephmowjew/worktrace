@@ -71,6 +71,10 @@ const priorities: Array<{ value: WeeklyTaskPriority; label: string }> = [
 const inputClass =
   "wt-input h-10 w-full rounded-xl px-3 text-sm transition-[border-color,box-shadow,background-color]";
 
+function optionalNumber(value: unknown) {
+  return value === "" || value == null ? undefined : Number(value);
+}
+
 function defaultValues(weekStartDate: string): TaskFormValues {
   return {
     projectId: "",
@@ -169,6 +173,7 @@ export function AddTaskModal({
           <Field label="Title" error={form.formState.errors.title?.message}>
             <input
               className={inputClass}
+              autoFocus
               placeholder="Finalize report export polish"
               {...form.register("title")}
             />
@@ -266,7 +271,7 @@ export function AddTaskModal({
                 max={100}
                 className={inputClass}
                 placeholder="0"
-                {...form.register("progressPercent", { valueAsNumber: true })}
+                {...form.register("progressPercent", { setValueAs: optionalNumber })}
               />
             </Field>
             <Field label="Estimate (minutes)">
@@ -276,7 +281,7 @@ export function AddTaskModal({
                 max={1440}
                 className={inputClass}
                 placeholder="60"
-                {...form.register("estimatedMinutes", { valueAsNumber: true })}
+                {...form.register("estimatedMinutes", { setValueAs: optionalNumber })}
               />
             </Field>
           </div>

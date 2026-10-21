@@ -17,7 +17,6 @@ import {
   ListChecks,
   ListTodo,
   Monitor,
-  Plus,
   Play,
   RefreshCw,
   Square,
@@ -28,6 +27,8 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { useLocation, useNavigate } from "react-router-dom";
+import { ActionMenu } from "../components/ui/ActionMenu";
+import { Disclosure } from "../components/ui/Disclosure";
 import { AddTaskModal } from "../components/ui/AddTaskModal";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -121,6 +122,8 @@ export function TodayPage() {
   const location = useLocation();
   const weekRange = useWeekRange();
   const today = todayRange();
+  const [plannerOpen, setPlannerOpen] = useState(false);
+  const [focusToolsOpen, setFocusToolsOpen] = useState(false);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
   const [logModalOpen, setLogModalOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -235,6 +238,7 @@ export function TodayPage() {
       return;
     }
     if (state?.openFocus) {
+      setFocusToolsOpen(true);
       window.setTimeout(() => {
         document.getElementById("focus-session-panel")?.scrollIntoView({
           behavior: "smooth",
@@ -780,7 +784,7 @@ export function TodayPage() {
   const isFocusModeActive = Boolean(activeFocusQuery.data);
 
   return (
-    <div className={`wt-focus-page-content space-y-4 ${isFocusModeActive ? "wt-today-focus-active" : ""}`}>
+    <div className={`wt-focus-page-content mx-auto max-w-5xl space-y-4 ${isFocusModeActive ? "wt-today-focus-active" : ""}`}>
       {showOnboardingEntry ? (
         <OnboardingEntryPanel
           isPending={onboardingMutation.isPending}
@@ -805,28 +809,15 @@ export function TodayPage() {
             {today.label}
           </span>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button variant="primary" onClick={() => setTaskModalOpen(true)} size="sm">
-            <Plus className="h-4 w-4" />
-            New Task
-          </Button>
-          <Button onClick={() => setLogModalOpen(true)} size="sm">
-            <ClipboardEdit className="h-4 w-4" />
-            Quick Log
-          </Button>
-          <Button onClick={() => void handleSyncRepositories()} disabled={repositorySync.isSyncing} size="sm">
-            <RefreshCw className={`h-4 w-4 ${repositorySync.isSyncing ? "animate-spin" : ""}`} />
-            {repositorySync.isSyncing ? "Syncing..." : "Sync Repos"}
-          </Button>
-          <span className="mx-1 h-8 w-px bg-white/10" />
-          <Button onClick={() => setReviewOpen(true)} size="sm">
-            <ListChecks className="h-4 w-4" />
-            End of Day Review
-          </Button>
-          <Button variant="ghost" onClick={() => setReportPrepOpen(true)} size="sm">
-            <FileText className="h-4 w-4" />
-            Prep Report
-          </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" onClick={() => setLogModalOpen(true)} size="sm"><ClipboardEdit size={14} />Capture work</Button>
+          <Button variant="ghost" onClick={() => setReviewOpen(true)} size="sm">Review day</Button>
+          <ActionMenu label="Today actions">
+            <Button variant="ghost" onClick={() => setTaskModalOpen(true)}>Advanced task</Button>
+            <Button variant="ghost" onClick={() => void handleSyncRepositories()} disabled={repositorySync.isSyncing}><RefreshCw size={14} />{repositorySync.isSyncing ? "Syncing..." : "Sync activity"}</Button>
+            <Button variant="ghost" onClick={() => setReportPrepOpen(true)}>Prepare report</Button>
+            <Button variant="ghost" onClick={() => navigate("/reports")}>Open reports</Button>
+          </ActionMenu>
         </div>
       </div>
 
@@ -841,9 +832,97 @@ export function TodayPage() {
         />
       ) : null}
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_300px]">
-        <div className="wt-focus-muted space-y-4">
-          <TodayCommandCenterPanel
+      <div className="mx-auto max-w-5xl space-y-6">
+        <p className="text-xs text-[var(--wt-text-muted)]">{repositorySync.isSyncing ? "Syncing activity..." : projectsQuery.isError ? "Repository status unavailable" : `${projects.length} ${projects.length === 1 ? "repository" : "repositories"} in your workspace`} <button type="button" className="ml-2 underline underline-offset-4" onClick={() => navigate("/projects")}>Manage</button></p>
+            <TodayQuickAddBar
+              projects={projects}
+              todayDate={today.date}
+              isPending={createTaskMutation.isPending}
+              onAdd={(values) =>
+                createTaskMutation.mutateAsync({
+                  title: values.title,
+                  taskType: "planned_work",
+                  status: "todo",
+                  projectId: values.projectId ?? undefined,
+                  priority: values.priority,
+                  weekStartDate: weekRange.from,
+                  targetDate: values.targetDate,
+                  includedInReport: false,
+                })
+              }
+            />
+
+        {tasksQuery.isLoading ? <p role="status" className="text-sm text-[var(--wt-text-muted)]">Loading your work...</p> : tasksQuery.isError ? <div role="alert" className="text-sm text-[var(--wt-danger)]"><p>Your tasks could not be loaded.</p><Button size="sm" onClick={() => void tasksQuery.refetch()}>Try again</Button></div> : <TaskPanel
+          title="Your work today" empty="Nothing needs your attention today. Add a task above or review all tasks."
+          tasks={todayTasks}
+          onComplete={(task) => updateTaskMutation.mutate({ id: task.id, input: { status: "completed", completedAt: today.date } })}
+          onStart={(task) => updateTaskMutation.mutate({ id: task.id, input: { status: "in_progress", ...(task.status === "blocked" ? { taskType: "planned_work" } : {}) } })}
+          onFocus={(task) => startFocusMutation.mutate({ projectId: task.projectId ?? null, taskId: task.id, title: task.title, notes: null })}
+        />}
+        <div className="flex gap-5 text-xs"><button className="wt-text-link" onClick={() => navigate("/tasks")}>All tasks <ArrowRight size={13} /></button><button className="wt-text-link" onClick={() => navigate("/weekly-plan")}>Weekly board</button></div>
+        <div className="space-y-0">
+        {activeFocusQuery.data ? <div id="focus-session-panel" className={isFocusModeActive ? "wt-focus-primary-region" : ""}>            <TodayFocusPanel
+              activeSession={activeFocusQuery.data}
+              focusGoalMinutes={commandCenterQuery.data?.focusGoalMinutes ?? 240}
+              focusActualMinutes={commandCenterQuery.data?.focusActualMinutes ?? 0}
+              groups={focusTargetGroups}
+              onStart={(input) =>
+                startFocusMutation.mutate({
+                  title: input.title,
+                  projectId: input.projectId ?? null,
+                  taskId: input.taskId ?? null,
+                  notes: null,
+                })
+              }
+              onStop={() => setStopFocusOpen(true)}
+              onCancel={() => activeFocusQuery.data && cancelFocusMutation.mutate(activeFocusQuery.data.id)}
+              isPending={
+                startFocusMutation.isPending ||
+                stopFocusMutation.isPending ||
+                cancelFocusMutation.isPending
+              }
+            /></div> : <div id="focus-session-panel"><Disclosure title="Focus timer" open={focusToolsOpen} onOpenChange={setFocusToolsOpen}>            <TodayFocusPanel
+              activeSession={activeFocusQuery.data}
+              focusGoalMinutes={commandCenterQuery.data?.focusGoalMinutes ?? 240}
+              focusActualMinutes={commandCenterQuery.data?.focusActualMinutes ?? 0}
+              groups={focusTargetGroups}
+              onStart={(input) =>
+                startFocusMutation.mutate({
+                  title: input.title,
+                  projectId: input.projectId ?? null,
+                  taskId: input.taskId ?? null,
+                  notes: null,
+                })
+              }
+              onStop={() => setStopFocusOpen(true)}
+              onCancel={() => activeFocusQuery.data && cancelFocusMutation.mutate(activeFocusQuery.data.id)}
+              isPending={
+                startFocusMutation.isPending ||
+                stopFocusMutation.isPending ||
+                cancelFocusMutation.isPending
+              }
+            /></Disclosure></div>}
+        {activePriorityReminders.length ? <Disclosure title="Priority reminders" summary={String(activePriorityReminders.length)}>          <PriorityReminderPanel
+            reminders={activePriorityReminders}
+            isPending={snoozeReminderMutation.isPending || dismissPriorityReminderMutation.isPending}
+            onSnooze={(reminder) => snoozeReminderMutation.mutate(reminder.reminderKey)}
+            onDismiss={(reminder) => dismissPriorityReminderMutation.mutate(reminder.reminderKey)}
+            onStartFocus={(reminder) =>
+              startFocusMutation.mutate({
+                title: reminder.title,
+                projectId: null,
+                taskId: reminder.weeklyTaskId ?? null,
+                notes: null,
+              })
+            }
+            onMarkDone={(reminder) =>
+              updatePriorityMutation.mutate({
+                id: reminder.dailyPlanItemId,
+                input: { status: "done" },
+              })
+            }
+          /></Disclosure> : null}
+        <Disclosure title="Plan your day" open={plannerOpen} onOpenChange={setPlannerOpen}>          <TodayCommandCenterPanel
             todayDate={today.date}
             commandCenter={commandCenterQuery.data}
             isLoading={commandCenterQuery.isLoading}
@@ -899,36 +978,8 @@ export function TodayPage() {
             backgroundModeEnabled={Boolean(settingsQuery.data?.minimizeToTrayOnClose)}
             startupEnabled={Boolean(settingsQuery.data?.startupEnabled)}
             onOpenBackgroundSettings={() => navigate("/settings")}
-          />
-
-          <div className="wt-summary-strip grid-cols-2 sm:grid-cols-5">
-            <TodayStat icon={Target} label="Planned Today" value={planned.length.toString()} detail="open tasks" />
-            <TodayStat icon={Activity} label="In Progress" value={inProgress.length.toString()} detail="tasks" />
-            <TodayStat icon={AlertTriangle} label="Blockers" value={blockers.length.toString()} detail={blockers.length === 1 ? "task" : "tasks"} tone="amber" />
-            <TodayStat icon={FileText} label="Report Ready" value={reportReadyCount.toString()} detail="items" tone="emerald" />
-            <TodayStat icon={Focus} label="Capacity Today" value={formatMinutes(todayRemainingCapacity)} detail="remaining" tone="emerald" />
-          </div>
-
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1fr)]">
-            <TodayQuickAddBar
-              projects={projects}
-              todayDate={today.date}
-              isPending={createTaskMutation.isPending}
-              onAdd={(values) =>
-                createTaskMutation.mutate({
-                  title: values.title,
-                  taskType: "planned_work",
-                  status: "todo",
-                  projectId: values.projectId ?? undefined,
-                  priority: values.priority,
-                  weekStartDate: weekRange.from,
-                  targetDate: values.targetDate,
-                  includedInReport: false,
-                })
-              }
-            />
-            <div id="carryover-assistant">
-              <CompactCarryoverAssistant
+          /></Disclosure>
+        {previousOpenTasks.length ? <Disclosure title="Earlier unfinished work" summary={String(previousOpenTasks.length)}>              <CompactCarryoverAssistant
                 tasks={previousOpenTasks}
                 isUpdating={updateTaskMutation.isPending}
                 onCarry={(task) =>
@@ -959,95 +1010,15 @@ export function TodayPage() {
                     input: { includedInReport: true },
                   })
                 }
-              />
-            </div>
-          </div>
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            <TaskPanel
-              title="Active Work"
-              empty="No active work yet. Add a task or move one into progress."
-              tasks={[...inProgress, ...planned].slice(0, 8)}
-              onComplete={(task) => updateTaskMutation.mutate({ id: task.id, input: { status: "completed", completedAt: today.date } })}
-              onStart={(task) => updateTaskMutation.mutate({ id: task.id, input: { status: "in_progress", progressPercent: task.progressPercent ?? 25 } })}
-              onFocus={(task) =>
-                startFocusMutation.mutate({
-                  projectId: task.projectId ?? null,
-                  taskId: task.id,
-                  title: task.title,
-                  notes: null,
-                })
-              }
-            />
-            <TaskPanel
-              title="Blockers"
-              empty="No blockers are open."
-              tasks={blockers.slice(0, 8)}
-              onComplete={(task) => updateTaskMutation.mutate({ id: task.id, input: { status: "completed", completedAt: today.date } })}
-              onStart={(task) => updateTaskMutation.mutate({ id: task.id, input: { status: "in_progress", taskType: "planned_work" } })}
-              onFocus={(task) =>
-                startFocusMutation.mutate({
-                  projectId: task.projectId ?? null,
-                  taskId: task.id,
-                  title: task.title,
-                  notes: null,
-                })
-              }
-            />
-          </div>
-          <TodayNudgeStrip
-            nudges={activeNudges}
-            onDismiss={(key) => dismissNudgeMutation.mutate(key)}
-            isDismissing={dismissNudgeMutation.isPending}
-          />
-        </div>
-
-        <aside className="space-y-4">
-          <div id="focus-session-panel" className={isFocusModeActive ? "wt-focus-primary-region" : ""}>
-            <TodayFocusPanel
-              activeSession={activeFocusQuery.data}
-              focusGoalMinutes={commandCenterQuery.data?.focusGoalMinutes ?? 240}
-              focusActualMinutes={commandCenterQuery.data?.focusActualMinutes ?? 0}
-              groups={focusTargetGroups}
-              onStart={(input) =>
-                startFocusMutation.mutate({
-                  title: input.title,
-                  projectId: input.projectId ?? null,
-                  taskId: input.taskId ?? null,
-                  notes: null,
-                })
-              }
-              onStop={() => setStopFocusOpen(true)}
-              onCancel={() => activeFocusQuery.data && cancelFocusMutation.mutate(activeFocusQuery.data.id)}
-              isPending={
-                startFocusMutation.isPending ||
-                stopFocusMutation.isPending ||
-                cancelFocusMutation.isPending
-              }
-            />
-          </div>
-          <div className="wt-focus-muted space-y-4">
-          <PriorityReminderPanel
-            reminders={activePriorityReminders}
-            isPending={snoozeReminderMutation.isPending || dismissPriorityReminderMutation.isPending}
-            onSnooze={(reminder) => snoozeReminderMutation.mutate(reminder.reminderKey)}
-            onDismiss={(reminder) => dismissPriorityReminderMutation.mutate(reminder.reminderKey)}
-            onStartFocus={(reminder) =>
-              startFocusMutation.mutate({
-                title: reminder.title,
-                projectId: null,
-                taskId: reminder.weeklyTaskId ?? null,
-                notes: null,
-              })
-            }
-            onMarkDone={(reminder) =>
-              updatePriorityMutation.mutate({
-                id: reminder.dailyPlanItemId,
-                input: { status: "done" },
-              })
-            }
-          />
-          <TodayActivityPanel isLoading={activityQuery.isLoading} activityItems={activityItems} />
+              /></Disclosure> : null}
+        {activeNudges.length ? <Disclosure title="Suggestions" summary={String(activeNudges.length)}><TodayNudgeStrip nudges={activeNudges} onDismiss={(key) => dismissNudgeMutation.mutate(key)} isDismissing={dismissNudgeMutation.isPending} /></Disclosure> : null}
+        <Disclosure title="Day details" summary="Activity, capacity, and report checks">          <div className="wt-summary-strip grid-cols-2 sm:grid-cols-5">
+            <TodayStat icon={Target} label="Planned Today" value={planned.length.toString()} detail="open tasks" />
+            <TodayStat icon={Activity} label="In Progress" value={inProgress.length.toString()} detail="tasks" />
+            <TodayStat icon={AlertTriangle} label="Blockers" value={blockers.length.toString()} detail={blockers.length === 1 ? "task" : "tasks"} tone="amber" />
+            <TodayStat icon={FileText} label="Report Ready" value={reportReadyCount.toString()} detail="items" tone="emerald" />
+            <TodayStat icon={Focus} label="Capacity Today" value={formatMinutes(todayRemainingCapacity)} detail="remaining" tone="emerald" />
+          </div>           <TodayActivityPanel isLoading={activityQuery.isLoading} activityItems={activityItems} />
           <Panel className="border-cyan-300/15 bg-cyan-400/10">
             <div className="mb-3 flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4 text-cyan-200" />
@@ -1058,9 +1029,8 @@ export function TodayPage() {
               <ReadinessRow done={tasks.some((task) => task.includedInReport)} label="Weekly tasks flagged for report" />
               <ReadinessRow done={blockers.length === 0} label="Blockers reviewed" />
             </div>
-          </Panel>
-          </div>
-        </aside>
+          </Panel></Disclosure>
+        </div>
       </div>
 
       <AddTaskModal
@@ -2017,42 +1987,37 @@ function TaskPanel({
   onStart: (task: WeeklyTask) => void;
   onFocus: (task: WeeklyTask) => void;
 }) {
+  const navigate = useNavigate();
   return (
-    <Panel className="border-white/10 bg-slate-950/45 p-3">
+    <section>
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h2 className="text-xs font-semibold tracking-normal text-blue-200">{title}</h2>
+        <h2 className="text-sm font-semibold text-[var(--wt-text-strong)]">{title}</h2>
         <Badge tone="slate">{tasks.length} {tasks.length === 1 ? "task" : "tasks"}</Badge>
       </div>
-      <div className="space-y-2">
+      <div className="divide-y divide-[var(--wt-border)]">
         {tasks.length > 0 ? (
           tasks.map((task) => (
-            <div key={task.id} className="rounded-lg border border-white/8 bg-white/[0.025] px-3 py-2">
+            <div key={task.id} className="px-1 py-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex min-w-0 items-start gap-2">
-                  <span className="mt-0.5 h-4 w-4 rounded border border-slate-500/50 bg-slate-950" />
+                  <button type="button" className="wt-task-check mt-0.5" aria-label={`Complete ${task.title}`} onClick={() => onComplete(task)} />
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-slate-100">{task.title}</p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      <span className={task.priority === "high" ? "text-rose-300" : task.priority === "normal" ? "text-blue-300" : "text-slate-400"}>
-                        {task.priority}
-                      </span>
-                      {task.estimatedMinutes ? ` / ${task.estimatedMinutes}m` : ""}
-                    </p>
+                    <button type="button" className="text-left text-sm font-medium text-[var(--wt-text-strong)]" onClick={() => navigate("/tasks", { state: { editTaskId: task.id } })}>{task.title}</button>
+                    {task.status === "blocked" ? <span className="ml-2 text-xs text-[var(--wt-warning)]">Blocked</span> : task.status === "in_progress" ? <span className="ml-2 text-xs text-[var(--wt-text-muted)]">In progress</span> : null}
+                    {task.projectName ? <span className="ml-2 text-xs text-[var(--wt-text-muted)]">{task.projectName}</span> : null}
+                    {task.priority === "high" || task.estimatedMinutes ? <p className="mt-1 text-xs text-[var(--wt-text-muted)]">{task.priority === "high" ? <span className="mr-3 text-[var(--wt-warning)]">High priority</span> : null}{task.estimatedMinutes ? `${task.estimatedMinutes} min estimated` : null}</p> : null}
                   </div>
                 </div>
-                <div className="flex gap-1">
+                <ActionMenu label={`Actions for ${task.title}`}>
                   <Button variant="ghost" onClick={() => onFocus(task)} className="h-8 w-8 px-0 text-xs" aria-label={`Start focus on ${task.title}`}>
-                    <Focus className="h-3.5 w-3.5" />
+                    <Focus className="h-3.5 w-3.5" />Focus on task
                   </Button>
                   {task.status !== "in_progress" ? (
                     <Button variant="ghost" onClick={() => onStart(task)} className="h-8 px-2 text-xs">
-                      Start
+                      Start task
                     </Button>
                   ) : null}
-                  <Button variant="ghost" onClick={() => onComplete(task)} className="h-8 px-2 text-xs">
-                    Done
-                  </Button>
-                </div>
+                </ActionMenu>
               </div>
             </div>
           ))
@@ -2062,7 +2027,7 @@ function TaskPanel({
           </div>
         )}
       </div>
-    </Panel>
+    </section>
   );
 }
 

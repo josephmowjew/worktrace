@@ -4,13 +4,14 @@ import { NavLink, useLocation } from "react-router-dom";
 
 export function useWorkspaceNavigation() {
   const experience = useExperience();
+  if (experience.isDeveloper) return [
+    { label: "Work", items: [{ label: "Today", href: "/", icon: Home }, { label: "Tasks", href: "/tasks", icon: ListTodo }, { label: "Activity", href: "/activity", icon: Activity }, { label: "Reports", href: "/reports", icon: BarChart3 }] },
+    { label: "Tools", items: [{ label: "Repositories", href: "/projects", icon: FolderKanban }, { label: "Insights", href: "/insights", icon: Gauge }] },
+  ];
   return [{ label: "Workspace", items: [
-    { label: "Today", href: "/", icon: Home },
-    { label: "Tasks", href: "/tasks", icon: ListTodo },
-    ...(experience.isDeveloper ? [{ label: "Activity", href: "/activity", icon: Activity }, { label: "Repositories", href: "/projects", icon: FolderKanban }] : []),
-    ...(!experience.isDeveloper && experience.hasFeature("journal") ? [{ label: "Work journal", href: "/manual-log", icon: ClipboardEdit }] : []),
+    { label: "Today", href: "/", icon: Home }, { label: "Tasks", href: "/tasks", icon: ListTodo },
+    ...(experience.hasFeature("journal") ? [{ label: "Work journal", href: "/manual-log", icon: ClipboardEdit }] : []),
     ...(experience.hasFeature("reports") ? [{ label: "Reports", href: "/reports", icon: BarChart3 }] : []),
-    ...(experience.isDeveloper ? [{ label: "Insights", href: "/insights", icon: Gauge }] : []),
   ] }];
 }
 

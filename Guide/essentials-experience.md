@@ -15,7 +15,12 @@ New installations start with a choice between Essentials and Developer. Essentia
 
 ## Developer
 
-Developer includes all optional tools and retains repository tracking, code activity, weekly planning, insights, reporting, and integrations. The main navigation follows **Today → Tasks → Activity → Repositories → Reports → Insights**. Weekly planning is available from Tasks; the work journal is available under Activity.
+Developer includes all optional tools and retains repository tracking, code activity, weekly planning, insights, reporting, and integrations. The main navigation follows **Today → Tasks → Activity → Reports**, with **Repositories** and **Insights** in Tools. Weekly planning is available as the Weekly board tab in Tasks; the work journal is available under Activity.
+
+- **Today** centers on one working list and title-first task capture. Focus, planning, suggestions, and day details expand when needed. Sync and report preparation remain available in Today actions.
+- **Reports** starts with dates, an optional recipient, and the editable draft. Source and AI options expand on request; saved reports and secondary actions remain accessible. The current draft survives navigation to other main workspace pages. AI credentials are managed in Settings.
+- **Activity** starts with grouped work items. Selecting an item opens its evidence and editing controls in a side panel. Filters, raw commits, weekly analytics, and Full Sync remain available without dominating the timeline.
+- **Tasks** provides List and Weekly board views. Basic creation needs only a title; more task options preserve access to project links, reporting, estimates, and other existing fields.
 
 Existing installations and settings exports without experience preferences retain Developer behavior. A chosen experience and optional tools persist across restarts and settings exports/imports.
 

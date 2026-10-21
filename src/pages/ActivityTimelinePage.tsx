@@ -4,7 +4,6 @@ import {
   BookOpen,
   CalendarDays,
   ChevronLeft,
-  ChevronDown,
   ChevronRight,
   Code,
   Eye,
@@ -13,17 +12,18 @@ import {
   Rocket,
   Search,
   Users,
-  FolderOpen,
-  LayoutGrid,
   ListChecks,
   Sparkles,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { ActionMenu } from "../components/ui/ActionMenu";
+import { Disclosure } from "../components/ui/Disclosure";
+import { SidePanel } from "../components/ui/SidePanel";
+import { useViewPreference } from "../hooks/useViewPreference";
 import { Panel } from "../components/ui/Panel";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Button } from "../components/ui/Button";
-import { Select } from "../components/ui/Select";
 import { useSpeech } from "../components/ui/SpeechProvider";
 import { useToast } from "../components/ui/ToastProvider";
 import { ActivityHeatmap } from "../components/timeline/ActivityHeatmap";
@@ -82,9 +82,12 @@ export function ActivityTimelinePage() {
   const [viewingTask, setViewingTask] = useState<WeeklyTask | null>(null);
   const [editingGroup, setEditingGroup] = useState<ActivityGroup | null>(null);
   const [commitTaskDraft, setCommitTaskDraft] = useState<CommitTaskDraftResponse | null>(null);
-  const [syncMenuOpen, setSyncMenuOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [weekDetailsOpen, setWeekDetailsOpen] = useState(false);
+  const [showRawCommits, setShowRawCommits] = useState(false);
+  const [inspectingGroup, setInspectingGroup] = useState<ActivityGroup | null>(null);
   const [organizePhase, setOrganizePhase] = useState<"idle" | "evidence" | "grouping">("idle");
-  const [viewMode, setViewMode] = useState<"timeline" | "story">("timeline");
+  const [viewMode, setViewMode] = useViewPreference<"timeline" | "story">("activity", "timeline", ["timeline", "story"]);
 
   useEffect(() => {
     const state = location.state as ActivityTimelineLocationState;
@@ -356,6 +359,15 @@ export function ActivityTimelinePage() {
     },
   });
 
+  function previewTaskFromGroup(group: ActivityGroup) {
+    const representativeCommit = selectRepresentativeCommitForTask(group);
+    if (!representativeCommit) {
+      toast.error("Task draft failed", "This work item has no available source commit to draft from.");
+      return;
+    }
+    previewCommitTaskMutation.mutate(representativeCommit);
+  }
+
   const createCommitTaskMutation = useMutation({
     mutationFn: ({ response, task }: { response: CommitTaskDraftResponse; task: Parameters<typeof createWeeklyTaskFromCommit>[0]["task"] }) =>
       createWeeklyTaskFromCommit({
@@ -389,6 +401,7 @@ export function ActivityTimelinePage() {
   });
 
   const heatmapQuery = useQuery({
+    enabled: weekDetailsOpen,
     queryKey: ["heatmap", weekRange.from, weekRange.to, projectId],
     queryFn: () =>
       getActivityHeatmap({
@@ -399,6 +412,7 @@ export function ActivityTimelinePage() {
   });
 
   const summaryQuery = useQuery({
+    enabled: weekDetailsOpen,
     queryKey: ["weekSummary", weekRange.from, weekRange.to, projectId],
     queryFn: () =>
       getWeekSummary({
@@ -409,6 +423,7 @@ export function ActivityTimelinePage() {
   });
 
   const highlightsQuery = useQuery({
+    enabled: weekDetailsOpen,
     queryKey: ["keyHighlights", weekRange.from, weekRange.to, projectId],
     queryFn: () =>
       getKeyHighlights({
@@ -418,7 +433,6 @@ export function ActivityTimelinePage() {
       }),
   });
 
-  useEscapeKey(() => setSyncMenuOpen(false), syncMenuOpen);
 
   async function handleSyncRepositories(mode: "auto" | "full" = "auto") {
     speech.announce(syncStartedAnnouncement("activity timeline"), { category: "sync" });
@@ -467,6 +481,9 @@ export function ActivityTimelinePage() {
       activityType === "all" ? tasksQuery.data ?? [] : [],
     );
 
+    if (!showRawCommits && activityType !== "commit" && !searchQuery.trim()) {
+      days = days.map((day) => ({ ...day, items: day.items.filter((entry) => entry.kind !== "activity" || entry.item.activityType !== "commit") })).filter((day) => day.items.length > 0);
+    }
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
       const semanticIds = new Set((semanticSearchQuery.data ?? []).map((result) => result.sourceId));
@@ -482,7 +499,7 @@ export function ActivityTimelinePage() {
     }
 
     return days;
-  }, [activityGroupsQuery.data, activityQuery.data, activityType, searchQuery, semanticSearchQuery.data, smartOrganizeMutation.data?.groups, tasksQuery.data]);
+  }, [showRawCommits, activityGroupsQuery.data, activityQuery.data, activityType, searchQuery, semanticSearchQuery.data, smartOrganizeMutation.data?.groups, tasksQuery.data]);
 
   useEffect(() => {
     if (
@@ -504,12 +521,11 @@ export function ActivityTimelinePage() {
     <div className="min-h-full space-y-4">
       <PageHeader
         icon={BarChart3}
-        eyebrow="Activity review"
-        title="Activity Timeline"
-        description="Track commits, meetings, reviews, testing, and deployments across your projects."
+        title="Activity"
+        description="Review work items and open the evidence when you need it."
         actions={
           <>
-            <div className="flex h-12 items-center rounded-xl border border-blue-200/10 bg-slate-950/42 px-1 shadow-none">
+            <div className="flex h-9 items-center rounded-md border border-blue-200/10 bg-slate-950/42 px-1 shadow-none">
               <button
                 onClick={handlePrevWeek}
                 className="flex h-10 w-10 items-center justify-center rounded-lg text-slate-400 transition-[background-color,color,transform] duration-150 hover:bg-white/10 hover:text-slate-200 active:scale-[0.96]"
@@ -533,97 +549,23 @@ export function ActivityTimelinePage() {
             <div className="relative min-w-[260px] flex-1 sm:max-w-[420px]">
               <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
-                type="text"
-                placeholder="Search projects, tasks, commits..."
+                type="search"
+                aria-label="Search activity"
+                placeholder="Search work and evidence..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-12 w-full rounded-xl border border-blue-200/10 bg-slate-950/45 pl-11 pr-14 text-sm text-slate-200 shadow-none outline-none transition-[border-color,box-shadow,background-color] duration-150 placeholder:text-slate-500 focus:border-blue-300/45 focus:bg-slate-950/60 focus:ring-2 focus:ring-blue-500/15"
+                className="h-9 w-full rounded-md border border-blue-200/10 bg-slate-950/45 pl-11 pr-14 text-sm text-slate-200 shadow-none outline-none transition-[border-color,box-shadow,background-color] duration-150 placeholder:text-slate-500 focus:border-blue-300/45 focus:bg-slate-950/60 focus:ring-2 focus:ring-blue-500/15"
               />
-              <span className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded-md border border-white/8 bg-white/5 px-2 py-1 text-[10px] font-semibold text-slate-500 sm:block">
-                Cmd K
-              </span>
+
             </div>
 
-            <div className="relative flex">
-              <Button
-                variant="primary"
-                onClick={() => void handleSyncRepositories("auto")}
-                disabled={repositorySync.isSyncing || smartOrganizeMutation.isPending}
-                className="h-12 rounded-r-none px-5 shadow-none transition-[background-color,box-shadow,transform] active:scale-[0.96]"
-              >
-                <RefreshCw
-                  className={`h-4 w-4 ${repositorySync.isSyncing ? "animate-spin" : ""}`}
-                />
-                {repositorySync.isSyncing ? "Syncing..." : "Sync Repositories"}
-              </Button>
-              <button
-                type="button"
-                onClick={() => setSyncMenuOpen((open) => !open)}
-                disabled={repositorySync.isSyncing || smartOrganizeMutation.isPending}
-                className="flex h-12 w-11 items-center justify-center rounded-r-xl border-l border-white/15 bg-blue-600 text-white shadow-none transition-[background-color,transform] hover:bg-blue-500 active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-50"
-                aria-label="Sync options"
-                aria-expanded={syncMenuOpen}
-              >
-                <ChevronDown className="h-4 w-4" />
-              </button>
-              {syncMenuOpen ? (
-                <div className="absolute right-0 top-[calc(100%+8px)] z-30 w-48 rounded-xl border border-blue-200/12 bg-slate-950/95 p-1.5 text-sm text-slate-200 shadow-none backdrop-blur">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSyncMenuOpen(false);
-                      void handleSyncRepositories("full");
-                    }}
-                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-slate-200 transition-colors hover:bg-white/8"
-                  >
-                    <RefreshCw className="h-4 w-4 text-blue-300" />
-                    Full Sync
-                  </button>
-                </div>
-              ) : null}
-            </div>
+            <Button size="sm" onClick={() => void handleSyncRepositories("auto")} disabled={repositorySync.isSyncing || smartOrganizeMutation.isPending}><RefreshCw size={14} className={repositorySync.isSyncing ? "animate-spin" : ""} />{repositorySync.isSyncing ? "Syncing..." : "Sync activity"}</Button>
+            <ActionMenu label="Activity actions"><Button variant="ghost" onClick={() => void handleSyncRepositories("full")} disabled={repositorySync.isSyncing || smartOrganizeMutation.isPending}>Full sync (rebuild evidence)</Button></ActionMenu>
           </>
         }
       />
 
-      <Panel className="rounded-[18px] border-blue-200/10 bg-slate-950/38 p-3 shadow-none">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex flex-wrap gap-2">
-            {activityFilters.map((filter) => {
-              const Icon = filter.icon;
-              return (
-                <button
-                  key={filter.value}
-                  type="button"
-                  onClick={() => setActivityType(filter.value)}
-                  className={[
-                    "inline-flex min-h-10 items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium shadow-none transition-[background-color,border-color,color,box-shadow,transform] duration-150 active:scale-[0.96]",
-                    activityType === filter.value
-                      ? "border-blue-300/30 bg-blue-500 text-white shadow-none"
-                      : "border-white/10 bg-slate-950/35 text-slate-400 hover:border-blue-200/18 hover:bg-white/8 hover:text-slate-200",
-                  ].join(" ")}
-                >
-                  <Icon className="h-4 w-4 shrink-0 stroke-[2.25]" />
-                  {filter.label}
-                </button>
-              );
-            })}
-          </div>
-
-          <Select
-            value={projectId}
-            onChange={setProjectId}
-            options={[
-              { value: "all", label: "All Projects", icon: LayoutGrid },
-              ...activeProjects.map((project) => ({
-                value: project.id,
-                label: project.name,
-                icon: FolderOpen,
-              })),
-            ]}
-            size="sm"
-          />
-          <div className="ml-auto flex flex-wrap items-center gap-2">
+      <Disclosure title="Filters" actions={<>           <div className="ml-auto flex flex-wrap items-center gap-2">
             <div className="flex h-10 rounded-xl border border-white/10 bg-slate-950/35 p-1 shadow-none">
               <button
                 type="button"
@@ -654,9 +596,6 @@ export function ActivityTimelinePage() {
                 Story
               </button>
             </div>
-            <Badge tone={embeddingStatusQuery.data?.available ? "green" : "slate"}>
-              {embeddingStatusQuery.data?.available ? "Semantic on" : "Rules only"}
-            </Badge>
             <Button
               type="button"
               variant="secondary"
@@ -675,11 +614,22 @@ export function ActivityTimelinePage() {
                   : "Organizing..."
                 : "Smart Organize"}
             </Button>
-          </div>
+          </div> </>} open={filtersOpen} onOpenChange={setFiltersOpen} summary={activityType !== "all" || projectId !== "all" || showRawCommits ? "Filters active" : "All work"}>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="wt-field-label">Activity type<select className="wt-input rounded-md px-3 py-2" value={activityType} onChange={(event) => setActivityType(event.target.value)}>{activityFilters.map((filter) => <option key={filter.value} value={filter.value}>{filter.label}</option>)}</select></label>
+          <label className="wt-field-label">Project<select className="wt-input rounded-md px-3 py-2" value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="all">All projects</option>{activeProjects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
+          <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={showRawCommits} onChange={(event) => setShowRawCommits(event.target.checked)} />Show raw commits alongside work items</label>
+          <Button size="sm" variant="ghost" onClick={() => { setActivityType("all"); setProjectId("all"); setShowRawCommits(false); }}>Reset filters</Button>
         </div>
-      </Panel>
+      </Disclosure>
+      {(activityType !== "all" || projectId !== "all" || showRawCommits) ? <>         <div className="flex flex-wrap gap-2">
+          {activityType !== "all" ? <button className="wt-filter-chip" onClick={() => setActivityType("all")}>{activityFilters.find((item) => item.value === activityType)?.label ?? activityType} ×</button> : null}
+          {projectId !== "all" ? <button className="wt-filter-chip" onClick={() => setProjectId("all")}>{activeProjects.find((item) => item.id === projectId)?.name ?? "Selected project"} ×</button> : null}
+          {showRawCommits ? <button className="wt-filter-chip" onClick={() => setShowRawCommits(false)}>Raw commits ×</button> : null}
+        </div>
+ </> : null}
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="space-y-5">
         <div className="space-y-4">
           {repositorySync.lastResult ? (
             <div className="rounded-xl border border-emerald-400/20 bg-emerald-500/10 p-3 text-xs text-emerald-100">
@@ -738,7 +688,7 @@ export function ActivityTimelinePage() {
             </div>
           ) : null}
 
-          <Panel className="min-h-[520px] overflow-hidden rounded-[18px] border-blue-200/10 bg-slate-950/36 p-5 shadow-none">
+          <Panel className="min-h-[240px] overflow-hidden rounded-[18px] border-blue-200/10 bg-slate-950/36 p-5 shadow-none">
             {activityQuery.isLoading || activityGroupsQuery.isLoading || (activityType === "all" && tasksQuery.isLoading) ? (
               <TimelineSkeleton />
             ) : activityQuery.isError || tasksQuery.isError ? (
@@ -757,7 +707,9 @@ export function ActivityTimelinePage() {
                     day={day}
                     onViewTask={setViewingTask}
                     onEditGroup={setEditingGroup}
+                    onInspectGroup={setInspectingGroup}
                     onCreateTaskFromCommit={(item) => previewCommitTaskMutation.mutate(item)}
+                    onCreateTaskFromGroup={previewTaskFromGroup}
                     onSelectTitleCandidate={(group, candidate) =>
                       selectTitleCandidateMutation.mutate({ group, candidate })
                     }
@@ -769,19 +721,20 @@ export function ActivityTimelinePage() {
                 days={filteredDays}
                 onViewTask={setViewingTask}
                 onEditGroup={setEditingGroup}
+                onInspectGroup={setInspectingGroup}
                 onSelectTitleCandidate={(group, candidate) =>
                   selectTitleCandidateMutation.mutate({ group, candidate })
                 }
               />
             ) : (
               <div className="flex min-h-[300px] items-center justify-center rounded-xl border border-dashed border-white/8 bg-white/[0.02] px-4 py-10 text-center text-xs text-slate-400">
-                No activity found for this week. Sync Git commits or create manual logs.
+                <div><p>{activityQuery.isSuccess && (activityQuery.data ?? []).some((day) => day.items.some((item) => item.activityType === "commit")) ? "No grouped work matches this view. Raw commits are still available." : "No activity found for this week. Sync activity or add a journal note."}</p><Button size="sm" variant="ghost" className="mt-3" onClick={() => setShowRawCommits(true)}>Show raw commits</Button></div>
               </div>
             )}
           </Panel>
         </div>
 
-        <div className="space-y-4">
+        <Disclosure title="Week details" summary={embeddingStatusQuery.data?.available ? "Semantic matching on" : "Rule-based grouping"} open={weekDetailsOpen} onOpenChange={setWeekDetailsOpen}><div className="grid gap-4 lg:grid-cols-3">
           <Panel className="rounded-[18px] border-blue-200/10 bg-slate-950/40 shadow-none">
             {summaryQuery.isLoading ? (
               <SummarySkeleton />
@@ -805,8 +758,16 @@ export function ActivityTimelinePage() {
               <KeyHighlights highlights={highlightsQuery.data} />
             ) : null}
           </Panel>
-        </div>
+        </div></Disclosure>
       </div>
+      {inspectingGroup ? <SidePanel title="Work item details" onClose={() => setInspectingGroup(null)}><TimelineGroupItem
+        key={inspectingGroup.id} group={(activityGroupsQuery.data ?? []).find((group) => group.id === inspectingGroup.id) ?? inspectingGroup}
+        defaultExpanded showTime={false}
+        onEdit={(group) => { setInspectingGroup(null); setEditingGroup(group); }}
+        onCreateTaskFromGroup={(group) => { setInspectingGroup(null); previewTaskFromGroup(group); }}
+        onCreateTaskFromCommit={(item) => { setInspectingGroup(null); previewCommitTaskMutation.mutate(item); }}
+        onSelectTitleCandidate={(group, candidate) => selectTitleCandidateMutation.mutate({ group, candidate })}
+      /></SidePanel> : null}
       <TaskDetailModal
         isOpen={Boolean(viewingTask)}
         task={viewingTask}
@@ -847,13 +808,17 @@ function MixedTimelineDay({
   day,
   onViewTask,
   onEditGroup,
+  onInspectGroup,
   onCreateTaskFromCommit,
+  onCreateTaskFromGroup,
   onSelectTitleCandidate,
 }: {
   day: MixedTimelineDay;
   onViewTask: (task: WeeklyTask) => void;
   onEditGroup: (group: ActivityGroup) => void;
+  onInspectGroup: (group: ActivityGroup) => void;
   onCreateTaskFromCommit: (item: ActivityItem) => void;
+  onCreateTaskFromGroup: (group: ActivityGroup) => void;
   onSelectTitleCandidate: (group: ActivityGroup, candidate: TitleCandidate) => void;
 }) {
   return (
@@ -865,24 +830,26 @@ function MixedTimelineDay({
             <CalendarDays className="h-3.5 w-3.5" />
           </span>
           <span className="text-sm font-semibold text-slate-100">{formatDayLabel(day.date)}</span>
-          <span className="text-xs tabular-nums text-slate-500">{day.items.length} items</span>
+          <span className="text-xs tabular-nums text-slate-500">{day.items.length} {day.items.length === 1 ? "item" : "items"}</span>
         </div>
         <div className="h-px flex-1 bg-blue-200/10" />
       </div>
 
-      <div className="relative pl-[104px] max-sm:pl-0">
-        <div className="pointer-events-none absolute bottom-0 left-8 top-2 z-0 w-px bg-gradient-to-b from-blue-300/35 via-blue-300/20 to-transparent max-sm:hidden" />
+      <div className="relative pl-[64px] max-sm:pl-0">
 
         <div className="space-y-3">
           {day.items.map((entry) => (
             <div key={`${entry.kind}-${entry.id}`} className="relative">
-              <div className="pointer-events-none absolute -left-[72px] top-9 z-20 h-4 w-4 -translate-x-1/2 rounded-full border border-blue-100/40 bg-blue-500 shadow-none max-sm:hidden" />
               {entry.kind === "activity" ? (
                 <TimelineItem item={entry.item} onCreateTaskFromCommit={onCreateTaskFromCommit} />
               ) : entry.kind === "group" ? (
                 <TimelineGroupItem
                   group={entry.group}
+                  compact
+                  onInspect={onInspectGroup}
                   onEdit={onEditGroup}
+                  onCreateTaskFromCommit={onCreateTaskFromCommit}
+                  onCreateTaskFromGroup={onCreateTaskFromGroup}
                   onSelectTitleCandidate={onSelectTitleCandidate}
                 />
               ) : (
@@ -1036,6 +1003,47 @@ function entryMatchesSemantic(entry: TimelineEntry, sourceIds: Set<string>) {
     return entry.group.items.some((item) => sourceIds.has(item.sourceId));
   }
   return sourceIds.has(entry.task.id);
+}
+
+function selectRepresentativeCommitForTask(group: ActivityGroup) {
+  const commits = group.items
+    .map((item) => item.activity)
+    .filter((item): item is ActivityItem => Boolean(item && item.activityType === "commit"));
+  if (!commits.length) return null;
+
+  const titleTerms = meaningfulTerms(`${group.title} ${group.summary ?? ""} ${group.reportSummary ?? ""}`);
+  return [...commits].sort((left, right) => {
+    const scoreDelta = representativeCommitScore(right, titleTerms) - representativeCommitScore(left, titleTerms);
+    if (scoreDelta !== 0) return scoreDelta;
+    return right.occurredAt.localeCompare(left.occurredAt);
+  })[0] ?? null;
+}
+
+function representativeCommitScore(commit: ActivityItem, titleTerms: Set<string>) {
+  const subject = commit.summary.split("\n")[0] ?? "";
+  const subjectTerms = meaningfulTerms(subject);
+  let score = 0;
+  for (const term of subjectTerms) {
+    if (titleTerms.has(term)) score += 2;
+  }
+  if (commit.commitHash) score += 1;
+  if (commit.branch && !isDefaultRef(commit.branch)) score += 1;
+  if ((commit.filesChanged ?? 0) > 0) score += Math.min(commit.filesChanged ?? 0, 6) / 6;
+  if (/^(feat|fix|perf|refactor|test|docs|chore)(\(.+\))?:/i.test(subject)) score += 0.5;
+  return score;
+}
+
+function meaningfulTerms(value: string) {
+  return new Set(
+    value
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((term) => term.length >= 3 && !["the", "and", "for", "with", "from", "this", "that"].includes(term)),
+  );
+}
+
+function isDefaultRef(value: string) {
+  return /^(head|main|master|origin\/main|origin\/master)$/i.test(value.trim());
 }
 
 function ActivityGroupEditModal({

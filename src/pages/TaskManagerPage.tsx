@@ -2,6 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, ChevronRight, ListTodo, Plus, Search, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import { AddTaskModal, type TaskSubmitValues } from "../components/ui/AddTaskModal";
+import { Disclosure } from "../components/ui/Disclosure";
+import { useViewPreference } from "../hooks/useViewPreference";
+import { listProjects } from "../lib/api/projects";
 import { Button } from "../components/ui/Button";
 import { TaskAttachmentsSection } from "../components/ui/TaskDetailModal";
 import { FocusSessionPanel } from "../components/ui/FocusSessionPanel";
@@ -26,13 +30,19 @@ export function TaskManagerPage({ todayOnly = false }: { todayOnly?: boolean }) 
   const location = useLocation();
   const navigate = useNavigate();
   const [today, setToday] = useState(() => todayRange());
-  const [view, setView] = useState<TaskView>("open");
+  const [savedView, setView] = useViewPreference<TaskView>("tasks", "open", ["open", "upcoming", "completed", "all"]);
+  const view = todayOnly ? "open" : savedView;
+  const [projectId, setProjectId] = useState("");
+  const [includeReport, setIncludeReport] = useState(false);
+  const [advancedTask, setAdvancedTask] = useState<WeeklyTask | null>(null);
+  const projectsQuery = useQuery({ queryKey: ["projects"], queryFn: listProjects, enabled: experience.isDeveloper });
   const [search, setSearch] = useState("");
   const [title, setTitle] = useState("");
   const [date, setDate] = useState("");
   const [notes, setNotes] = useState("");
   const [priority, setPriority] = useState<WeeklyTask["priority"]>("normal");
   const [more, setMore] = useState(false);
+  const [focusOpen, setFocusOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const tasksQuery = useQuery({ queryKey: ["weeklyTasks", "all"], queryFn: listTasks });
@@ -47,9 +57,10 @@ export function TaskManagerPage({ todayOnly = false }: { todayOnly?: boolean }) 
     await invalidateWorkEvidence(queryClient, { extraQueryKeys: [["todayCommandCenter"], ["priorityReminders"]] });
   }
   const create = useMutation({
-    mutationFn: () => createWeeklyTask({ title: title.trim(), taskType: "planned_work", status: "todo", weekStartDate: currentWeekRange(new Date(), normalizeWeekStartsOn(experience.settings?.weekStartsOn)).from, targetDate: date || null, details: notes.trim() || null, priority, includedInReport: !experience.isDeveloper && experience.hasFeature("reports") }),
+    mutationFn: () => createWeeklyTask({ title: title.trim(), taskType: "planned_work", status: "todo", weekStartDate: currentWeekRange(new Date(), normalizeWeekStartsOn(experience.settings?.weekStartsOn)).from, targetDate: date || null, details: notes.trim() || null, priority, projectId: experience.isDeveloper ? projectId || null : null, includedInReport: experience.isDeveloper ? includeReport : experience.hasFeature("reports") }),
     onSuccess: async () => {
-      setTitle(""); setDate(""); setNotes(""); setPriority("normal"); setMore(false);
+      setTitle(""); setProjectId(""); setIncludeReport(false); setDate(""); setNotes(""); setPriority("normal"); setMore(false);
+      setView("open"); setSearch("");
       await invalidateTasks();
       titleRef.current?.focus();
       toast.success("Task added");
@@ -58,6 +69,18 @@ export function TaskManagerPage({ todayOnly = false }: { todayOnly?: boolean }) 
   const update = useMutation({
     mutationFn: ({ id, input }: { id: string; input: UpdateWeeklyTaskInput }) => updateWeeklyTask(id, input),
     onSuccess: async () => { await invalidateTasks(); },
+  });
+  const advancedSave = useMutation({
+    mutationFn: (values: TaskSubmitValues) => updateWeeklyTask(advancedTask!.id, {
+      ...values,
+      projectId: values.projectId || "",
+      details: values.details || "",
+      targetDate: values.targetDate || "",
+      completedAt: values.status !== advancedTask!.status
+        ? (values.status === "completed" || values.status === "dropped" ? todayRange().date : "")
+        : values.completedAt || "",
+    }),
+    onSuccess: async () => { setAdvancedTask(null); setEditingId(null); await invalidateTasks(); toast.success("Task updated"); },
   });
   const remove = useMutation({
     mutationFn: deleteWeeklyTask,
@@ -73,12 +96,17 @@ export function TaskManagerPage({ todayOnly = false }: { todayOnly?: boolean }) 
   });
 
   useEffect(() => {
-    const state = location.state as { openTask?: boolean; powerCommand?: string; openFocus?: boolean } | null;
-    if (state?.openTask || state?.powerCommand?.toLowerCase().startsWith("task:")) {
+    const state = location.state as { openTask?: boolean; powerCommand?: string; openFocus?: boolean; editTaskId?: string } | null;
+    if (state?.editTaskId) {
+      setView("all"); setSearch("");
+      setEditingId(state.editTaskId);
+      navigate(location.pathname, { replace: true, state: null });
+    } else if (state?.openTask || state?.powerCommand?.toLowerCase().startsWith("task:")) {
       if (state.powerCommand) setTitle(state.powerCommand.slice(5).trim());
       titleRef.current?.focus();
       navigate(location.pathname, { replace: true, state: null });
     } else if (state?.openFocus) {
+      setFocusOpen(true);
       document.getElementById("essentials-focus")?.scrollIntoView({ block: "center" });
       navigate(location.pathname, { replace: true, state: null });
     }
@@ -106,20 +134,20 @@ export function TaskManagerPage({ todayOnly = false }: { todayOnly?: boolean }) 
         </button>
         <button type="button" className="wt-shell-icon" aria-label={`Edit ${task.title}`} onClick={() => setEditingId(editingId === task.id ? null : task.id)}>{editingId === task.id ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</button>
       </div>
-      {editingId === task.id ? <TaskEditor key={task.id + task.updatedAt} task={task} isPending={update.isPending || remove.isPending} onCancel={() => setEditingId(null)} onSave={async (input) => { await update.mutateAsync({ id: task.id, input }); setEditingId(null); }} onDelete={() => remove.mutate(task.id)} /> : null}
+      {editingId === task.id ? <TaskEditor key={task.id + task.updatedAt} task={task} escapeEnabled={!advancedTask} onAdvanced={experience.isDeveloper ? (task) => { advancedSave.reset(); setAdvancedTask(task); } : undefined} isPending={update.isPending || remove.isPending} onCancel={() => setEditingId(null)} onSave={async (input) => { await update.mutateAsync({ id: task.id, input }); setEditingId(null); }} onDelete={() => remove.mutate(task.id)} /> : null}
     </div>)}</div>;
   }
 
   return <div className="mx-auto max-w-4xl space-y-7 pb-8">
     <header className="wt-page-header flex flex-wrap items-start justify-between gap-4">
       <div><p className="mb-2 text-xs text-[var(--wt-text-muted)]">{todayOnly ? today.label : "Your work, at your pace"}</p><h1>{todayOnly ? "Today" : "Tasks"}</h1><p className="mt-2 text-sm text-[var(--wt-text-muted)]">{todayOnly ? "A little clarity for the day ahead." : "Everything you need to do, in one place."}</p></div>
-      {todayOnly ? <Link className="wt-text-link" to="/tasks">All tasks <ChevronRight size={14} /></Link> : experience.isDeveloper ? <Link className="wt-text-link" to="/weekly-plan">Weekly board <ChevronRight size={14} /></Link> : null}
+      {todayOnly ? <Link className="wt-text-link" to="/tasks">All tasks <ChevronRight size={14} /></Link> : null}
     </header>
 
     <form className="wt-task-composer" onSubmit={(event) => { event.preventDefault(); if (title.trim() && !create.isPending) create.mutate(); }}>
       <div className="flex items-center gap-3"><Plus size={18} className="shrink-0 text-[var(--wt-text-muted)]" /><input ref={titleRef} aria-label="New task" value={title} onChange={(event) => setTitle(event.target.value)} placeholder={tasks.length ? "What needs to get done?" : "Add your first task..."} className="h-12 min-w-0 flex-1 bg-transparent text-sm outline-none" disabled={create.isPending} maxLength={1000} /><Button type="submit" variant="primary" size="sm" disabled={!title.trim() || create.isPending}>{create.isPending ? "Adding..." : "Add task"}</Button></div>
       <button type="button" className="mt-2 flex items-center gap-1 text-xs text-[var(--wt-text-muted)] hover:text-[var(--wt-text-strong)]" aria-expanded={more} onClick={() => setMore(!more)}><ChevronDown size={12} />{more ? "Fewer details" : "Add details"}</button>
-      {more ? <div className="mt-4 grid gap-4 border-t border-[var(--wt-border)] pt-4 sm:grid-cols-2"><label className="wt-field-label">Due date <input type="date" className={inputClass} value={date} onChange={(event) => setDate(event.target.value)} /></label><label className="wt-field-label">Priority <select className={inputClass} value={priority} onChange={(event) => setPriority(event.target.value as WeeklyTask["priority"])}><option value="normal">Normal</option><option value="high">High</option><option value="low">Low</option></select></label><label className="wt-field-label sm:col-span-2">Notes <textarea className={inputClass} rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} /></label></div> : null}
+      {more ? <div className="mt-4 grid gap-4 border-t border-[var(--wt-border)] pt-4 sm:grid-cols-2"><label className="wt-field-label">Due date <input type="date" className={inputClass} value={date} onChange={(event) => setDate(event.target.value)} /></label><label className="wt-field-label">Priority <select className={inputClass} value={priority} onChange={(event) => setPriority(event.target.value as WeeklyTask["priority"])}><option value="normal">Normal</option><option value="high">High</option><option value="low">Low</option></select></label>{experience.isDeveloper ? <><label className="wt-field-label">Project<select value={projectId} onChange={(event) => setProjectId(event.target.value)} className={inputClass}><option value="">General</option>{(projectsQuery.data ?? []).map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label><label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={includeReport} onChange={(event) => setIncludeReport(event.target.checked)} />Include in weekly report</label></> : null}<label className="wt-field-label sm:col-span-2">Notes <textarea className={inputClass} rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} /></label></div> : null}
     </form>
     {mutationError ? <p role="alert" className="text-sm text-[var(--wt-danger)]">{localWorkError(mutationError)}</p> : null}
     {!todayOnly ? <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--wt-border)] pb-3"><div className="flex flex-wrap gap-1">{([['open', 'To do'], ['upcoming', 'Upcoming'], ['completed', 'Completed'], ['all', 'All']] as const).map(([id, label]) => <button key={id} type="button" className={`wt-task-filter ${view === id ? "is-active" : ""}`} aria-pressed={view === id} onClick={() => setView(id)}>{label}</button>)}</div><label className="flex items-center gap-2 text-[var(--wt-text-muted)]"><Search size={14} /><input type="search" aria-label="Search tasks" placeholder="Search tasks" className="h-8 w-40 bg-transparent text-xs outline-none" value={search} onChange={(event) => setSearch(event.target.value)} /></label></div> : null}
@@ -128,12 +156,13 @@ export function TaskManagerPage({ todayOnly = false }: { todayOnly?: boolean }) 
       {remaining.length ? <section><h2 className="wt-task-section-title">{todayOnly ? "To do" : view === "completed" ? "Completed" : view === "upcoming" ? "Upcoming" : view === "all" ? "All tasks" : "To do"}<span>{remaining.length}</span></h2>{renderRows(remaining)}</section> : filtered.length === 0 ? <div className="py-8 text-center"><ListTodo className="mx-auto mb-3 h-6 w-6 text-[var(--wt-text-muted)]" /><h2 className="text-sm font-medium">{search ? "No matching tasks" : !tasks.length ? "Start with one thing." : view === "completed" ? "Completed tasks will appear here." : todayOnly ? "Nothing else needs your attention today." : "You're all caught up."}</h2><p className="mt-2 text-xs text-[var(--wt-text-muted)]">{!tasks.length ? "Add a task above. A title is all you need." : todayOnly ? "You can find future and completed work in Tasks." : "Change the view or add something new."}</p></div> : null}
       {completedToday.length ? <section><h2 className="wt-task-section-title">Completed today <span>{completedToday.length}</span></h2>{renderRows(completedToday)}</section> : null}
     </>}
-    {experience.hasFeature("focus") ? <section id="essentials-focus"><FocusSessionPanel activeSession={focusQuery.data} groups={[{ id: "tasks", label: "Tasks", options: tasks.filter((task) => task.status !== "completed" && task.status !== "dropped").map((task) => ({ kind: "task", id: task.id, title: task.title, projectId: task.projectId })) }]} onStart={(input) => focus.mutate(input)} onStop={() => focusQuery.data && finishFocus.mutate({ id: focusQuery.data.id })} onCancel={() => focusQuery.data && finishFocus.mutate({ id: focusQuery.data.id, cancel: true })} isPending={focus.isPending || finishFocus.isPending} /></section> : null}
+    {experience.hasFeature("focus") ? <section id="essentials-focus"><Disclosure title="Focus timer" open={focusOpen || Boolean(focusQuery.data)} onOpenChange={setFocusOpen}><FocusSessionPanel activeSession={focusQuery.data} groups={[{ id: "tasks", label: "Tasks", options: tasks.filter((task) => task.status !== "completed" && task.status !== "dropped").map((task) => ({ kind: "task", id: task.id, title: task.title, projectId: task.projectId })) }]} onStart={(input) => focus.mutate(input)} onStop={() => focusQuery.data && finishFocus.mutate({ id: focusQuery.data.id })} onCancel={() => focusQuery.data && finishFocus.mutate({ id: focusQuery.data.id, cancel: true })} isPending={focus.isPending || finishFocus.isPending} /></Disclosure></section> : null}
     {!experience.isDeveloper && !experience.hasFeature("focus") ? <p className="pt-4 text-xs text-[var(--wt-text-muted)]">Keep it simple, or add tools when you need them. <Link className="underline underline-offset-4" to="/settings">Customize your workspace</Link></p> : null}
+    {advancedTask ? <AddTaskModal isOpen editingTask={advancedTask} projects={projectsQuery.data ?? []} weekStartDate={advancedTask.weekStartDate} isPending={advancedSave.isPending} onClose={() => { if (!advancedSave.isPending) setAdvancedTask(null); }} onSubmit={(values) => advancedSave.mutate(values)} error={advancedSave.error ? localWorkError(advancedSave.error) : undefined} /> : null}
   </div>;
 }
 
-function TaskEditor({ task, isPending, onSave, onCancel, onDelete }: { task: WeeklyTask; isPending: boolean; onSave: (input: UpdateWeeklyTaskInput) => Promise<void>; onCancel: () => void; onDelete: () => void }) {
+function TaskEditor({ task, escapeEnabled, onAdvanced, isPending, onSave, onCancel, onDelete }: { task: WeeklyTask; escapeEnabled: boolean; onAdvanced?: (task: WeeklyTask) => void; isPending: boolean; onSave: (input: UpdateWeeklyTaskInput) => Promise<void>; onCancel: () => void; onDelete: () => void }) {
   const [title, setTitle] = useState(task.title);
   const [date, setDate] = useState(task.targetDate ?? "");
   const [notes, setNotes] = useState(task.details ?? "");
@@ -143,11 +172,12 @@ function TaskEditor({ task, isPending, onSave, onCancel, onDelete }: { task: Wee
   const [attachments, setAttachments] = useState(false);
   const queryClient = useQueryClient();
   const toast = useToast();
-  useEscapeKey(() => { if (confirmDelete) setConfirmDelete(false); else onCancel(); });
+  useEscapeKey(() => { if (confirmDelete) setConfirmDelete(false); else onCancel(); }, escapeEnabled);
   return <form className="wt-task-editor" onSubmit={(event) => { event.preventDefault(); if (title.trim()) void onSave({ title: title.trim(), targetDate: date, details: notes, priority, status, ...(status !== task.status ? { completedAt: status === "completed" || status === "dropped" ? todayRange().date : "" } : {}) }).catch(() => {}); }}>
     <label className="wt-field-label">Task <input autoFocus className={inputClass} value={title} onChange={(event) => setTitle(event.target.value)} required /></label>
     <div className="grid gap-4 sm:grid-cols-3"><label className="wt-field-label">Due date <input type="date" className={inputClass} value={date} onChange={(event) => setDate(event.target.value)} /></label><label className="wt-field-label">Priority <select className={inputClass} value={priority} onChange={(event) => setPriority(event.target.value as WeeklyTask["priority"])}><option value="normal">Normal</option><option value="high">High</option><option value="low">Low</option></select></label><label className="wt-field-label">Status <select className={inputClass} value={status} onChange={(event) => setStatus(event.target.value as WeeklyTask["status"])}><option value="todo">To do</option><option value="in_progress">In progress</option><option value="blocked">Blocked</option><option value="completed">Completed</option><option value="dropped">Archived</option></select></label></div>
     <label className="wt-field-label">Notes <textarea rows={3} className={inputClass} value={notes} onChange={(event) => setNotes(event.target.value)} /></label>
+    {onAdvanced ? <button type="button" className="wt-text-link justify-self-start" onClick={() => onAdvanced({ ...task, title, targetDate: date, details: notes, priority, status, completedAt: status !== task.status ? (status === "completed" || status === "dropped" ? todayRange().date : "") : task.completedAt })}>More task options</button> : null}
     <button type="button" className="wt-text-link justify-self-start" aria-expanded={attachments} onClick={() => setAttachments(!attachments)}>Attachments {attachments ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</button>
     {attachments ? <TaskAttachmentsSection taskId={task.id} queryKey={["taskAttachments", task.id]} onChanged={() => queryClient.invalidateQueries({ queryKey: ["taskAttachments", task.id] })} onError={(title, message) => toast.error(title, message)} onSuccess={(title, message) => toast.success(title, message)} /> : null}
     <div className="flex flex-wrap items-center gap-2"><Button type="submit" size="sm" variant="primary" disabled={isPending || !title.trim()}>Save changes</Button><Button type="button" size="sm" variant="ghost" onClick={onCancel} disabled={isPending}>Cancel</Button><button type="button" className="wt-shell-icon ml-auto" aria-label="Delete task" onClick={() => setConfirmDelete(true)} disabled={isPending}><Trash2 size={14} /></button></div>

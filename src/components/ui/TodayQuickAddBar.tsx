@@ -1,10 +1,9 @@
-import { CalendarDays, Flag, FolderKanban, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import { useState } from "react";
 import type { Project } from "../../types/project";
 import type { WeeklyTaskPriority } from "../../types/weeklyTask";
 import { Button } from "./Button";
-import { Panel } from "./Panel";
-import { Select } from "./Select";
+import { Disclosure } from "./Disclosure";
 
 type QuickAddValues = {
   title: string;
@@ -16,15 +15,9 @@ type QuickAddValues = {
 type TodayQuickAddBarProps = {
   projects: Project[];
   todayDate: string;
-  onAdd: (values: QuickAddValues) => void;
+  onAdd: (values: QuickAddValues) => void | Promise<unknown>;
   isPending?: boolean;
 };
-
-const priorityOptions = [
-  { value: "low", label: "Low", icon: Flag },
-  { value: "normal", label: "Normal", icon: Flag },
-  { value: "high", label: "High", icon: Flag },
-];
 
 export function TodayQuickAddBar({
   projects,
@@ -37,78 +30,22 @@ export function TodayQuickAddBar({
   const [priority, setPriority] = useState<WeeklyTaskPriority>("normal");
   const [targetDate, setTargetDate] = useState(todayDate);
 
-  const projectOptions = [
-    { value: "general", label: "General", icon: FolderKanban },
-    ...projects.map((project) => ({
-      value: project.id,
-      label: project.name,
-      icon: FolderKanban,
-    })),
-  ];
-
-  function submit() {
-    const trimmed = title.trim();
-    if (!trimmed) return;
-
-    onAdd({
-      title: trimmed,
-      projectId: projectId === "general" ? null : projectId,
-      priority,
-      targetDate: targetDate || todayDate,
-    });
-    setTitle("");
+  const [error, setError] = useState(false);
+  async function submit() {
+    if (!title.trim() || isPending) return;
+    setError(false);
+    try {
+      await onAdd({ title: title.trim(), projectId: projectId === "general" ? null : projectId, priority, targetDate: targetDate || todayDate });
+      setTitle("");
+    } catch { setError(true); }
   }
-
-  return (
-    <Panel className="border-white/10 bg-slate-950/45 p-3">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <h2 className="text-xs font-semibold text-blue-200">Quick Add Task</h2>
-      </div>
-      <div className="space-y-3">
-        <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-white/10 bg-slate-950/55 px-3">
-          <Plus className="h-4 w-4 shrink-0 text-cyan-200" />
-          <input
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                submit();
-              }
-            }}
-            placeholder="Add a task for today..."
-            className="h-11 min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-slate-500"
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          <Select
-            value={projectId}
-            onChange={setProjectId}
-            options={projectOptions}
-            size="sm"
-            className="min-w-0"
-          />
-          <Select
-            value={priority}
-            onChange={(value) => setPriority(value as WeeklyTaskPriority)}
-            options={priorityOptions}
-            size="sm"
-          />
-          <label className="flex h-8 items-center gap-2 rounded-xl border border-blue-300/20 bg-slate-950/60 px-2.5 text-xs font-medium text-white">
-            <CalendarDays className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-            <input
-              type="date"
-              value={targetDate}
-              onChange={(event) => setTargetDate(event.target.value)}
-              className="min-w-0 w-full bg-transparent text-xs outline-none"
-            />
-          </label>
-          <Button onClick={submit} disabled={isPending || !title.trim()} className="h-8 px-3 text-xs">
-            <Plus className="h-3.5 w-3.5" />
-            Add
-          </Button>
-        </div>
-      </div>
-    </Panel>
-  );
+  return <form className="wt-task-composer space-y-3" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+    <div className="flex items-center gap-3"><Plus size={16} className="text-[var(--wt-text-muted)]" /><input id="today-task-title" aria-label="New task for today" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="What needs to get done?" className="h-11 min-w-0 flex-1 bg-transparent text-sm outline-none" disabled={isPending} /><Button type="submit" variant="primary" size="sm" disabled={isPending || !title.trim()}>{isPending ? "Adding..." : "Add task"}</Button></div>
+    <Disclosure title="Task details"><div className="grid gap-3 sm:grid-cols-3">
+      <label className="wt-field-label">Project<select value={projectId} onChange={(event) => setProjectId(event.target.value)} className="wt-input rounded-md px-3 py-2"><option value="general">General</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
+      <label className="wt-field-label">Priority<select value={priority} onChange={(event) => setPriority(event.target.value as WeeklyTaskPriority)} className="wt-input rounded-md px-3 py-2"><option value="normal">Normal</option><option value="high">High</option><option value="low">Low</option></select></label>
+      <label className="wt-field-label">Due date<input type="date" value={targetDate} onChange={(event) => setTargetDate(event.target.value)} className="wt-input rounded-md px-3 py-2" /></label>
+    </div></Disclosure>
+    {error ? <p role="alert" className="text-xs text-[var(--wt-danger)]">Task could not be saved. Your title is ready to try again.</p> : null}
+  </form>;
 }

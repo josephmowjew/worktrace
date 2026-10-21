@@ -1,5 +1,4 @@
 import {
-  CalendarDays,
   Download,
   FileJson,
   Focus,
@@ -519,6 +518,7 @@ export function AppLayout({ children }: PropsWithChildren) {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (document.getElementById("root")?.inert) return;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "b" && !(event.target instanceof HTMLElement && event.target.closest("input, textarea, [contenteditable=true]"))) {
         event.preventDefault();
         setIsNavigationOpen((open) => !open);
@@ -659,7 +659,6 @@ export function AppLayout({ children }: PropsWithChildren) {
                 <span className="truncate font-medium text-[var(--wt-text-strong)]">{route.label}</span>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                {experience.isDeveloper ? <span className="hidden items-center gap-2 text-[11px] text-[var(--wt-text-muted)] md:flex"><CalendarDays size={13} />{weekRange.label}</span> : null}
                 {speech.isVoiceCommandAvailable ? <button type="button" className="wt-shell-icon" onClick={() => void handleVoiceCommand()} disabled={speech.status === "transcribing"} aria-label={speech.status === "listening" ? "Stop voice capture" : "Voice capture"} title="Voice capture (Ctrl + Shift + M)">{speech.status === "listening" ? <Square size={15} /> : <Mic size={15} />}</button> : null}
                 <div className="relative">
                   <button type="button" className="wt-shell-icon" aria-label="Help and updates" aria-expanded={isHelpMenuOpen} onClick={() => setIsHelpMenuOpen((open) => !open)}><HelpCircle size={15} /></button>

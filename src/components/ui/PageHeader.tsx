@@ -10,7 +10,7 @@ export function PageHeader({
   meta,
 }: {
   icon: LucideIcon;
-  eyebrow: string;
+  eyebrow?: string;
   title: string;
   description?: string;
   actions?: ReactNode;
@@ -24,9 +24,9 @@ export function PageHeader({
             <Icon className="h-5 w-5" />
           </div>
           <div className="min-w-0">
-            <div className="mb-1 text-[11px] font-medium text-[var(--wt-text-muted)]">
+            {eyebrow ? <div className="mb-1 text-[11px] font-medium text-[var(--wt-text-muted)]">
               {eyebrow}
-            </div>
+            </div> : null}
             <h1 className="text-xl font-semibold tracking-tight text-[var(--wt-text-strong)] [text-wrap:balance]">{title}</h1>
             {description ? (
               <p className="mt-1.5 max-w-2xl text-xs leading-5 text-[var(--wt-text-muted)] [text-wrap:pretty]">{description}</p>
