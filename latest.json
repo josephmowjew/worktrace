@@ -1,11 +1,11 @@
 {
-  "version": "0.1.8",
-  "notes": "Added smarter commit-to-task drafting with multiple ranked title candidates, group-aware context, and evidence-rich task descriptions.\nAdded commit-linked task provenance, duplicate prevention, and a review modal that surfaces title suggestions and structured evidence before creation.\nImproved work evidence invalidation so activity-driven reporting stays aligned with the latest grouped commit context.",
-  "pub_date": "2026-06-15T07:02:37.373Z",
+  "version": "0.2.0",
+  "notes": "- Refreshed WorkTrace with a restrained dark workspace, professional typography, and clearer navigation.\n- Added Essentials for task tracking without repository setup, with optional focus, journal, and reporting tools over the same local data.\n- Simplified onboarding and title-first task creation while preserving the full Developer experience and advanced task details.\n- Centered Developer Today on one working list, with planning, focus, and day details available on demand.\n- Simplified Reports with an editable draft, expandable options and history, and draft preservation across workspace navigation.\n- Streamlined Activity into compact work items with evidence on demand, and connected Tasks with List and Weekly board views.\n- Fixed advanced task saves when optional numeric fields are blank.",
+  "pub_date": "2026-10-23T09:59:26Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUbndnaUhWc2ZhVUY4SnV5aU9iSlZodEwrMFg5dWVLWlFESTh6ckQveUJiNG85MFV1bzZzNzI3eDd6WFd4MDNvbW5lZ1dTN0p2Q0thN0lNbmVjWk5laUNlaVhIRXB1ZmdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxNTA2OTIyCWZpbGU6V29ya1RyYWNlXzAuMS44X3g2NC1zZXR1cC5leGUKcTNPWmwwS2YybXJrWmoyWGJCVnM0SEFnNTBodTV1VXh0RjhtSnZQY0dSc2g0ZFBzS2pHdTBPQkZQV2ViWUNaRUVRVjYyT3JCOFB4VUpjME5wZGVuQXc9PQo=",
-      "url": "https://github.com/josephmowjew/worktrace/releases/download/v0.1.8/WorkTrace_0.1.8_x64-setup.exe"
+      "url": "https://github.com/josephmowjew/worktrace/releases/download/v0.2.0/WorkTrace_0.2.0_x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUbndnaUhWc2ZhVUVRZXR0Q3ZhdkFBL3hSRnZ5NFJxMTNkaXIrMlozeWQ4ZUtDeVdLMGt1N3BVdTVIS3NSOE0xbVBDcmdhOENjN2E4MlVjM05xd0xEVzRDWnFOd3NZaHc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyNzQ5NTMyCWZpbGU6V29ya1RyYWNlXzAuMi4wX3g2NC1zZXR1cC5leGUKdFQ3SEI5bWJ6SHJWazJTM1R1NzBzVW5nd1c4THl3cXBSUVJlanh1Y01XdkNhK2NrdExnelN4Z3JYQ2dpTENOZEtWdno4dENYaXlJbng1NVp0bkVRRGc9PQo="
     }
   }
 }

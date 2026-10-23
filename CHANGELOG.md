@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.0] - 2026-10-23
+- Refreshed WorkTrace with a restrained dark workspace, professional typography, and clearer navigation.
+- Added Essentials for task tracking without repository setup, with optional focus, journal, and reporting tools over the same local data.
+- Simplified onboarding and title-first task creation while preserving the full Developer experience and advanced task details.
+- Centered Developer Today on one working list, with planning, focus, and day details available on demand.
+- Simplified Reports with an editable draft, expandable options and history, and draft preservation across workspace navigation.
+- Streamlined Activity into compact work items with evidence on demand, and connected Tasks with List and Weekly board views.
+- Fixed advanced task saves when optional numeric fields are blank.
+
 ## [0.1.8] - 2026-06-15
 - Added smarter commit-to-task drafting with multiple ranked title candidates, group-aware context, and evidence-rich task descriptions.
 - Added commit-linked task provenance, duplicate prevention, and a review modal that surfaces title suggestions and structured evidence before creation.
